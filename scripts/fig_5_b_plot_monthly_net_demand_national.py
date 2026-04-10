@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: : 2025 Ruike Lyu, rl8728@princeton.edu
 """
-This script generates monthly net load plots for selected provinces in the PyPSA-China model.
-Net load is defined as:
+This script generates monthly residual load plots for selected provinces in the PyPSA-China model.
+Residual load is defined as:
 electricity load + electric heating + methanation electricity + net exports + battery/PHS loss
 - (solar + wind + hydro generation, excluding curtailment).
 """
@@ -124,7 +124,7 @@ def _link_consumption_monthly(p0_df, links, weights):
 
 def calculate_monthly_net_load(n, target_province):
     """
-    Calculate monthly net load as:
+    Calculate monthly residual load as:
     electricity load + electric heating + methanation electricity + net exports + battery/PHS loss
     - (solar + wind + hydro generation, excluding curtailment).
     """
@@ -252,7 +252,7 @@ def calculate_monthly_net_load(n, target_province):
     # Note: renewable generation is taken from generators only to avoid
     # double-counting offshore wind converter links (e.g. offwind-ac/offwind-dc).
 
-    # Net exports are excluded from both display and net load calculation
+    # Net exports are excluded from both display and residual load calculation
 
     # Battery and PHS energy loss within province
     battery_loss_monthly = pd.Series(0.0, index=range(1, 13))
@@ -371,7 +371,7 @@ def calculate_monthly_net_load(n, target_province):
 
 def plot_monthly_net_demand(monthly_data, scenario, planning_horizon, target_province):
     """
-    Plot the monthly net load curve.
+    Plot the monthly residual load curve.
     """
     # Wider canvas to accommodate large fonts and bottom legend
     fig, ax = plt.subplots(figsize=(22, 20))
@@ -392,7 +392,7 @@ def plot_monthly_net_demand(monthly_data, scenario, planning_horizon, target_pro
         "Wind Generation": "Wind generation",
         "Solar Generation": "Solar generation",
         "Hydro Generation": "Hydro generation",
-        "Net Load": "Net demand",
+        "Net Load": "Residual demand",
     }
 
     # Plot components as stacked areas (positive)
@@ -418,7 +418,7 @@ def plot_monthly_net_demand(monthly_data, scenario, planning_horizon, target_pro
         alpha=0.5,
     )
 
-    # Plot net load
+    # Plot residual load
     net_load = monthly_data["Net Load"]
     ax.plot(
         monthly_data.index,
@@ -436,7 +436,7 @@ def plot_monthly_net_demand(monthly_data, scenario, planning_horizon, target_pro
     # For the national case, omit the figure title; keep it for provincial plots.
     if title_province != "National":
         ax.set_title(
-            f'Monthly net demand and components - {planning_horizon} ({title_province})',
+            f'Monthly residual demand and components - {planning_horizon} ({title_province})',
             fontsize=60
         )
     
@@ -532,7 +532,7 @@ if __name__ == "__main__":
     for province in provinces:
         print(f"Processing province: {province}")
 
-        print("Calculating monthly net load...")
+        print("Calculating monthly residual load...")
         target_province = None if province == "National" else province
         monthly_data = calculate_monthly_net_load(n, target_province)
 

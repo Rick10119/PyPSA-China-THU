@@ -113,8 +113,8 @@ def create_cost_comparison_plot(df, output_dir):
             width = 0.6
 
             # Draw stacked bars (per-column ordering to keep positive/negative parts readable)
-            bottom_pos = np.zeros(len(x_pos))  # up: cost reduction (Value<0, draw abs(value))
-            bottom_neg = np.zeros(len(x_pos))  # down: cost increase (Value>0, draw -value)
+            bottom_pos = np.zeros(len(x_pos))  # up: cost increase (Value>0)
+            bottom_neg = np.zeros(len(x_pos))  # down: cost reduction (Value<0)
 
             for i, demand in enumerate(demand_names):
                 demand_vals = demand_data.get(demand, {})
@@ -147,16 +147,16 @@ def create_cost_comparison_plot(df, output_dir):
                         return cats + [inv, op]
                     return cats + [op, inv]
 
-                # Cost reductions: Value < 0, sort by absolute value (larger closer to zero)
-                dec_cats = sorted(
-                    [c for c, v in demand_vals.items() if v < 0],
-                    key=lambda c: abs(demand_vals[c]),
+                # Cost increases: Value > 0, sort by value (larger closer to zero)
+                inc_cats = sorted(
+                    [c for c, v in demand_vals.items() if v > 0],
+                    key=lambda c: demand_vals[c],
                     reverse=True,
                 )
                 # Positive axis (upwards): operation should be above investment
-                dec_cats = _enforce_non_renewable_relative_order(dec_cats, operation_above=True)
-                for category in dec_cats:
-                    height = abs(demand_vals[category])
+                inc_cats = _enforce_non_renewable_relative_order(inc_cats, operation_above=True)
+                for category in inc_cats:
+                    height = demand_vals[category]  # positive
                     if height == 0:
                         continue
                     color = category_colors.get(category, plt.cm.tab20(global_categories.index(category) % 20))
@@ -170,16 +170,16 @@ def create_cost_comparison_plot(df, output_dir):
                     )
                     bottom_pos[i] += height
 
-                # Cost increases: Value > 0, sort by value (larger closer to zero)
-                inc_cats = sorted(
-                    [c for c, v in demand_vals.items() if v > 0],
-                    key=lambda c: demand_vals[c],
+                # Cost reductions: Value < 0, sort by absolute value (larger closer to zero)
+                dec_cats = sorted(
+                    [c for c, v in demand_vals.items() if v < 0],
+                    key=lambda c: abs(demand_vals[c]),
                     reverse=True,
                 )
                 # Negative axis (downwards): operation above investment → draw operation earlier
-                inc_cats = _enforce_non_renewable_relative_order(inc_cats, operation_above=False)
-                for category in inc_cats:
-                    height = -demand_vals[category]  # negative
+                dec_cats = _enforce_non_renewable_relative_order(dec_cats, operation_above=False)
+                for category in dec_cats:
+                    height = demand_vals[category]  # negative
                     if height == 0:
                         continue
                     color = category_colors.get(category, plt.cm.tab20(global_categories.index(category) % 20))
@@ -200,19 +200,27 @@ def create_cost_comparison_plot(df, output_dir):
                 total_value = sum(demand_data_dict.values())
                 net_values.append(total_value)
             
-            # Show net value above the positive stack
+            # Show net value with the correct sign convention:
+            # - net < 0 (reduction) label below with a minus sign
+            # - net > 0 (addition) label above with a plus/implicit sign
             for i, (x, net_value) in enumerate(zip(x_pos, net_values)):
-                # Text position: slightly above the positive stack
-                text_y = bottom_pos[i] + 5e9
-                
-                # Format net value (displayed as cost reduction, ≥0)
-                displayed_value = max(-net_value / 1e9, 0)
-                value_text = f'{displayed_value:.0f}'
-                
-                # Add label
-                ax.text(x, text_y, value_text, 
-                       ha='center', va='bottom' if net_value >= 0 else 'top',
-                       fontsize=18, fontweight='bold')
+                if net_value < 0:
+                    text_y = bottom_neg[i] - 0e9
+                    va = 'top'
+                else:
+                    text_y = bottom_pos[i] + 5e9
+                    va = 'bottom'
+
+                value_text = f'{net_value/1e9:.0f}'
+                ax.text(
+                    x,
+                    text_y,
+                    value_text,
+                    ha='center',
+                    va=va,
+                    fontsize=18,
+                    fontweight='bold',
+                )
             
             # X labels
             ax.set_xticks(x_pos)
@@ -220,8 +228,8 @@ def create_cost_comparison_plot(df, output_dir):
             ax.set_xticklabels(x_labels, fontsize=20)
             
             # Y axis
-            ax.set_ylim(-30e9, 80e9)
-            y_ticks = np.arange(-30e9, 81e9, 20e9)
+            ax.set_ylim(-80e9, 30e9)
+            y_ticks = np.arange(-80e9, 31e9, 20e9)
             y_labels = [f'{int(tick/1e9)}' for tick in y_ticks]
             ax.set_yticks(y_ticks)
             ax.set_yticklabels(y_labels, fontsize=20)
