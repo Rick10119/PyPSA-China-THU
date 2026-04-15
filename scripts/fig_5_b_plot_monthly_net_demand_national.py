@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 # Publication: sans-serif (Helvetica / Arial), 6 pt, figure width 150 mm
 TEXT_PT = 7
-FIG_WIDTH_MM = 160
+FIG_WIDTH_MM = 140
 FIG_HEIGHT_MM = 70
 
 

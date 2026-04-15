@@ -19,7 +19,7 @@ from pathlib import Path
 TEXT_PT = 7
 FIG_WIDTH_MM = 150
 # Match prior aspect ratios: main plot was 12×9 in; mean/variance was 15×6 in
-FIG_EMPLOYMENT_COMPARISON_HEIGHT_MM = FIG_WIDTH_MM * 9 / 12
+FIG_EMPLOYMENT_COMPARISON_HEIGHT_MM = FIG_WIDTH_MM * 8 / 15
 FIG_MEAN_VAR_HEIGHT_MM = FIG_WIDTH_MM * 6 / 15
 
 

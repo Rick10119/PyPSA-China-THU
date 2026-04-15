@@ -19,9 +19,32 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 import logging
 
-# Use fonts that render Latin characters cleanly across platforms
-plt.rcParams['font.sans-serif'] = ['Helvetica', 'Arial', 'sans-serif']
-plt.rcParams['axes.unicode_minus'] = False
+# Publication: sans-serif (Helvetica / Arial), 6 pt, figure 88×88 mm, PDF output
+TEXT_PT = 6
+FIG_WIDTH_MM = 88
+FIG_HEIGHT_MM = 88
+
+
+def _mm_to_inches(mm: float) -> float:
+    return mm / 25.4
+
+
+def set_plot_style():
+    plt.rcParams.update(
+        {
+            "font.family": "sans-serif",
+            "font.sans-serif": ["Helvetica", "Arial", "Helvetica Neue", "DejaVu Sans"],
+            "font.size": TEXT_PT,
+            "axes.labelsize": TEXT_PT,
+            "axes.titlesize": TEXT_PT,
+            "xtick.labelsize": TEXT_PT,
+            "ytick.labelsize": TEXT_PT,
+            "legend.fontsize": TEXT_PT,
+            "axes.unicode_minus": False,
+            "pdf.fonttype": 42,
+        }
+    )
+
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
@@ -65,7 +88,9 @@ def plot_mmm_2050_from_csv(csv_path, output_dir=None):
     df = load_detailed_data(csv_path)
     if df is None:
         return
-    
+
+    set_plot_style()
+
     # Configure output directory
     if output_dir is None:
         output_dir = Path(csv_path).parent
@@ -74,7 +99,14 @@ def plot_mmm_2050_from_csv(csv_path, output_dir=None):
         output_dir.mkdir(parents=True, exist_ok=True)
     
     # Create figure
-    fig, ax = plt.subplots(1, 1, figsize=(10, 10))
+    fig, ax = plt.subplots(
+        1,
+        1,
+        figsize=(
+            _mm_to_inches(FIG_WIDTH_MM),
+            _mm_to_inches(FIG_HEIGHT_MM),
+        ),
+    )
     
     # Prepare data arrays
     x = df['Capacity_Value_Mt'].values
@@ -137,7 +169,16 @@ def plot_mmm_2050_from_csv(csv_path, output_dir=None):
         )
     
     # Plot net cost savings curve (black line at original x positions)
-    ax.plot(x, net_savings, 'k-', linewidth=3, label='Net cost savings', marker='o', markersize=8, zorder=20)
+    ax.plot(
+        x,
+        net_savings,
+        "k-",
+        linewidth=1.2,
+        label="Net cost savings",
+        marker="o",
+        markersize=3.5,
+        zorder=20,
+    )
     
     # Find the point with maximum net savings
     max_saving_index = np.argmax(net_savings)
@@ -145,49 +186,68 @@ def plot_mmm_2050_from_csv(csv_path, output_dir=None):
     max_saving_capacity = x[max_saving_index]
     
     # Mark the maximum net-savings point with a star
-    ax.plot(max_saving_capacity, max_saving_value, 'r*', markersize=15, 
-            label=f'Highest net cost savings: {max_saving_value:.0f}B CNY', zorder=30)
+    ax.plot(
+        max_saving_capacity,
+        max_saving_value,
+        "r*",
+        markersize=8,
+        label=f"Highest net cost savings: {max_saving_value:.0f}B CNY",
+        zorder=30,
+    )
     
     # Add numeric label for the maximum net-savings point
-    ax.annotate(f'{max_saving_value:.0f}B',
-                xy=(max_saving_capacity, max_saving_value),
-                xytext=(0, 20),
-                textcoords="offset points",
-                ha='center', va='bottom', 
-                fontsize=20, weight='bold', color='red',
-                bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.8))
+    ax.annotate(
+        f"{max_saving_value:.0f}B",
+        xy=(max_saving_capacity, max_saving_value),
+        xytext=(0, 8),
+        textcoords="offset points",
+        ha="center",
+        va="bottom",
+        fontsize=TEXT_PT,
+        weight="bold",
+        color="red",
+        bbox=dict(boxstyle="round,pad=0.2", facecolor="white", alpha=0.8),
+    )
     
     # Axis labels
-    ax.set_xlabel('Aluminum smelting capacity (Mt/Year)', fontsize=20)
-    ax.set_ylabel('Cost savings/increase (Billion CNY)', fontsize=20, color='blue')
+    ax.set_xlabel("Aluminum smelting capacity (Mt/Year)", fontsize=TEXT_PT)
+    ax.set_ylabel("Cost savings/increase (Billion CNY)", fontsize=TEXT_PT, color="blue")
     
     # Add light grid
     ax.grid(True, alpha=0.3, axis='y')
     
     # Configure x-axis ticks and labels
     ax.set_xticks(x)
-    ax.set_xticklabels([f'{cap/100:.0f}' for cap in x], fontsize=20)
+    ax.set_xticklabels([f"{cap / 100:.0f}" for cap in x], fontsize=TEXT_PT)
     
     # Configure left y-axis tick labels
     y_ticks = ax.get_yticks()
     y_tick_labels = [f'{tick:.0f}' for tick in y_ticks]
     ax.set_yticks(y_ticks)
-    ax.set_yticklabels(y_tick_labels, fontsize=20, color='blue')
+    ax.set_yticklabels(y_tick_labels, fontsize=TEXT_PT, color="blue")
     
     # Build legend dynamically from plotted artists so that aluminum components appear separately
     handles, labels = ax.get_legend_handles_labels()
-    ax.legend(handles=handles, labels=labels, loc='lower left', fontsize=16)
+    ax.legend(
+        handles=handles,
+        labels=labels,
+        loc="lower left",
+        bbox_to_anchor=(0.02, -0.02),
+        bbox_transform=ax.transAxes,
+        fontsize=TEXT_PT,
+        frameon=False,
+    )
     
     plt.tight_layout()
     
     # Save figure
     # Derive a stable output name from the CSV stem, e.g.
-    #   mmmu_2050_M_detailed_data.csv -> mmmu_2050_analysis.png
-    #   mmmf_2050_M_detailed_data.csv -> mmmf_2050_analysis.png
+    #   mmmu_2050_M_detailed_data.csv -> mmmu_2050_analysis.pdf
+    #   mmmf_2050_M_detailed_data.csv -> mmmf_2050_analysis.pdf
     stem = Path(csv_path).stem
     scenario_tag = stem.replace("_M_detailed_data", "").replace("_detailed_data", "")
-    plot_file = output_dir / f"{scenario_tag}_analysis.png"
-    plt.savefig(plot_file, dpi=300, bbox_inches='tight')
+    plot_file = output_dir / f"{scenario_tag}_analysis.pdf"
+    plt.savefig(plot_file, format="pdf", bbox_inches="tight", facecolor="white")
     logger.info(f"Scenario analysis figure saved to: {plot_file}")
     
     
