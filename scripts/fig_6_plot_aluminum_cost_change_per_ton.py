@@ -12,9 +12,34 @@ import numpy as np
 import pandas as pd
 import os
 
-# Use Helvetica-like fonts for clear English labels
-plt.rcParams['font.sans-serif'] = ['Helvetica', 'Arial', 'DejaVu Sans']
-plt.rcParams['axes.unicode_minus'] = False
+# Publication: sans-serif (Helvetica / Arial), 6 pt body text, 5 pt on-figure number labels, width 88 mm
+TEXT_PT = 6
+ANNOTATION_PT = 5  # numeric labels on bars and total markers
+# Do not print on-figure labels when |value| is below this (or above LABEL_ABS_MAX).
+LABEL_ABS_MIN = 150
+LABEL_ABS_MAX = 8000
+FIG_WIDTH_MM = 88
+# Original layout was 12×9 in; keep the same aspect for height
+FIG_HEIGHT_MM = FIG_WIDTH_MM * 9 / 12
+
+
+def _mm_to_inches(mm: float) -> float:
+    return mm / 25.4
+
+
+plt.rcParams.update(
+    {
+        "font.family": "sans-serif",
+        "font.sans-serif": ["Helvetica", "Arial", "Helvetica Neue", "DejaVu Sans"],
+        "font.size": TEXT_PT,
+        "axes.labelsize": TEXT_PT,
+        "axes.titlesize": TEXT_PT,
+        "xtick.labelsize": TEXT_PT,
+        "ytick.labelsize": TEXT_PT,
+        "legend.fontsize": TEXT_PT,
+        "axes.unicode_minus": False,
+    }
+)
 
 # Shared cost data: 2020 and 2050_0p are the same for both F and U; 15p and 100p differ by scenario
 # We only plot categories with changes: Labor, Fixed o&m, Restart, Depreciation,
@@ -83,7 +108,11 @@ def create_aluminum_cost_bar_chart(scenario_type='F', output_dir='results'):
         f"Δ 2050_15p: {total_deltas_2050[1]:+.2f}  Δ 2050_100p: {total_deltas_2050[2]:+.2f} CNY/tonne"
     )
 
-    fig, ax = plt.subplots(1, 1, figsize=(12, 9))
+    fig, ax = plt.subplots(
+        1,
+        1,
+        figsize=(_mm_to_inches(FIG_WIDTH_MM), _mm_to_inches(FIG_HEIGHT_MM)),
+    )
     x = np.arange(len(scenarios))
     # Make all bars slimmer
     width_main = 0.3
@@ -113,14 +142,14 @@ def create_aluminum_cost_bar_chart(scenario_type='F', output_dir='results'):
                 color=color,
                 alpha=0.8,
             )[0]
-            if 10 < delta < 8000:
+            if LABEL_ABS_MIN <= delta < LABEL_ABS_MAX:
                 ax.text(
                     bar.get_x() + bar.get_width() / 2,
                     bottom + height / 2,
                     f'{delta:+.0f}',
                     ha='center',
                     va='center',
-                    fontsize=14,
+                    fontsize=ANNOTATION_PT,
                     fontweight='bold',
                     color='black',
                 )
@@ -154,46 +183,53 @@ def create_aluminum_cost_bar_chart(scenario_type='F', output_dir='results'):
             color=COLORS[idx_elec],
             alpha=0.8,
         )[0]
-        if 10 < abs(delta_e) < 8000:
-            ax.text(
-                bar.get_x() + bar.get_width() / 2,
-                bottom + height / 2,
-                f'{delta_e:+.0f}',
-                ha='center',
-                va='center',
-                fontsize=14,
-                fontweight='bold',
-                color='black',
-            )
+        if LABEL_ABS_MIN <= abs(delta_e) < LABEL_ABS_MAX:
+            x_elec = bar.get_x() + bar.get_width() / 2
+            y_elec = bottom + height / 2
+            label_txt = f'{delta_e:+.0f}'
+            kw = dict(fontsize=ANNOTATION_PT, fontweight='bold', color='black', ha='center')
+            # 30% overcapacity (j=1): nudge label slightly up — often sits on/near the y=0 line
+            if j == 1:
+                ax.annotate(
+                    label_txt,
+                    xy=(x_elec, y_elec),
+                    xytext=(0, 7),
+                    textcoords='offset points',
+                    va='bottom',
+                    **kw,
+                )
+            else:
+                ax.text(x_elec, y_elec, label_txt, va='center', **kw)
 
     ax.axhline(0, color='black', linewidth=1.2)
-    ax.set_ylabel('Change in levelized cost (CNY/tonne)', fontsize=20, fontweight='bold')
+    ax.set_ylabel('Change in levelized cost (CNY/tonne)', fontsize=TEXT_PT, fontweight='bold')
     ax.set_xticks(x)
-    ax.set_xticklabels(scenarios, fontsize=20)
+    ax.set_xticklabels(scenarios, fontsize=TEXT_PT)
     # Y-axis: fixed range [-2000, 5000] with 1000-step ticks
     y_min_tick = -2000
     y_max_tick = 5000
     yticks = np.arange(y_min_tick, y_max_tick + 1, 1000)
     ax.set_ylim(y_min_tick, y_max_tick)
     ax.set_yticks(yticks)
-    ax.set_yticklabels([f'{int(t):+d}' for t in yticks], fontsize=16)
+    ax.set_yticklabels([f'{int(t):+d}' for t in yticks], fontsize=TEXT_PT)
 
     # Label total delta for each 2050 scenario with a downward triangle shifted to the right
     for j in range(len(scenarios)):
         delta_tot = total_deltas_2050[j]
         # place marker to the right of electricity bar
         x_tot = x[j] + width_main / 2 + width_elec / 2
-        ax.scatter(x_tot, delta_tot, marker='v', color='black', s=80, zorder=5)
+        ax.scatter(x_tot, delta_tot, marker='v', color='black', s=24, zorder=5)
         # place text to the right of the marker, vertically centered
-        ax.text(
-            x_tot + 0.03,
-            delta_tot,
-            f'{delta_tot:+.0f}',
-            ha='left',
-            va='center',
-            fontsize=14,
-            fontweight='bold',
-        )
+        if abs(delta_tot) >= LABEL_ABS_MIN:
+            ax.text(
+                x_tot + 0.03,
+                delta_tot,
+                f'{delta_tot:+.0f}',
+                ha='left',
+                va='center',
+                fontsize=ANNOTATION_PT,
+                fontweight='bold',
+            )
 
     # Build legend explicitly from all categories to ensure every component appears,
     # even if some have no visible bar in a given scenario.
@@ -205,15 +241,15 @@ def create_aluminum_cost_bar_chart(scenario_type='F', output_dir='results'):
         bbox_to_anchor=(0.5, -0.1),
         loc='upper center',
         ncol=4,
-        fontsize=20,
+        fontsize=TEXT_PT,
         frameon=False,
     )
     ax.grid(True, alpha=0.3, axis='y')
     plt.tight_layout()
 
     os.makedirs(output_dir, exist_ok=True)
-    output_path = os.path.join(output_dir, f'aluminum_cost_change_2020_2050_stacked_bar_s_{scenario_type.upper()}.png')
-    plt.savefig(output_path, dpi=300, bbox_inches='tight', facecolor='white')
+    output_path = os.path.join(output_dir, f'aluminum_cost_change_2020_2050_stacked_bar_s_{scenario_type.upper()}.pdf')
+    plt.savefig(output_path, format='pdf', bbox_inches='tight', facecolor='white')
     plt.close()
     print(f"  Saved: {output_path}")
     return output_path
