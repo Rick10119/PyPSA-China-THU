@@ -15,23 +15,50 @@ import argparse
 import yaml
 from pathlib import Path
 
+# Publication: sans-serif (Helvetica / Arial), 6 pt, figure width 150 mm
+TEXT_PT = 7
+FIG_WIDTH_MM = 150
+# Match prior aspect ratios: main plot was 12×9 in; mean/variance was 15×6 in
+FIG_EMPLOYMENT_COMPARISON_HEIGHT_MM = FIG_WIDTH_MM * 9 / 12
+FIG_MEAN_VAR_HEIGHT_MM = FIG_WIDTH_MM * 6 / 15
+
+
+def _mm_to_inches(mm: float) -> float:
+    return mm / 25.4
+
+
 def set_plot_style():
     """
-    Set plotting style.
+    Set plotting style: sans-serif 6 pt, PDF-friendly fonts.
     """
-    # Use Latin fonts
-    plt.rcParams['font.sans-serif'] = ['Helvetica', 'Arial', 'sans-serif']
-    plt.rcParams['axes.unicode_minus'] = False
-    
-    plt.style.use(['classic', 'seaborn-v0_8-whitegrid',
-                   {'axes.grid': False, 'grid.linestyle': '--', 'grid.color': u'0.6',
-                    'hatch.color': 'white',
-                    'patch.linewidth': 0.5,
-                    'font.size': 16,
-                    'legend.fontsize': 'large',
-                    'lines.linewidth': 1.5,
-                    'pdf.fonttype': 42,
-                    }])
+    plt.style.use(
+        [
+            "classic",
+            "seaborn-v0_8-whitegrid",
+            {
+                "axes.grid": False,
+                "grid.linestyle": "--",
+                "grid.color": "0.6",
+                "hatch.color": "white",
+                "patch.linewidth": 0.5,
+                "lines.linewidth": 1.5,
+            },
+        ]
+    )
+    plt.rcParams.update(
+        {
+            "font.family": "sans-serif",
+            "font.sans-serif": ["Helvetica", "Arial", "Helvetica Neue", "DejaVu Sans"],
+            "font.size": TEXT_PT,
+            "axes.labelsize": TEXT_PT,
+            "axes.titlesize": TEXT_PT,
+            "xtick.labelsize": TEXT_PT,
+            "ytick.labelsize": TEXT_PT,
+            "legend.fontsize": TEXT_PT,
+            "axes.unicode_minus": False,
+            "pdf.fonttype": 42,
+        }
+    )
 
 def load_csv_data(csv_file):
     """
@@ -233,14 +260,20 @@ def plot_employment_comparison(employment_data_15p, employment_data_non_flexible
         return
 
     set_plot_style()
-    figsize = [12, 9]
-    dpi = 150
-    font_size = 30
-    legend_font_size = 30
-    title_font_size = 30
-    axis_font_size = 30
-    
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=[12, 9], sharex=False)
+    font_size = TEXT_PT
+    legend_font_size = TEXT_PT
+    title_font_size = TEXT_PT
+    axis_font_size = TEXT_PT
+
+    fig, (ax1, ax2) = plt.subplots(
+        2,
+        1,
+        figsize=(
+            _mm_to_inches(FIG_WIDTH_MM),
+            _mm_to_inches(FIG_EMPLOYMENT_COMPARISON_HEIGHT_MM),
+        ),
+        sharex=False,
+    )
 
     if config and 'colors' in config:
         colors = config['colors']
@@ -270,20 +303,31 @@ def plot_employment_comparison(employment_data_15p, employment_data_non_flexible
     ax1.set_ylim(0, 500)
     ax2.set_ylim(0, 500)
 
-    ax1.set_title('Retaining 30% overcapacity', fontsize=title_font_size, pad=20)
-    ax2.set_title('Retaining 0% overcapacity', fontsize=title_font_size, pad=20)
+    ax1.set_title('Retaining 30% overcapacity', fontsize=title_font_size, pad=6)
+    ax2.set_title('Retaining 0% overcapacity', fontsize=title_font_size, pad=6)
+    ax2.set_xlabel("Month", fontsize=axis_font_size)
 
     handles, labels = ax1.get_legend_handles_labels()
-    fig.legend(handles, labels, loc='lower center', bbox_to_anchor=(1, -0.1),
-              ncol=len(handles), fontsize=legend_font_size, frameon=False)
 
     plt.tight_layout()
-    plt.subplots_adjust(right=2)
+    # Anchor legend just below ax2; fixed figure y (e.g. 0.06) + tight_layout(rect bottom)
+    # left a large empty band between panels and legend.
+    pos2 = ax2.get_position()
+    fig.legend(
+        handles,
+        labels,
+        loc="upper center",
+        bbox_to_anchor=(0.5, pos2.y0 - 0.065),
+        bbox_transform=fig.transFigure,
+        ncol=len(handles),
+        fontsize=legend_font_size,
+        frameon=False,
+    )
 
     if output_file is None:
-        output_file = "employment_scenario_comparison.png"
-    
-    fig.savefig(output_file, dpi=dpi, bbox_inches='tight')
+        output_file = "employment_scenario_comparison.pdf"
+
+    fig.savefig(output_file, format="pdf", bbox_inches="tight", facecolor="white")
     # plt.show()
     plt.close()
     
@@ -379,7 +423,14 @@ def plot_mean_variance_comparison(differences, output_file=None):
     stds_15p = [differences[industry]['std_15p'] for industry in industries]
     stds_non_flexible = [differences[industry]['std_non_flexible'] for industry in industries]
     
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
+    fig, (ax1, ax2) = plt.subplots(
+        1,
+        2,
+        figsize=(
+            _mm_to_inches(FIG_WIDTH_MM),
+            _mm_to_inches(FIG_MEAN_VAR_HEIGHT_MM),
+        ),
+    )
 
     x = np.arange(len(industries))
     width = 0.35
@@ -387,33 +438,45 @@ def plot_mean_variance_comparison(differences, output_file=None):
     bars1 = ax1.bar(x - width/2, means_15p, width, label='MMMU', alpha=0.8, color='#FF69B4')
     bars2 = ax1.bar(x + width/2, means_non_flexible, width, label='MMMU (non-flexible)', alpha=0.8, color='#000000')
     
-    ax1.set_xlabel('Industry', fontsize=14)
-    ax1.set_ylabel('Average Employment (k)', fontsize=14)
-    ax1.set_title('Average Employment by Industry', fontsize=16)
+    ax1.set_xlabel('Industry', fontsize=TEXT_PT)
+    ax1.set_ylabel('Average Employment (k)', fontsize=TEXT_PT)
+    ax1.set_title('Average Employment by Industry', fontsize=TEXT_PT)
     ax1.set_xticks(x)
-    ax1.set_xticklabels(industries, rotation=45, ha='right')
-    ax1.legend()
+    ax1.set_xticklabels(industries, rotation=45, ha='right', fontsize=TEXT_PT)
+    ax1.legend(fontsize=TEXT_PT)
     ax1.grid(True, alpha=0.3)
 
     for bar in bars1:
         height = bar.get_height()
-        ax1.text(bar.get_x() + bar.get_width()/2., height + 1,
-                f'{height:.1f}', ha='center', va='bottom', fontsize=10)
-    
+        ax1.text(
+            bar.get_x() + bar.get_width() / 2.0,
+            height + 1,
+            f'{height:.1f}',
+            ha='center',
+            va='bottom',
+            fontsize=TEXT_PT,
+        )
+
     for bar in bars2:
         height = bar.get_height()
-        ax1.text(bar.get_x() + bar.get_width()/2., height + 1,
-                f'{height:.1f}', ha='center', va='bottom', fontsize=10)
+        ax1.text(
+            bar.get_x() + bar.get_width() / 2.0,
+            height + 1,
+            f'{height:.1f}',
+            ha='center',
+            va='bottom',
+            fontsize=TEXT_PT,
+        )
 
     bars3 = ax2.bar(x - width/2, vars_15p, width, label='MMMU', alpha=0.8, color='#FF69B4')
     bars4 = ax2.bar(x + width/2, vars_non_flexible, width, label='MMMU (non-flexible)', alpha=0.8, color='#000000')
     
-    ax2.set_xlabel('Industry', fontsize=14)
-    ax2.set_ylabel('Variance', fontsize=14)
-    ax2.set_title('Employment Variance by Industry', fontsize=16)
+    ax2.set_xlabel('Industry', fontsize=TEXT_PT)
+    ax2.set_ylabel('Variance', fontsize=TEXT_PT)
+    ax2.set_title('Employment Variance by Industry', fontsize=TEXT_PT)
     ax2.set_xticks(x)
-    ax2.set_xticklabels(industries, rotation=45, ha='right')
-    ax2.legend()
+    ax2.set_xticklabels(industries, rotation=45, ha='right', fontsize=TEXT_PT)
+    ax2.legend(fontsize=TEXT_PT)
     ax2.grid(True, alpha=0.3)
 
     # Annotate each variance bar with its variance and standard deviation
@@ -426,7 +489,7 @@ def plot_mean_variance_comparison(differences, output_file=None):
             f'{var_val:.2f}\nσ={std_val:.2f}',
             ha='center',
             va='bottom',
-            fontsize=10,
+            fontsize=TEXT_PT,
         )
 
     for i, bar in enumerate(bars4):
@@ -438,15 +501,15 @@ def plot_mean_variance_comparison(differences, output_file=None):
             f'{var_val:.2f}\nσ={std_val:.2f}',
             ha='center',
             va='bottom',
-            fontsize=10,
+            fontsize=TEXT_PT,
         )
     
     plt.tight_layout()
 
     if output_file is None:
-        output_file = "mean_variance_comparison.png"
-    
-    fig.savefig(output_file, dpi=150, bbox_inches='tight')
+        output_file = "mean_variance_comparison.pdf"
+
+    fig.savefig(output_file, format="pdf", bbox_inches="tight", facecolor="white")
     plt.close()
     
     print(f"Mean and variance comparison plot saved to: {output_file}")
@@ -717,8 +780,8 @@ def compare_employment_scenarios(file_mmmu=None, file_mmmu_non_flexible=None,
     
     os.makedirs(output_dir, exist_ok=True)
 
-    plot_file = os.path.join(output_dir, "employment_scenario_comparison.png")
-    mean_var_plot_file = os.path.join(output_dir, "mean_variance_comparison.png")
+    plot_file = os.path.join(output_dir, "employment_scenario_comparison.pdf")
+    mean_var_plot_file = os.path.join(output_dir, "mean_variance_comparison.pdf")
     csv_file = os.path.join(output_dir, "employment_scenario_comparison.csv")
 
     print("Calculating differences...")

@@ -15,21 +15,49 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+# Publication: sans-serif (Helvetica / Arial), 6 pt, figure width 150 mm
+TEXT_PT = 7
+FIG_WIDTH_MM = 160
+FIG_HEIGHT_MM = 70
+
+
+def _mm_to_inches(mm: float) -> float:
+    return mm / 25.4
+
+
 def set_plot_style():
     """
     Sets up the plotting style for all matplotlib plots in this script.
     """
-    plt.rcParams['font.sans-serif'] = ['Helvetica', 'Arial', 'sans-serif']
-    plt.rcParams['axes.unicode_minus'] = False
-    plt.style.use(['classic', 'seaborn-v0_8-whitegrid',
-                   {'axes.grid': False, 'grid.linestyle': '--', 'grid.color': u'0.6',
-                    'hatch.color': 'white',
-                    'patch.linewidth': 0.5,
-                    'font.size': 18,
-                    'legend.fontsize': 'large',
-                    'lines.linewidth': 3.0,
-                    'pdf.fonttype': 42,
-                    }])
+    plt.style.use(
+        [
+            "classic",
+            "seaborn-v0_8-whitegrid",
+            {
+                "axes.grid": False,
+                "grid.linestyle": "--",
+                "grid.color": "0.6",
+                "hatch.color": "white",
+                "patch.linewidth": 0.5,
+                "lines.linewidth": 1.2,
+                "pdf.fonttype": 42,
+            },
+        ]
+    )
+    plt.rcParams.update(
+        {
+            "font.family": "sans-serif",
+            "font.sans-serif": ["Helvetica", "Arial", "Helvetica Neue", "DejaVu Sans"],
+            "font.size": TEXT_PT,
+            "axes.labelsize": TEXT_PT,
+            "axes.titlesize": TEXT_PT,
+            "xtick.labelsize": TEXT_PT,
+            "ytick.labelsize": TEXT_PT,
+            "legend.fontsize": TEXT_PT,
+            "axes.unicode_minus": False,
+            "pdf.fonttype": 42,
+        }
+    )
 
 def filter_network_by_province(n, target_province=None):
     """
@@ -373,8 +401,9 @@ def plot_monthly_net_demand(monthly_data, scenario, planning_horizon, target_pro
     """
     Plot the monthly residual load curve.
     """
-    # Wider canvas to accommodate large fonts and bottom legend
-    fig, ax = plt.subplots(figsize=(22, 20))
+    fig, ax = plt.subplots(
+        figsize=(_mm_to_inches(FIG_WIDTH_MM), _mm_to_inches(FIG_HEIGHT_MM)),
+    )
 
     colors = {
         "Other Electricity Load": "#1f77b4",
@@ -426,25 +455,27 @@ def plot_monthly_net_demand(monthly_data, scenario, planning_horizon, target_pro
         's--',
         color=colors["Net Load"],
         label=label_map["Net Load"],
-        markersize=14,
-        linewidth=7,
+        markersize=3.5,
+        linewidth=1.2,
     )
-    
-    ax.set_xlabel('Month', fontsize=60)
-    ax.set_ylabel('Demand / generation (TWh)', fontsize=60)
+
+    ax.set_xlabel("Month", fontsize=TEXT_PT)
+    ax.set_ylabel("Demand / generation (TWh)", fontsize=TEXT_PT)
     title_province = target_province or "National"
     # For the national case, omit the figure title; keep it for provincial plots.
     if title_province != "National":
         ax.set_title(
-            f'Monthly residual demand and components - {planning_horizon} ({title_province})',
-            fontsize=60
+            f"Monthly residual demand and components - {planning_horizon} ({title_province})",
+            fontsize=TEXT_PT,
         )
-    
+
     ax.set_xlim(1.0, 12.0)
     ax.set_xticks(range(1, 13))
-    ax.set_xticklabels(['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-                         'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'], fontsize=60)
-    ax.tick_params(axis='y', labelsize=60)
+    ax.set_xticklabels(
+        ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"],
+        fontsize=TEXT_PT,
+    )
+    ax.tick_params(axis="y", labelsize=TEXT_PT)
     ax.grid(True, alpha=0.3)
     
     # Legend: show heat load (Electric heating) first, then electricity (Other electricity load)
@@ -456,25 +487,26 @@ def plot_monthly_net_demand(monthly_data, scenario, planning_horizon, target_pro
         idx_elec = labels.index(elec_label)
         handles = [handles[idx_heat], handles[idx_elec]] + [h for i, h in enumerate(handles) if i not in (idx_heat, idx_elec)]
         labels = [heat_label, elec_label] + [l for i, l in enumerate(labels) if i not in (idx_heat, idx_elec)]
+    ncol_legend = max(1, (len(labels) + 1) // 2)
     ax.legend(
         handles=handles,
         labels=labels,
-        fontsize=60,
-        loc='upper center',
-        bbox_to_anchor=(0.5, -0.12),
-        ncol=len(labels)/2,
+        fontsize=TEXT_PT,
+        loc="upper center",
+        bbox_to_anchor=(0.5, -0.14),
+        ncol=ncol_legend,
         frameon=False,
     )
-    
-    # Leave space for the bottom legend and expand right margin for a wider output
+
     plt.tight_layout()
-    plt.subplots_adjust(bottom=0.25, right=2)
-    
+    # Reserve space for bottom legend; do not use right>1 (breaks PDF bbox width)
+    plt.subplots_adjust(bottom=0.28)
+
     output_dir = "results/monthly_net_demand"
     os.makedirs(output_dir, exist_ok=True)
     safe_province = (target_province or "National").replace(" ", "")
-    plot_filename = f"{output_dir}/net_demand_{planning_horizon}_{safe_province}.png"
-    fig.savefig(plot_filename, dpi=150, bbox_inches='tight')
+    plot_filename = f"{output_dir}/net_demand_{planning_horizon}_{safe_province}.pdf"
+    fig.savefig(plot_filename, format="pdf", bbox_inches="tight", facecolor="white")
     plt.close()
     
     # Save data to CSV
