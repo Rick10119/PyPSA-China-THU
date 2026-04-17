@@ -44,6 +44,8 @@ plt.rcParams.update(
 # Shared cost data: 2020 and 2050_0p are the same for both F and U; 15p and 100p differ by scenario
 # We only plot categories with changes: Labor, Fixed o&m, Restart, Depreciation,
 # Retirement loss, Storage & Capital, Electricity.
+# Per-component CNY/t values below are fixed snapshots for this figure (same numbers as
+# fig_6_s_plot_aluminum_cost_per_ton_all_costs.py); update both if the underlying scenario outputs change.
 CATEGORIES = ['Labor', 'Fixed o&m', 'Restart', 'Depreciation', 'Retirement loss', 'Storage & capital', 'Electricity']
 # Per-category values for the listed categories (order must match CATEGORIES)
 COS_IDX = {

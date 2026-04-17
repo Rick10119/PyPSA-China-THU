@@ -138,7 +138,11 @@ def plot_combined_boxplot(df, output_dir='results/optimal_points_analysis'):
     # Start y-axis from zero
     ax1.set_ylim(bottom=0)
     
-    # Add annual demand lines using the same colors as boxes
+    # Annual primary-aluminum demand reference lines (Mt/year). Same scenario as the
+    # demand series used when computing excess_ratio for optimal-points exports in
+    # scripts/plot_optimal_point.py (save_optimal_points_to_csv: demand in 10k t/y;
+    # values here = that series / 100). Not read from CSV so the figure stays
+    # comparable to the ratio definition; change both places together if the scenario updates.
     demand_by_year = {
         2030: 29.0241717,
         2040: 15.0817033,
