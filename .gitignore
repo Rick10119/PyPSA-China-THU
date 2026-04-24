@@ -9,9 +9,10 @@ __pycache__
 /cutouts
 /logs
 /benchmarks
-./vscode
-/gurobi.log
 /.vscode
+/gurobi.log
+.venv
 /.cursor
 /grbnodes0
 /results
+/.cache
