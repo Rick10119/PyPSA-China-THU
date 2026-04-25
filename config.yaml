@@ -15,9 +15,43 @@ summary_dir: 'summary/'
 threads: 192
 mem_per_thread: 2500
 
+# Direct-run defaults for `scripts/solve_heat_decoupled.py` (run without CLI args).
+# Fill `network` and `out` once, then you can just run:
+#   conda run -n pypsa-china python scripts/solve_heat_decoupled.py
+heat_decoupled_run:
+  network: "results/version-0120.1H.1-MMMU-2030-non_flexible/prenetworks-brownfield/positive/prenetwork-ll-current+FCG-linear2050-2030.nc"
+  out: "results/version-0120.1H.1/heatonly_postnetworks/positive/heatonly_postnetwork-ll-current+FCG-linear2050-2030.nc"
+  opts: "ll"
+  nhours: null
+
 tmin: '-01-01 00:00'
 tmax: '-12-31 23:00'
 freq: '1h'
+
+# Building thermal inertia (demand-side heat storage) – optional.
+# Parameters are per-province and can differ for central vs decentral heating.
+building_inertia:
+  enabled: false
+  params_csv: "data/heating/building_inertia_template.csv"
+  carrier: "building thermal mass"
+
+electricity_prices:
+  # Primary input. If missing, the solver will auto-generate it from `fallback_network_path`.
+  path: "data/electricity_prices/electricity_prices.csv"
+  # Source solved network (.nc) to extract `buses_t.marginal_price` from when `path` does not exist.
+  # Example: "results/version-0120.1H.1-MMMU-2030-non_flexible/postnetworks/positive/postnetwork-ll-current+FCG-linear2050-2030.nc"
+  fallback_network_path: "results/version-0120.1H.1-MMMU-2030-non_flexible/postnetworks/positive/postnetwork-ll-current+FCG-linear2050-2030.nc"
+  # Optional parsing hints (leave defaults unless your CSV uses different headers)
+  region_col: "province"
+  bus_col: "bus"
+  hour_col: "hour"
+  snapshot_col: "snapshot"
+  price_col: "price"
+  index_mode: "auto"     # auto|hour|snapshot
+  region_mode: "auto"    # auto|province|bus
+  require_non_negative: true
+  # Export format when auto-generating from .nc
+  export_format: "long"  # long|wide
 
 add_aluminum: False
 only_other_load: False
@@ -44,6 +78,7 @@ scenario:
     - 2060
   co2_reduction:
     linear2060:
+      '2020': -1.
       '2025': -1.
       '2030': 0.143
       '2035': 0.286
@@ -53,6 +88,7 @@ scenario:
       '2055': 0.857
       '2060': 1.0
     linear2050:
+      '2020': -1.
       '2025': -1.
       '2030': 0.0
       '2035': 0.2
@@ -179,6 +215,16 @@ snapshots:
   start: "2020-01-01"
   end: "2021-01-01"
   inclusive: 'left'
+
+# Optional: tighten CO2 cap in heat-only runs relative to a baseline solved network.
+# This edits/creates the `GlobalConstraint` named `co2_limit` before solving.
+heatonly_co2_limit:
+  enabled: false
+  relative_to_baseline: 0.5
+  # Baseline solved network to compute "current" emissions from (must exist).
+  # You can point this to your unconstrained heat-only result, then set enabled=true.
+  baseline_network: "results/version-0120.1H.1/heatonly_postnetworks/positive/heatonly_postnetwork-ll-current+FCG-linear2050-2030.nc"
+  name: "co2_limit"
 
 logging:
   level: INFO
