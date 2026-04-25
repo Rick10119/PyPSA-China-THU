@@ -38,28 +38,9 @@ solve_network_myopic         (optimize dispatch + investment; aluminum iterative
 
 Each stage reads from `config.yaml` and data files under `data/`, and writes intermediate or final networks to `results/`.
 
-### Heat-only (decoupled heating) workflow
+### Heat-only workflow note (deprecated)
 
-This repository also includes a **heat-only** workflow that strips the electricity system planning/dispatch and solves only the heating technology selection + dispatch with **exogenous electricity prices**. It keeps CHP heat-related constraints and allows CHP electricity to be settled at the exogenous price (import/export settlement layer).
-
-The minimal heat-only DAG is:
-
-```
-prepare_base_networks
-  → add_existing_baseyear
-  → add_brownfield
-  → solve_heat_decoupled
-  → plot_heatonly_typical_days
-  → summary_heatonly
-```
-
-Key outputs (example paths):
-- **Solved heat-only network**: `results/version-<version>/heatonly_postnetworks/<heating_demand>/heatonly_postnetwork-<opts>-<topology>-<pathway>-<planning_horizons>.nc`
-- **Typical-day plots**: `results/version-<version>/heatonly_plots/<heating_demand>/typical_days/<opts>-<topology>-<pathway>-<planning_horizons>/`
-- **Summaries (same folder)**: `results/version-<version>/heatonly_summary/<heating_demand>/summary/<opts>-<topology>-<pathway>-<planning_horizons>/`
-  - `heat-shares.csv` (annual heat supply shares)
-  - `capacities.csv` (installed capacities by carrier)
-  - `co2.csv` (total CO2 and active cap constant)
+Older versions of this repo included an experimental **heat-only** workflow that relied on **exogenous electricity prices**. That approach is deprecated in this repo; electricity price analysis should use post-processing based on solved networks (see `scripts/reconstruct_market_prices.py`).
 
 ## Installation
 

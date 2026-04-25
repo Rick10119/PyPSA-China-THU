@@ -37,6 +37,14 @@ if config["foresight"] == "myopic":
                 + "/postnetworks/{heating_demand}/postnetwork-{opts}-{topology}-{pathway}-{planning_horizons}.nc",
                 **config["scenario"],
             )
+            ,
+            expand(
+                config["results_dir"]
+                + "version-"
+                + str(config["version"])
+                + "/prices/reconstructed/{heating_demand}/reconstructed_prices-{opts}-{topology}-{pathway}-{planning_horizons}.csv",
+                **config["scenario"],
+            )
 
     # rule prepare_all_networks:
     #     input:
@@ -257,6 +265,48 @@ if config["foresight"] == "myopic":
         script: "scripts/solve_network_myopic.py"
 
     ruleorder: prepare_base_networks > add_existing_baseyear > solve_network_myopic
+
+    rule reconstruct_market_prices:
+        input:
+            network=config["results_dir"]
+            + "version-"
+            + str(config["version"])
+            + "/postnetworks/{heating_demand}/postnetwork-{opts}-{topology}-{pathway}-{planning_horizons}.nc"
+        output:
+            prices=config["results_dir"]
+            + "version-"
+            + str(config["version"])
+            + "/prices/reconstructed/{heating_demand}/reconstructed_prices-{opts}-{topology}-{pathway}-{planning_horizons}.csv"
+        params:
+            week_freq=lambda wc: (config.get("reconstruct_prices") or {}).get("week_freq", "W-SUN"),
+            provinces=lambda wc: (
+                [config["single_node_province"]]
+                if bool(config.get("using_single_node", False))
+                else (config.get("reconstruct_prices") or {}).get("provinces")
+            ),
+        threads: 1
+        resources: mem_mb=4000
+        run:
+            # Call the exporter directly to avoid import path issues in snakemake
+            import sys
+
+            cmd = [
+                sys.executable,
+                "scripts/export_reconstructed_prices.py",
+                "--network",
+                input.network,
+                "--out",
+                output.prices,
+                "--week-freq",
+                str(params.week_freq),
+            ]
+            if params.provinces:
+                for p in params.provinces:
+                    cmd += ["--province", str(p)]
+
+            import shlex
+
+            shell(" ".join(shlex.quote(str(x)) for x in cmd))
 
 # rule build_population:
 #     input:
