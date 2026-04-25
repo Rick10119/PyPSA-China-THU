@@ -17,9 +17,14 @@ Run:
 """
 
 from os.path import normpath
+from shutil import move
+
+# from snakemake.remote.HTTP import RemoteProvider as HTTPRemoteProvider
+# HTTP = HTTPRemoteProvider()
 
 configfile: "config.yaml"
 
+ATLITE_NPROCESSES = config['atlite'].get('nprocesses', 4)
 
 if config["foresight"] == "myopic":
 
@@ -31,6 +36,82 @@ if config["foresight"] == "myopic":
                 + str(config["version"])
                 + "/postnetworks/{heating_demand}/postnetwork-{opts}-{topology}-{pathway}-{planning_horizons}.nc",
                 **config["scenario"],
+            )
+
+    # rule prepare_all_networks:
+    #     input:
+    #         expand(
+    #             config['results_dir'] + 'version-' + str(config['version']) + '/prenetworks/{heating_demand}/prenetwork-{opts}-{topology}-{pathway}-{planning_horizons}.nc',
+    #             **config["scenario"]
+    #         ),
+    #         expand(
+    #             config['results_dir'] + 'version-' + str(config[
+    #                 'version']) + '/prenetworks-brownfield/{heating_demand}/prenetwork-{opts}-{topology}-{pathway}-{planning_horizons}.nc',
+    #             ** config["scenario"]
+    #         )
+
+    rule plot_all:
+        input:
+            expand(
+                config['results_dir'] + 'version-' + str(
+                config['version']) + '/plots/heatmap/{heating_demand}/H2/H2-{opts}-{topology}-{pathway}-{planning_horizons}.png',
+                ** config["scenario"]
+            ),
+            # expand(
+            #     config['results_dir'] + 'version-' + str(
+            #     config['version']) + '/plots/heatmap/{heating_demand}/water_tank/water_store-{opts}-{topology}-{pathway}-{planning_horizons}.png',
+            #     ** config["scenario"]
+            # ),
+            # expand(
+            #     config['results_dir'] + 'version-' + str(
+            #     config['version']) + '/plots/weekly_operation/{heating_demand}/weekly_operation_heating-{opts}-{topology}-{pathway}-{planning_horizons}.png',
+            #     ** config["scenario"]
+            # ),
+            # expand(
+            #     config['results_dir'] + 'version-' + str(
+            #     config['version']) + '/plots/weekly_operation/{heating_demand}/weekly_operation_non_heating-{opts}-{topology}-{pathway}-{planning_horizons}.png',
+            #     ** config["scenario"]
+            # ),
+            # expand(
+            #     config['results_dir'] + 'version-' + str(
+            #     config['version']) + '/plots/heating_comparison/{heating_demand}/heating_comparison-{opts}-{topology}-{pathway}-{planning_horizons}.png',
+            #     ** config["scenario"]
+            # ),
+            expand(
+                config['results_dir'] + 'version-' + str(
+                config['version']) + '/plots/summary/{heating_demand}/postnetwork-{opts}-{topology}-{pathway}-{planning_horizons}_costs.png',
+                **config["scenario"]
+            ),
+            expand(
+                config['results_dir'] + 'version-' + str(
+                config['version']) + '/summary/postnetworks/{heating_demand}/postnetwork-{opts}-{topology}-{pathway}-{planning_horizons}/costs.csv',
+                **config["scenario"]
+            ),
+            expand(
+                config['results_dir'] + 'version-' + str(config['version']) + '/plots/capacity_factors/{heating_demand}/capacity_factors-{opts}-{topology}-{pathway}-{planning_horizons}.png',
+                ** config["scenario"]
+            ),
+            # expand(
+            #     config['results_dir'] + 'version-' + str(
+            #     config['version']) + '/plots/network/{heating_demand}/postnetwork-{opts}-{topology}-{pathway}-{planning_horizons}-cost.pdf',
+            #     **config["scenario"]
+            # ),
+            # expand(
+            #     config['results_dir'] + 'version-' + str(
+            #     config['version']) + '/plots/network/{heating_demand}/postnetwork-{opts}-{topology}-{pathway}-{planning_horizons}_ext_heat.pdf',
+            #     **config["scenario"]
+            # ),
+
+    rule solve_all_networks:
+        input:
+            expand(
+                config['results_dir'] + 'version-' + str(config['version']) + '/prenetworks-brownfield/{heating_demand}/prenetwork-{opts}-{topology}-{pathway}-{planning_horizons}.nc',
+                **config["scenario"]
+            ),
+
+            expand(
+                config['results_dir'] + 'version-' + str(config['version']) + '/postnetworks/{heating_demand}/postnetwork-{opts}-{topology}-{pathway}-{planning_horizons}.nc',
+                **config["scenario"]
             )
 
     # Baseyear prenetwork (first planning horizon).
@@ -176,4 +257,141 @@ if config["foresight"] == "myopic":
         script: "scripts/solve_network_myopic.py"
 
     ruleorder: prepare_base_networks > add_existing_baseyear > solve_network_myopic
+
+# rule build_population:
+#     input:
+#         population="data/population/population_from_National_Data_2020.csv"
+#     output:
+#         population="data/population/population.h5"
+#     threads: 1
+#     resources: mem_mb=1000
+#     script: "scripts/build_population.py"
+
+# if config['enable'].get('retrieve_cutout', True):
+#     rule retrieve_cutout:
+#         input: HTTP.remote("zenodo.org/record/8343761/files/China-2020.nc", keep_local=True, static=True)
+#         output: "cutouts/{cutout}.nc"
+#         run: move(input[0], output[0])
+
+
+# if config['enable'].get('build_cutout', False):
+#     rule build_cutout:
+#         input:
+#             regions_onshore="data/resources/regions_onshore.geojson",
+#             regions_offshore="data/resources/regions_offshore.geojson"
+#         output: "cutouts/{cutout}.nc"
+#         log: "logs/build_cutout/{cutout}.log"
+#         benchmark: "benchmarks/build_cutout_{cutout}"
+#         threads: ATLITE_NPROCESSES
+#         resources: mem_mb=ATLITE_NPROCESSES * 1000
+#         script: "scripts/build_cutout.py"
+
+# rule build_population_gridcell_map:
+#     input:
+#         cutout="cutouts/China-2020.nc",
+#         population="data/population/population.h5",
+#         population_density_grid="data/population/CFSR_grid.nc",
+#         province_shape="data/province_shapes/CHN_adm1.shp"
+#     output:
+#         population_map="data/population/population_gridcell_map.h5"
+#     threads: 1
+#     resources: mem_mb=35000
+#     script: "scripts/build_population_gridcell_map.py"
+
+# rule build_solar_thermal_profiles:
+#     input:
+#         cutout="cutouts/China-2020.nc",
+#         population_map="data/population/population_gridcell_map.h5"
+#     output:
+#         profile_solar_thermal = f"data/heating/solar_thermal-{config['solar_thermal_angle']}.h5"
+#     threads: 8
+#     resources: mem_mb=30000
+#     script: "scripts/build_solar_thermal_profiles.py"
+
+# rule build_temp_profiles:
+#     input:
+#         population_map="data/population/population_gridcell_map.h5",
+#         cutout="cutouts/China-2020.nc"
+#     output:
+#         temp="data/heating/temp.h5"
+#     threads: 8
+#     resources: mem_mb=30000
+#     script: "scripts/build_temp_profiles.py"
+
+# rule build_cop_profiles:
+#     input:
+#         population_map="data/population/population_gridcell_map.h5",
+#         cutout="cutouts/China-2020.nc",
+#         temp="data/heating/temp.h5"
+#     output:
+#         cop="data/heating/cop.h5"
+#     threads: 8
+#     resources: mem_mb=30000
+#     script: "scripts/build_cop_profiles.py"
+
+# if config['enable'].get('retrieve_raster', True):
+#     rule retrieve_build_up_raster:
+#         input: HTTP.remote("zenodo.org/record/3939050/files/PROBAV_LC100_global_v3.0.1_2019-nrt_BuiltUp-CoverFraction-layer_EPSG-4326.tif", keep_local=True, static=True)
+#         output: "data/resources/Build_up.tif"
+#         run: move(input[0], output[0])
+#     rule retrieve_Grass_raster:
+#         input: HTTP.remote("zenodo.org/record/3939050/files/PROBAV_LC100_global_v3.0.1_2019-nrt_Grass-CoverFraction-layer_EPSG-4326.tif", keep_local=True, static=True)
+#         output: "data/resources/Grass.tif"
+#         run: move(input[0], output[0])
+#     rule retrieve_Bare_raster:
+#         input: HTTP.remote("zenodo.org/record/3939050/files/PROBAV_LC100_global_v3.0.1_2019-nrt_Bare-CoverFraction-layer_EPSG-4326.tif", keep_local=True, static=True)
+#         output: "data/resources/Bare.tif"
+#         run: move(input[0], output[0])
+#     rule retrieve_Shrubland_raster:
+#         input: HTTP.remote("zenodo.org/record/3939050/files/PROBAV_LC100_global_v3.0.1_2019-nrt_Shrub-CoverFraction-layer_EPSG-4326.tif", keep_local=True, static=True)
+#         output: "data/resources/Shrubland.tif"
+#         run: move(input[0], output[0])
+
+# rule build_renewable_potential:
+#     input:
+#         Build_up_raster="data/landuse_availability/Build_up.tif",
+#         Grass_raster="data/landuse_availability/Grass.tif",
+#         Bare_raster="data/landuse_availability/Bare.tif",
+#         Shrubland_raster="data/landuse_availability/Shrubland.tif",
+#         natura1='data/landuse_availability/WDPA_WDOECM_Mar2022_Public_CHN_shp/WDPA_WDOECM_Mar2022_Public_CHN_shp_0/WDPA_WDOECM_Mar2022_Public_CHN_shp-polygons.shp',
+#         natura2='data/landuse_availability/WDPA_WDOECM_Mar2022_Public_CHN_shp/WDPA_WDOECM_Mar2022_Public_CHN_shp_1/WDPA_WDOECM_Mar2022_Public_CHN_shp-polygons.shp',
+#         natura3='data/landuse_availability/WDPA_WDOECM_Mar2022_Public_CHN_shp/WDPA_WDOECM_Mar2022_Public_CHN_shp_2/WDPA_WDOECM_Mar2022_Public_CHN_shp-polygons.shp',
+#         gebco="data/landuse_availability/GEBCO_tiff/gebco_2021.tif",
+#         provinces_shp="data/province_shapes/CHN_adm1.shp",
+#         offshore_province_shapes="data/resources/regions_offshore_province.geojson",
+#         offshore_shapes="data/resources/regions_offshore.geojson",
+#         cutout= "cutouts/China-2020.nc"
+#     output:
+#         solar_profile="resources/profile_solar.nc",
+#         onwind_profile="resources/profile_onwind.nc",
+#         offwind_profile="resources/profile_offwind.nc"
+#     log: "logs/build_renewable_potential.log"
+#     threads: ATLITE_NPROCESSES
+#     resources: mem_mb=ATLITE_NPROCESSES * 5000
+#     script: "scripts/build_renewable_potential.py"
+
+# rule build_load_profiles:
+#     input:
+#         population = "data/population/population.h5",
+#         population_map = "data/population/population_gridcell_map.h5",
+#         cutout = "cutouts/China-2020.nc",
+#         intraday_profiles="data/heating/heat_load_profile_DK_AdamJensen.csv",
+#         space_heat_demand="data/heating/SPH_2020.csv"
+#     output:
+#         heat_demand_profile = "data/heating/heat_demand_profile_{heating_demand}_{planning_horizons}.h5"
+#     threads: ATLITE_NPROCESSES
+#     resources: mem_mb = ATLITE_NPROCESSES * 5000
+#     script: "scripts/build_load_profiles.py"
+
+# rule build_biomass_potential:
+#     input:
+#         biomass_feedstocks = "data/p_nom/41467_2021_23282_MOESM4_ESM.xlsx"
+#     output:
+#         biomass_potential = "data/p_nom/biomass_potential.h5"
+#     threads: ATLITE_NPROCESSES
+#     resources: mem_mb = ATLITE_NPROCESSES * 5000
+#     script: "scripts/build_biomass_potential.py"
+
+if config.get("plot", False):
+    include: "rules/plot.smk"
 

@@ -10,8 +10,8 @@ conda env update -f envs/environment.yaml
 ## 2) Copy code to server directories
 
 ```bash
-mv ~/Documents/PyPSA-China /scratch/gpfs/rl8728/PyPSA-China-al
-cp -R ~/Documents/PyPSA-China /scratch/gpfs/rl8728/PyPSA-China-1
+mv ~/Documents/PyPSA-China /scratch/gpfs/rl8728/PyPSA-China
+cp -R ~/Documents/PyPSA-China /scratch/gpfs/rl8728/PyPSA-China
 ```
 
 ## 3) Scenario test (JENKINS path)
@@ -22,7 +22,7 @@ module load anaconda3/2024.6
 conda activate pypsa
 
 git fetch --all --prune
-git checkout "building-flexibility"
+git checkout "main"
 git pull
 snakemake --unlock
 sbatch job.slurm
