@@ -1,3 +1,4 @@
+# SPDX-FileCopyrightText: : 2025 Ruike Lyu, rl8728@princeton.edu
 """
 Utility functions for handling scenario-dimension parameters.
 

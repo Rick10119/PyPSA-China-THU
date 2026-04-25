@@ -76,7 +76,9 @@ def add_brownfield(n, n_p, year):
         c.df[attr + "_nom_extendable"] = False
         c.df[attr + "_nom_max"] = np.inf
 
-        n.import_components_from_dataframe(c.df, c.name)
+        # PyPSA v1.x removed the public `import_components_from_dataframe` API.
+        # Use the internal helper to import a whole component table at once.
+        n._import_components_from_df(c.df, c.name, overwrite=True)
 
         # copy time-dependent
         selection = (
@@ -85,7 +87,12 @@ def add_brownfield(n, n_p, year):
         )
 
         for tattr in n.component_attrs[c.name].index[selection]:
-            n.import_series_from_dataframe(c.pnl[tattr].set_index(n.snapshots), c.name, tattr)
+            n._import_series_from_df(
+                c.pnl[tattr].set_index(n.snapshots),
+                c.name,
+                tattr,
+                overwrite=True,
+            )
 
 
     for tech in ['onwind', 'offwind', 'solar']:

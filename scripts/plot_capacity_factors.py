@@ -1,3 +1,4 @@
+# SPDX-FileCopyrightText: : 2025 Ruike Lyu, rl8728@princeton.edu
 """
 This script generates capacity factor plots for different energy resources in the PyPSA-China model.
 It creates visualizations showing how capacity factors vary by month for:

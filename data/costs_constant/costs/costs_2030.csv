@@ -184,9 +184,9 @@ air separation unit,2030,investment,729306.18,EUR/t_N2/h,"Danish Energy Agency, 
 air separation unit,2030,lifetime,30,years,"Danish Energy Agency, data_sheets_for_renewable_fuels.xlsx",103 Hydrogen to Ammonia:  Technical lifetime
 battery inverter,2030,FOM,0.34,%/year,"Danish Energy Agency, technology_data_catalogue_for_energy_storage.xlsx",:  Fixed O&M
 battery inverter,2030,efficiency,0.96,per unit,"Danish Energy Agency, technology_data_catalogue_for_energy_storage.xlsx",:  Round trip efficiency DC
-battery inverter,2030,investment,160,EUR/kW,"Danish Energy Agency, technology_data_catalogue_for_energy_storage.xlsx",:  Output capacity expansion cost investment
+battery inverter,2030,investment,28.62254025044723,EUR/kW,"Danish Energy Agency, technology_data_catalogue_for_energy_storage.xlsx",:  Output capacity expansion cost investment
 battery inverter,2030,lifetime,10,years,"Danish Energy Agency, technology_data_catalogue_for_energy_storage.xlsx, Note K.",:  Technical lifetime
-battery storage,2030,investment,142,EUR/kWh,"Danish Energy Agency, technology_data_catalogue_for_energy_storage.xlsx",:  Energy storage expansion cost investment
+battery storage,2030,investment,25.311942959001783,EUR/kWh,"Danish Energy Agency, technology_data_catalogue_for_energy_storage.xlsx",:  Energy storage expansion cost investment
 battery storage,2030,lifetime,25,years,"Danish Energy Agency, technology_data_catalogue_for_energy_storage.xlsx",:  Technical lifetime
 biogas,2030,CO2 stored,0.09,tCO2/MWh_th,"Stoichiometric calculation, doi:10.1016/j.apenergy.2022.120016",
 biogas,2030,FOM,12.84,%/year,"Danish Energy Agency, data_sheets_for_renewable_fuels.xlsx","81 Biogas Plant, Basic conf.:  Total O&M"
@@ -551,7 +551,7 @@ nuclear,2030,investment,6000,USD/kW_e,Lazard s Levelized Cost of Energy Analysis
 nuclear,2030,lifetime,40,years,Lazard s Levelized Cost of Energy Analysis - Version 13.0,
 offwind,2030,FOM,2.32,%/year,"Danish Energy Agency, technology_data_for_el_and_dh.xlsx","21 Offshore turbines:  Fixed O&M [EUR/MW_e/y, 2020]"
 offwind,2030,VOM,0.02,EUR/MWhel,RES costs made up to fix curtailment order, from old pypsa cost assumptions
-offwind,2030,investment,1523.55,"EUR/kW_e, 2020","Danish Energy Agency, technology_data_for_el_and_dh.xlsx","21 Offshore turbines:  Nominal investment [MEUR/MW_e, 2020] grid connection costs substracted from investment costs"
+offwind,2030,investment,1219.0104664236246,"EUR/kW_e, 2020","Danish Energy Agency, technology_data_for_el_and_dh.xlsx","21 Offshore turbines:  Nominal investment [MEUR/MW_e, 2020] grid connection costs substracted from investment costs"
 offwind,2030,lifetime,30,years,"Danish Energy Agency, technology_data_for_el_and_dh.xlsx",21 Offshore turbines:  Technical lifetime [years]
 offwind-ac-connection-submarine,2030,investment,2685,EUR/MW/km,DEA https://ens.dk/en/our-services/projections-and-models/technology-data, from old pypsa cost assumptions
 offwind-ac-connection-underground,2030,investment,1342,EUR/MW/km,DEA https://ens.dk/en/our-services/projections-and-models/technology-data, from old pypsa cost assumptions
@@ -568,7 +568,7 @@ oil,2030,investment,343,EUR/kW,"Danish Energy Agency, technology_data_for_el_and
 oil,2030,lifetime,25,years,"Danish Energy Agency, technology_data_for_el_and_dh.xlsx",50 Diesel engine farm:  Technical lifetime
 onwind,2030,FOM,1.22,%/year,"Danish Energy Agency, technology_data_for_el_and_dh.xlsx",20 Onshore turbines:  Fixed O&M
 onwind,2030,VOM,1.35,EUR/MWh,"Danish Energy Agency, technology_data_for_el_and_dh.xlsx",20 Onshore turbines:  Variable O&M
-onwind,2030,investment,1035.56,EUR/kW,"Danish Energy Agency, technology_data_for_el_and_dh.xlsx",20 Onshore turbines:  Nominal investment 
+onwind,2030,investment,468.36023073757127,EUR/kW,"Danish Energy Agency, technology_data_for_el_and_dh.xlsx",20 Onshore turbines:  Nominal investment 
 onwind,2030,lifetime,30,years,"Danish Energy Agency, technology_data_for_el_and_dh.xlsx",20 Onshore turbines:  Technical lifetime
 ror,2030,FOM,2,%/year,DIW DataDoc http://hdl.handle.net/10419/80348, from old pypsa cost assumptions
 ror,2030,efficiency,0.9,per unit,DIW DataDoc http://hdl.handle.net/10419/80348, from old pypsa cost assumptions
@@ -584,7 +584,7 @@ solar,2030,investment,492.11,EUR/kW_e,"Danish Energy Agency, technology_data_for
 solar,2030,lifetime,40,years,"Danish Energy Agency, technology_data_for_el_and_dh.xlsx",22 Rooftop PV residential:  Technical lifetime [years]
 solar-rooftop,2030,FOM,1.42,%/year,"Danish Energy Agency, technology_data_for_el_and_dh.xlsx",22 Rooftop PV residential:  Fixed O&M [2020-EUR/MW_e/y]
 solar-rooftop,2030,discount rate,0.04,per unit,standard for decentral, from old pypsa cost assumptions
-solar-rooftop,2030,investment,636.66,EUR/kW_e,"Danish Energy Agency, technology_data_for_el_and_dh.xlsx",22 Rooftop PV residential:  Nominal investment [2020-MEUR/MW_e]
+solar-rooftop,2030,investment,358.41365153721654,EUR/kW_e,"Danish Energy Agency, technology_data_for_el_and_dh.xlsx",22 Rooftop PV residential:  Nominal investment [2020-MEUR/MW_e]
 solar-rooftop,2030,lifetime,40,years,"Danish Energy Agency, technology_data_for_el_and_dh.xlsx",22 Rooftop PV residential:  Technical lifetime [years]
 solar-rooftop commercial,2030,FOM,1.57,%/year,"Danish Energy Agency, technology_data_for_el_and_dh.xlsx",22 Rooftop PV commercial:  Fixed O&M [2020-EUR/MW_e/y]
 solar-rooftop commercial,2030,investment,512.47,EUR/kW_e,"Danish Energy Agency, technology_data_for_el_and_dh.xlsx",22 Rooftop PV commercial:  Nominal investment [2020-MEUR/MW_e]
@@ -593,7 +593,7 @@ solar-rooftop residential,2030,FOM,1.27,%/year,"Danish Energy Agency, technology
 solar-rooftop residential,2030,investment,760.86,EUR/kW_e,"Danish Energy Agency, technology_data_for_el_and_dh.xlsx",22 Rooftop PV residential:  Nominal investment [2020-MEUR/MW_e]
 solar-rooftop residential,2030,lifetime,40,years,"Danish Energy Agency, technology_data_for_el_and_dh.xlsx",22 Rooftop PV residential:  Technical lifetime [years]
 solar-utility,2030,FOM,2.48,%/year,"Danish Energy Agency, technology_data_for_el_and_dh.xlsx",22 Utility-scale PV:  Fixed O&M [2020-EUR/MW_e/y]
-solar-utility,2030,investment,347.56,EUR/kW_e,"Danish Energy Agency, technology_data_for_el_and_dh.xlsx",22 Utility-scale PV:  Nominal investment [2020-MEUR/MW_e]
+solar-utility,2030,investment,280.75522908902917,EUR/kW_e,"Danish Energy Agency, technology_data_for_el_and_dh.xlsx",22 Utility-scale PV:  Nominal investment [2020-MEUR/MW_e]
 solar-utility,2030,lifetime,40,years,"Danish Energy Agency, technology_data_for_el_and_dh.xlsx",22 Utility-scale PV:  Technical lifetime [years]
 solid biomass,2030,CO2 intensity,0.37,tCO2/MWh_th,Stoichiometric calculation with 18 GJ/t_DM LHV and 50% C-content for solid biomass,
 solid biomass,2030,fuel,12,EUR/MWh_th,"JRC ENSPRESO ca avg for MINBIOWOOW1 (secondary forest residue wood chips), ENS_Ref for 2040",

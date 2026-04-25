@@ -1,3 +1,4 @@
+# SPDX-FileCopyrightText: : 2025 Ruike Lyu, rl8728@princeton.edu
 """
 This script generates weekly system operation plots showing various resource outputs during heating and non-heating periods.
 It creates two types of plots:

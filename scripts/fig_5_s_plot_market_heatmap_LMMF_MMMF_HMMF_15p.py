@@ -1,3 +1,4 @@
+# SPDX-FileCopyrightText: : 2025 Ruike Lyu, rl8728@princeton.edu
 """
 Heatmap script comparing three aluminum smelter flexibility scenarios
 LMMF / MMMF / HMMF (2050, 15p).

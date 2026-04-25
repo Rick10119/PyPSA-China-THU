@@ -38,6 +38,29 @@ solve_network_myopic         (optimize dispatch + investment; aluminum iterative
 
 Each stage reads from `config.yaml` and data files under `data/`, and writes intermediate or final networks to `results/`.
 
+### Heat-only (decoupled heating) workflow
+
+This repository also includes a **heat-only** workflow that strips the electricity system planning/dispatch and solves only the heating technology selection + dispatch with **exogenous electricity prices**. It keeps CHP heat-related constraints and allows CHP electricity to be settled at the exogenous price (import/export settlement layer).
+
+The minimal heat-only DAG is:
+
+```
+prepare_base_networks
+  → add_existing_baseyear
+  → add_brownfield
+  → solve_heat_decoupled
+  → plot_heatonly_typical_days
+  → summary_heatonly
+```
+
+Key outputs (example paths):
+- **Solved heat-only network**: `results/version-<version>/heatonly_postnetworks/<heating_demand>/heatonly_postnetwork-<opts>-<topology>-<pathway>-<planning_horizons>.nc`
+- **Typical-day plots**: `results/version-<version>/heatonly_plots/<heating_demand>/typical_days/<opts>-<topology>-<pathway>-<planning_horizons>/`
+- **Summaries (same folder)**: `results/version-<version>/heatonly_summary/<heating_demand>/summary/<opts>-<topology>-<pathway>-<planning_horizons>/`
+  - `heat-shares.csv` (annual heat supply shares)
+  - `capacities.csv` (installed capacities by carrier)
+  - `co2.csv` (total CO2 and active cap constant)
+
 ## Installation
 
 ### Prerequisites
@@ -55,6 +78,9 @@ cd PyPSA-China
 conda env create -f envs/environment.yaml
 conda activate pypsa-china
 ```
+
+Note:
+- The Snakemake scripts in this repo are written against the project's original PyPSA stack (e.g. PyPSA ~0.29). If you create an environment with a much newer PyPSA, you may hit import errors such as `ImportError: cannot import name 'Dict' from pypsa.descriptors` in `scripts/_helpers.py`.
 
 ### Solver and Licensing
 
@@ -75,6 +101,44 @@ snakemake -j 1 solve_all_networks
 ```bash
 snakemake -j 1 plot_all
 ```
+
+### Heat demand input (replace with your model output)
+
+The heating demand time series used for the heating-sector coupling is read from the HDF5 file configured in the workflow (by default the heat-demand input includes e.g. `data/heating/heat_demand_profile_positive_2030.h5`).
+
+The code expects a HDF5 key:
+- Preferred: `/heat_demand_profiles`
+- Fallback: if the preferred key is missing, the **first key** found in the file is used (and a warning is logged).
+
+The dataset should be a table shaped like:
+- index: timestamps aligned to `network.snapshots` (resolution controlled by `config.yaml: freq`, e.g. `6h`)
+- columns: provinces (`pro_names`)
+- values: heat demand as power (MW_th) used as `Load.p_set` on `"<province> central heat"` and `"<province> decentral heat"`.
+
+### Building thermal inertia (demand-side heat storage)
+
+Optional demand-side building inertia can be enabled by adding heat-storage `Store`s on **both** central and decentral heat buses.
+
+- Parameter template: `data/heating/building_inertia_template.csv` (single file with separate central/decentral columns)
+- Config switch in `config.yaml`:
+
+```yaml
+building_inertia:
+  enabled: true
+  params_csv: "data/heating/building_inertia_template.csv"
+  carrier: "building thermal mass"
+```
+
+The CSV schema (columns):
+- `province`
+- `C_th_MWh_per_K_central`, `deltaT_K_central`, `standing_loss_per_hour_central`
+- `C_th_MWh_per_K_decentral`, `deltaT_K_decentral`, `standing_loss_per_hour_decentral`
+
+Effective storage energy is computed as: \(e\_nom = C\_{th}\,[\mathrm{MWh/K}] \times \Delta T\,[\mathrm{K}]\).
+
+### Exogenous electricity prices at coarse time resolution (e.g. 6h)
+
+When `config.yaml: freq` is coarser than 1 hour (e.g. `6h`, so 1460 snapshots), but the price CSV is hourly (e.g. `hour=1..8760`), the price loader will **automatically aggregate** hourly prices into slot blocks (default: mean) to match the network snapshots.
 
 ### Running with Aluminum Integration
 
@@ -229,6 +293,7 @@ results/
 | Out of memory | Increase `--mem-per-cpu` in SLURM or reduce network scope |
 | Aluminum iteration does not converge | Raise `aluminum_convergence_tolerance` (e.g., 0.05) or increase `aluminum_max_iterations` |
 | Missing data files | Check that all required CSVs and JSONs exist under `data/` |
+| `ImportError: cannot import name 'Dict' from pypsa.descriptors` | Use the project environment in `envs/environment.yaml` (PyPSA ~0.29) or update `scripts/_helpers.py` to match your PyPSA version. |
 
 ## License
 

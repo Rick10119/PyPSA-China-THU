@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: : 2025 Ruike Lyu, rl8728@princeton.edu
 """
 Plot boxplots of optimal points.
 Read data from optimal_points_distribution_data_latest.csv and plot boxplots.
@@ -14,9 +15,31 @@ import logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Matplotlib font settings
-plt.rcParams['font.sans-serif'] = ['Helvetica', 'Arial', 'sans-serif']
-plt.rcParams['axes.unicode_minus'] = False
+# Publication: sans-serif (Helvetica / Arial), 6 pt, figure 88×88 mm, PDF output
+TEXT_PT = 6
+FIG_WIDTH_MM = 88
+FIG_HEIGHT_MM = 88
+
+
+def _mm_to_inches(mm: float) -> float:
+    return mm / 25.4
+
+
+def set_plot_style():
+    plt.rcParams.update(
+        {
+            "font.family": "sans-serif",
+            "font.sans-serif": ["Helvetica", "Arial", "Helvetica Neue", "DejaVu Sans"],
+            "font.size": TEXT_PT,
+            "axes.labelsize": TEXT_PT,
+            "axes.titlesize": TEXT_PT,
+            "xtick.labelsize": TEXT_PT,
+            "ytick.labelsize": TEXT_PT,
+            "legend.fontsize": TEXT_PT,
+            "axes.unicode_minus": False,
+            "pdf.fonttype": 42,
+        }
+    )
 
 def load_optimal_points_data(csv_file='results/optimal_points_analysis/optimal_points_distribution_data_latest.csv'):
     """
@@ -55,6 +78,8 @@ def plot_combined_boxplot(df, output_dir='results/optimal_points_analysis'):
     output_dir : str
         Output directory
     """
+    set_plot_style()
+
     # Group by year
     years = sorted(df['year'].unique())
     
@@ -73,31 +98,51 @@ def plot_combined_boxplot(df, output_dir='results/optimal_points_analysis'):
         year_labels.append(f'{year}')
     
     # Create figure: two vertically stacked subplots
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 10))
+    fig, (ax1, ax2) = plt.subplots(
+        2,
+        1,
+        figsize=(
+            _mm_to_inches(FIG_WIDTH_MM),
+            _mm_to_inches(FIG_HEIGHT_MM),
+        ),
+    )
     
     # Colors
     colors = plt.cm.viridis(np.linspace(0, 1, len(years)))
     year_colors = dict(zip(years, colors))
     
     # Top: capacity boxplot
-    bp1 = ax1.boxplot(capacity_data, labels=year_labels, patch_artist=True, 
-                     boxprops=dict(alpha=0.7), medianprops=dict(color='black', linewidth=2),
-                     showfliers=False)
+    bp1 = ax1.boxplot(
+        capacity_data,
+        labels=year_labels,
+        patch_artist=True,
+        boxprops=dict(alpha=0.7),
+        medianprops=dict(color="black", linewidth=0.9),
+        showfliers=False,
+    )
     
     for patch, year in zip(bp1['boxes'], years):
         patch.set_facecolor(year_colors[year])
     
-    ax1.set_title('Distribution of optimal smelting capacity by year', fontsize=18, fontweight='bold', pad=15)
-    # ax1.set_xlabel('Year', fontsize=18, fontweight='bold')
-    ax1.set_ylabel('Smelting capacity (Mt/year)', fontsize=18, fontweight='bold')
+    ax1.set_title(
+        "Distribution of optimal smelting capacity by year",
+        fontsize=TEXT_PT,
+        fontweight="bold",
+        pad=4,
+    )
+    ax1.set_ylabel("Smelting capacity (Mt/year)", fontsize=TEXT_PT, fontweight="bold")
     ax1.grid(True, alpha=0.3)
-    ax1.tick_params(axis='both', which='major', labelsize=18)
+    ax1.tick_params(axis="both", which="major", labelsize=TEXT_PT)
     ax1.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{int(x)}'))
     
     # Start y-axis from zero
     ax1.set_ylim(bottom=0)
     
-    # Add annual demand lines using the same colors as boxes
+    # Annual primary-aluminum demand reference lines (Mt/year). Same scenario as the
+    # demand series used when computing excess_ratio for optimal-points exports in
+    # scripts/plot_optimal_point.py (save_optimal_points_to_csv: demand in 10k t/y;
+    # values here = that series / 100). Not read from CSV so the figure stays
+    # comparable to the ratio definition; change both places together if the scenario updates.
     demand_by_year = {
         2030: 29.0241717,
         2040: 15.0817033,
@@ -108,8 +153,15 @@ def plot_combined_boxplot(df, output_dir='results/optimal_points_analysis'):
         if year in demand_by_year:
             demand = demand_by_year[year]
             # Use the same color as the box
-            ax1.axhline(y=demand, xmin=(i-1)/len(years), xmax=i/len(years), 
-                       color=year_colors[year], linestyle='--', linewidth=3, alpha=0.8)
+            ax1.axhline(
+                y=demand,
+                xmin=(i - 1) / len(years),
+                xmax=i / len(years),
+                color=year_colors[year],
+                linestyle="--",
+                linewidth=1.1,
+                alpha=0.8,
+            )
     
     # Compute mean capacity by year
     year_capacity_means = {}
@@ -131,8 +183,14 @@ def plot_combined_boxplot(df, output_dir='results/optimal_points_analysis'):
         demand_values = [demand_by_year[year] for year in demand_years]
         # Convert year to x-axis position（1, 2, 3...）
         demand_x_positions = [years.index(year) + 1 for year in demand_years]
-        ax1.plot(demand_x_positions, demand_values, 'k--', linewidth=2, alpha=0.6, 
-                label='Demand trend')
+        ax1.plot(
+            demand_x_positions,
+            demand_values,
+            "k--",
+            linewidth=1.0,
+            alpha=0.6,
+            label="Demand trend",
+        )
     
     # Connect mean capacities with a dashed line
     if len(year_capacity_means) > 1:
@@ -140,8 +198,14 @@ def plot_combined_boxplot(df, output_dir='results/optimal_points_analysis'):
         capacity_values = [year_capacity_means[year] for year in capacity_years]
         # Convert year to x-axis position（1, 2, 3...）
         capacity_x_positions = [years.index(year) + 1 for year in capacity_years]
-        ax1.plot(capacity_x_positions, capacity_values, 'b--', linewidth=2, alpha=0.6, 
-                label='Average capacity trend')
+        ax1.plot(
+            capacity_x_positions,
+            capacity_values,
+            "b--",
+            linewidth=1.0,
+            alpha=0.6,
+            label="Average capacity trend",
+        )
     
     # Annotate mean overcapacity ratio above each box
     for i, year in enumerate(years, 1):
@@ -152,23 +216,40 @@ def plot_combined_boxplot(df, output_dir='results/optimal_points_analysis'):
             if not year_data.empty:
                 mean_capacity = year_data['capacity'].mean()
                 # Add text label slightly to the right of the box
-                ax1.text(i + 0.2, mean_capacity, f'{excess_ratio_mean:.0%}', 
-                        ha='left', va='center', fontsize=18, fontweight='bold',
-                        bbox=dict(boxstyle='round,pad=0.1', facecolor='white', alpha=0.8))
+                ax1.text(
+                    i + 0.2,
+                    mean_capacity,
+                    f"{excess_ratio_mean:.0%}",
+                    ha="left",
+                    va="center",
+                    fontsize=TEXT_PT,
+                    fontweight="bold",
+                    bbox=dict(boxstyle="round,pad=0.08", facecolor="white", alpha=0.8),
+                )
     
     # Bottom: net benefit boxplot
-    bp2 = ax2.boxplot(net_value_data, labels=year_labels, patch_artist=True, 
-                     boxprops=dict(alpha=0.7), medianprops=dict(color='black', linewidth=2),
-                     showfliers=False)
+    bp2 = ax2.boxplot(
+        net_value_data,
+        labels=year_labels,
+        patch_artist=True,
+        boxprops=dict(alpha=0.7),
+        medianprops=dict(color="black", linewidth=0.9),
+        showfliers=False,
+    )
     
     for patch, year in zip(bp2['boxes'], years):
         patch.set_facecolor(year_colors[year])
     
-    ax2.set_title('Distribution of optimal net benefit by year', fontsize=18, fontweight='bold', pad=15)
-    ax2.set_xlabel('Year', fontsize=18, fontweight='bold')
-    ax2.set_ylabel('Net benefit (billion CNY)', fontsize=18, fontweight='bold')
+    ax2.set_title(
+        "Distribution of optimal net benefit by year",
+        fontsize=TEXT_PT,
+        fontweight="bold",
+        pad=4,
+    )
+    ax2.set_xlabel("Year", fontsize=TEXT_PT, fontweight="bold")
+    ax2.set_ylabel("Net benefit (billion CNY)", fontsize=TEXT_PT, fontweight="bold")
     ax2.grid(True, alpha=0.3)
-    ax2.tick_params(axis='both', which='major', labelsize=18)
+    ax2.tick_params(axis="both", which="major", labelsize=TEXT_PT)
     ax2.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{int(x)}'))
     
     # Start y-axis from zero
@@ -190,9 +271,16 @@ def plot_combined_boxplot(df, output_dir='results/optimal_points_analysis'):
             if not year_data.empty:
                 mean_net_value = year_data['net_value'].mean()
                 # Add text label next to the box
-                ax2.text(i + 0.2, mean_net_value, f'{net_value_mean:.0f}B', 
-                        ha='left', va='center', fontsize=18, fontweight='bold',
-                        bbox=dict(boxstyle='round,pad=0.1', facecolor='white', alpha=0.8))
+                ax2.text(
+                    i + 0.2,
+                    mean_net_value,
+                    f"{net_value_mean:.0f}B",
+                    ha="left",
+                    va="center",
+                    fontsize=TEXT_PT,
+                    fontweight="bold",
+                    bbox=dict(boxstyle="round,pad=0.08", facecolor="white", alpha=0.8),
+                )
     
     # Add legend to the second subplot (mean net benefit only)
     if year_net_value_means:
@@ -200,20 +288,40 @@ def plot_combined_boxplot(df, output_dir='results/optimal_points_analysis'):
         legend_elements_2 = [Rectangle((0.1, 0.1), 1, 1, facecolor='white', 
                                       edgecolor='black', alpha=0.8,
                                       label='Mean optimal net benefit')]
-        ax2.legend(handles=legend_elements_2, loc='upper left', 
-                  frameon=False, fontsize=18)
+        ax2.legend(
+            handles=legend_elements_2,
+            loc="upper left",
+            frameon=False,
+            fontsize=TEXT_PT,
+        )
     
     # Legend for the first subplot
     legend_elements = []
     
     # Add trend lines to legend
     if len(demand_years) > 1:
-        legend_elements.append(plt.Line2D([0], [0], color='k', linestyle='--', linewidth=2, 
-                                        label='Primary aluminum demand'))
+        legend_elements.append(
+            plt.Line2D(
+                [0],
+                [0],
+                color="k",
+                linestyle="--",
+                linewidth=1.0,
+                label="Primary aluminum demand",
+            )
+        )
     
     if len(year_capacity_means) > 1:
-        legend_elements.append(plt.Line2D([0], [0], color='b', linestyle='-.', linewidth=2, 
-                                        label='Mean optimal capacity'))
+        legend_elements.append(
+            plt.Line2D(
+                [0],
+                [0],
+                color="b",
+                linestyle="-.",
+                linewidth=1.0,
+                label="Mean optimal capacity",
+            )
+        )
     
     # Add mean overcapacity annotation to legend
     if year_capacity_means or year_net_value_means:
@@ -225,18 +333,21 @@ def plot_combined_boxplot(df, output_dir='results/optimal_points_analysis'):
     
     # Add legend to the first subplot without frame
     if legend_elements:
-        ax1.legend(handles=legend_elements, loc='lower left', 
-                  frameon=False, fontsize=18)
+        ax1.legend(
+            handles=legend_elements,
+            loc="lower left",
+            frameon=False,
+            fontsize=TEXT_PT,
+        )
     
-    # (Optional) adjust layout if needed to leave space for legends
-    # plt.tight_layout(rect=[0, 0.1, 1, 1])
-    
+    plt.tight_layout()
+
     # Save figure
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
     
-    plot_file = output_path / "optimal_points_combined_boxplot.png"
-    plt.savefig(plot_file, dpi=300, bbox_inches='tight')
+    plot_file = output_path / "optimal_points_combined_boxplot.pdf"
+    plt.savefig(plot_file, format="pdf", bbox_inches="tight", facecolor="white")
     logger.info(f"Combined boxplot saved to: {plot_file}")
     
     return fig

@@ -1,3 +1,4 @@
+# SPDX-FileCopyrightText: : 2025 Ruike Lyu, rl8728@princeton.edu
 """
 Script to read monthly capacity factor data from CSV file and graph it
 """

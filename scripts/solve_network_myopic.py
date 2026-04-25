@@ -30,7 +30,14 @@ ALLOWED_OPTIMIZE_KWARGS = [
 ]
 
 logger = logging.getLogger(__name__)
-pypsa.pf.logger.setLevel(logging.WARNING)
+# PyPSA logging API changed in v1.0 (module-level `pypsa.pf` removed).
+try:
+    pypsa.pf.logger.setLevel(logging.WARNING)  # type: ignore[attr-defined]
+except Exception:
+    # Best-effort: quiet common PyPSA loggers
+    logging.getLogger("pypsa").setLevel(logging.WARNING)
+    logging.getLogger("pypsa.pf").setLevel(logging.WARNING)
+    logging.getLogger("pypsa.power_flow").setLevel(logging.WARNING)
 
 # Set the log level of gurobipy and linopy to avoid outputting info information
 import logging
@@ -180,11 +187,20 @@ def add_chp_constraints(n):
         n.model.add_constraints(lhs == 0, name="chplink-fix_p_nom_ratio")
 
         # Scale the top_iso_fuel_line constraint
-        rename = {"Link-ext": "Link"}
+        # PyPSA/linopy dimension names changed across versions.
+        # Older stacks used a `Link-ext` dimension for extendable assets; PyPSA>=1.0
+        # uses `Link` directly. Rename only if the old dimension exists.
+        p_nom_for_lhs = p_nom
+        try:
+            dims = getattr(getattr(p_nom_for_lhs, "data", None), "dims", ())
+            if "Link-ext" in dims:
+                p_nom_for_lhs = p_nom_for_lhs.rename({"Link-ext": "Link"})
+        except Exception:
+            p_nom_for_lhs = p_nom
         lhs = (
             p.loc[:, electric_ext] * scale_factor
             + p.loc[:, heat_ext] * scale_factor
-            - p_nom.rename(rename).loc[electric_ext] * scale_factor
+            - p_nom_for_lhs.loc[electric_ext] * scale_factor
         )
         n.model.add_constraints(lhs <= 0, name="chplink-top_iso_fuel_line_ext")
 
@@ -1318,11 +1334,19 @@ def solve_network_standard(n, config, solving, opts="", **kwargs):
             **optimize_kwargs,
         )
 
-    # Store the objective value from the model (Compatibility processing)
-    if hasattr(n.model, 'objective_value'):
-        n.objective = n.model.objective_value
-    elif hasattr(n.model, 'objective'):
-        n.objective = n.model.objective.value
+    # Store the objective value from the model.
+    # In PyPSA v1.x, `Network.objective` is a read-only property; keep this as metadata.
+    obj = None
+    if hasattr(n.model, "objective_value"):
+        obj = float(n.model.objective_value)
+    elif hasattr(n.model, "objective"):
+        obj = float(n.model.objective.value)
+    if obj is not None:
+        try:
+            n.meta["objective"] = obj
+        except Exception:
+            # Best-effort: do not fail if meta is unavailable/unwritable
+            pass
 
     return n
 

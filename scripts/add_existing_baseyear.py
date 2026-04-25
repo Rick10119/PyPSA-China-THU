@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: : 2024 The PyPSA-China Authors
+# SPDX-FileCopyrightText: : 2026 Ruike Lyu
 #
 # SPDX-License-Identifier: MIT
 
@@ -63,10 +63,12 @@ def add_existing_capacities(df_agg):
         "offwind": "offwind",
         "coal boiler": "coal boiler",
         "ground heat pump": "heat pump",
-        "nuclear": "nuclear"
+        "nuclear": "nuclear",
+        "battery": "battery",
+        "PHS": "PHS",
     }
 
-    for tech in ['coal','CHP coal', 'CHP gas', 'OCGT','solar', 'solar thermal', 'onwind', 'offwind','coal boiler','ground heat pump','nuclear']:
+    for tech in ['coal','CHP coal', 'CHP gas', 'OCGT','solar', 'solar thermal', 'onwind', 'offwind','coal boiler','ground heat pump','nuclear','battery','PHS']:
 
         df = pd.read_csv(snakemake.input[f"existing_{tech}"], index_col=0).fillna(0.).infer_objects(copy=False)
         df.columns = df.columns.astype(int)
@@ -127,7 +129,9 @@ def add_power_capacities_installed_before_baseyear(n, grouping_years, costs, bas
         "offwind": "offwind",
         "coal boiler": "coal boiler",
         "ground heat pump": "heat pump",
-        "nuclear": "nuclear"
+        "nuclear": "nuclear",
+        "battery": "battery",
+        "PHS": "PHS",
     }
 
     for grouping_year, generator in df.index:
@@ -169,6 +173,62 @@ def add_power_capacities_installed_before_baseyear(n, grouping_years, costs, bas
                    build_year=grouping_year,
                    lifetime=costs.at[generator, 'lifetime']
                    )
+
+        if generator == "PHS":
+            # Add fixed pumped-hydro storage as StorageUnit (power capacity in MW)
+            n.madd(
+                "StorageUnit",
+                capacity.index,
+                suffix=" PHS-" + str(grouping_year),
+                bus=capacity.index,
+                carrier="PHS",
+                p_nom=capacity,
+                p_nom_min=capacity,
+                p_nom_extendable=False,
+                max_hours=config["hydro"]["PHS_max_hours"],
+                efficiency_store=np.sqrt(costs.at["PHS", "efficiency"]),
+                efficiency_dispatch=np.sqrt(costs.at["PHS", "efficiency"]),
+                cyclic_state_of_charge=True,
+                capital_cost=costs.at["PHS", "capital_cost"],
+                build_year=grouping_year,
+                lifetime=costs.at["PHS", "lifetime"],
+                marginal_cost=0.0,
+            )
+
+        if generator == "battery":
+            # Existing battery is represented in this model as:
+            # - Store on "<province> battery" bus with energy capacity e_nom [MWh]
+            # - Two Links (charger/discharger) with power capacity p_nom [MW]
+            # Here, the input CSV provides power capacity in MW for the 5-year window.
+            # Existing (brownfield) battery duration should reflect the national
+            # average storage duration, not the model's default design duration.
+            max_hours = (
+                config.get("existing_capacities", {}).get(
+                    "battery_max_hours_existing",
+                    config["electricity"]["max_hours"]["battery"],
+                )
+            )
+            e_nom = capacity * max_hours
+
+            store_i = capacity.index + " battery"
+            # Ensure indices exist in the base network
+            store_i = store_i.intersection(n.stores.index)
+            if not store_i.empty:
+                n.stores.loc[store_i, "e_nom_min"] = e_nom.loc[store_i.str.replace(" battery$", "", regex=True)].values
+                n.stores.loc[store_i, "e_nom_extendable"] = True
+                # Set build_year only if not set
+                n.stores.loc[store_i, "build_year"] = n.stores.loc[store_i, "build_year"].replace(0, grouping_year)
+
+            for suffix in [" battery charger", " battery discharger"]:
+                link_i = capacity.index + suffix
+                link_i = link_i.intersection(n.links.index)
+                if link_i.empty:
+                    continue
+                # Map link index back to province
+                prov = link_i.str.replace(suffix + "$", "", regex=True)
+                n.links.loc[link_i, "p_nom_min"] = capacity.loc[prov].values
+                n.links.loc[link_i, "p_nom_extendable"] = True
+                n.links.loc[link_i, "build_year"] = n.links.loc[link_i, "build_year"].replace(0, grouping_year)
 
         if generator == "nuclear":
             n.madd("Generator",

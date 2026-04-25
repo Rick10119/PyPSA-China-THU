@@ -19,11 +19,13 @@ cp -R ~/Documents/PyPSA-China /scratch/gpfs/rl8728/PyPSA-China-1
 ```bash
 cd /scratch/gpfs/JENKINS/rl8728/PyPSA-China
 module load anaconda3/2024.6
-conda activate pypsa-china
+conda activate pypsa
 
-git restore .
+git fetch --all --prune
+git checkout "building-flexibility"
 git pull
 snakemake --unlock
+sbatch job.slurm
 
 chmod +x submit_multiple_jobs.sh
 ./submit_multiple_jobs.sh

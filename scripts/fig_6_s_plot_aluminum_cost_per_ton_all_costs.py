@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: : 2025 Ruike Lyu, rl8728@princeton.edu
 """
 Visualization script for the cost composition of primary aluminum smelting.
 
@@ -17,6 +18,8 @@ plt.rcParams['axes.unicode_minus'] = False
 
 # Shared cost data: 2020 and 2050_0p are the same for both F and U; 15p and 100p differ by scenario
 # Order: Raw materials (bottom), Other costs (above it), then the rest
+# CNY/t components are fixed snapshots for publication; paired script:
+# fig_6_plot_aluminum_cost_change_per_ton.py — keep in sync when updating.
 CATEGORIES = ['Raw materials', 'Other costs', 'Labor', 'Fixed o&m', 'Restart', 'Depreciation', 'Retirement loss', 'Storage & Capital', 'Electricity']
 # Per-category values: [raw, other, labor, fixed, restart, depr, retirement, storage, electricity]
 COSTS_2020 = [8451.2, 1500, 150, 400, 0.01, 300, 0, 1, 6250]

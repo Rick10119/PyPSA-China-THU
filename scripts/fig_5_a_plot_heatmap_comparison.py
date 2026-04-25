@@ -1,3 +1,4 @@
+# SPDX-FileCopyrightText: : 2025 Ruike Lyu, rl8728@princeton.edu
 """
 Heatmap comparison script for MMMU and NMMU scenarios.
 
@@ -25,24 +26,128 @@ import os
 import argparse
 from pathlib import Path
 
+# Publication: sans-serif (Helvetica / Arial), 6 pt, figure 150×70 mm, PDF output
+TEXT_PT = 6
+DATE_TICK_PT = 5  # x-axis date labels on heatmaps
+FIG_WIDTH_MM = 150
+FIG_HEIGHT_MM = 90
+
+
+def _mm_to_inches(mm: float) -> float:
+    return mm / 25.4
+
+
+def _reduce_heatmap_day_ticks(ax, columns, *, step: int = 15):
+    """
+    Show x-axis day labels every `step` columns (~half month when step=15).
+
+    Seaborn heatmap places column centers at 0.5, 1.5, ...
+    """
+    n = len(columns)
+    if n == 0:
+        return
+    cols = list(columns)
+    tick_indices = list(range(0, n, step))
+    if n > 1 and tick_indices[-1] != n - 1:
+        tick_indices.append(n - 1)
+    # Ensure 12-27 is listed if that day exists in columns
+    for i, c in enumerate(cols):
+        if str(c) == "12-27":
+            tick_indices.append(i)
+            break
+    tick_indices = sorted(set(tick_indices))
+    # If 12-27 and 12-31 are both ticks a few days apart, matplotlib often drops one label;
+    # drop 12-31 so 12-27 stays visible.
+    idx_1227 = next((i for i, c in enumerate(cols) if str(c) == "12-27"), None)
+    idx_1231 = next((i for i, c in enumerate(cols) if str(c) == "12-31"), None)
+    if (
+        idx_1227 is not None
+        and idx_1231 is not None
+        and idx_1227 in tick_indices
+        and idx_1231 in tick_indices
+        and (idx_1231 - idx_1227) <= 10
+    ):
+        tick_indices.remove(idx_1231)
+    positions = [i + 0.5 for i in tick_indices]
+    labels = [str(cols[i]) for i in tick_indices]
+    ax.set_xticks(positions)
+    ax.set_xticklabels(
+        labels,
+        rotation=90,
+        ha="center",
+        va="top",
+        fontsize=DATE_TICK_PT,
+    )
+    # Move labels up by ~one digit height (negative pad pulls tick text toward the axes)
+    ax.tick_params(axis="x", which="major", pad=-0.00)
+
+
+def _style_heatmap_colorbar(ax):
+    """Apply TEXT_PT to colorbar ticks and label (no position — layout would overwrite)."""
+    try:
+        if not ax.collections:
+            return
+        cb = ax.collections[0].colorbar
+        if cb is None:
+            return
+        cb.ax.tick_params(axis="y", labelsize=TEXT_PT)
+        lab = cb.ax.yaxis.label.get_text() or "pu"
+        cb.set_label(lab, fontsize=TEXT_PT)
+    except (AttributeError, IndexError):
+        return
+
+
+def _shift_heatmap_colorbar_right(ax, dx: float = 0.035) -> None:
+    """
+    Move the entire colorbar axes (bar + ticks + label) right in figure coordinates.
+
+    Must run *after* plt.tight_layout / subplots_adjust, or the shift is reset.
+    """
+    try:
+        if not ax.collections:
+            return
+        cb = ax.collections[0].colorbar
+        if cb is None:
+            return
+        pos = cb.ax.get_position()
+        cb.ax.set_position([pos.x0 + dx, pos.y0, pos.width, pos.height])
+    except (AttributeError, IndexError):
+        return
+
+
 def set_plot_style():
     """
     Set global plotting style.
     """
-    # Use Helvetica-like fonts
-    plt.rcParams['font.sans-serif'] = ['Helvetica', 'Arial', 'sans-serif']
-    plt.rcParams['axes.unicode_minus'] = False
-    
-    plt.style.use(['classic', 'seaborn-v0_8-whitegrid',
-                   {'axes.grid': False, 'grid.linestyle': '--', 'grid.color': u'0.6',
-                    'hatch.color': 'white',
-                    'patch.linewidth': 0.5,
-                    'font.size': 22,
-                    'legend.fontsize': 25,
-                    'ytick.labelsize': 22,
-                    'lines.linewidth': 1.5,
-                    'pdf.fonttype': 42,
-                    }])
+    plt.style.use(
+        [
+            "classic",
+            "seaborn-v0_8-whitegrid",
+            {
+                "axes.grid": False,
+                "grid.linestyle": "--",
+                "grid.color": "0.6",
+                "hatch.color": "white",
+                "patch.linewidth": 0.5,
+                "lines.linewidth": 1.0,
+                "pdf.fonttype": 42,
+            },
+        ]
+    )
+    plt.rcParams.update(
+        {
+            "font.family": "sans-serif",
+            "font.sans-serif": ["Helvetica", "Arial", "Helvetica Neue", "DejaVu Sans"],
+            "font.size": TEXT_PT,
+            "axes.labelsize": TEXT_PT,
+            "axes.titlesize": TEXT_PT,
+            "xtick.labelsize": TEXT_PT,
+            "ytick.labelsize": TEXT_PT,
+            "legend.fontsize": TEXT_PT,
+            "axes.unicode_minus": False,
+            "pdf.fonttype": 42,
+        }
+    )
 
 def create_df(n, tech, province_filter=None):
     """
@@ -234,8 +339,11 @@ def plot_comparison_heatmap(n_mmm, n_nmm, config, output_dir, tech, province_fil
         province_dir = output_dir
         plot_title_suffix = " (National)"
     
-    # Create vertically stacked subplots (approx. square overall aspect ratio)
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 12))
+    fig, (ax1, ax2) = plt.subplots(
+        2,
+        1,
+        figsize=(_mm_to_inches(FIG_WIDTH_MM), _mm_to_inches(FIG_HEIGHT_MM)),
+    )
     
     # MMMU scenario
     if tech == "aluminum":
@@ -258,17 +366,33 @@ def plot_comparison_heatmap(n_mmm, n_nmm, config, output_dir, tech, province_fil
         base_mmm_display = str(int(base_mmm / 1e3))  # display in GW
         
         if tech == "aluminum":
-            sns.heatmap(df_mmm, ax=ax1, cmap='coolwarm', cbar_kws={'label': 'pu', 'shrink': 0.8}, vmin=0.0, vmax=1.0)
+            sns.heatmap(
+                df_mmm,
+                ax=ax1,
+                cmap="coolwarm",
+                cbar_kws={"label": "pu", "shrink": 1},
+                vmin=0.0,
+                vmax=1.0,
+            )
         else:
-            sns.heatmap(df_mmm, ax=ax1, cmap='coolwarm', cbar_kws={'label': 'pu', 'shrink': 0.8}, vmin=-1.0, vmax=1.0)
-        
-        ax1.set_title(f'Mid smelter flexibility (core scenario)')
+            sns.heatmap(
+                df_mmm,
+                ax=ax1,
+                cmap="coolwarm",
+                cbar_kws={"label": "pu", "shrink": 0.8},
+                vmin=-1.0,
+                vmax=1.0,
+            )
+        _style_heatmap_colorbar(ax1)
+
+        ax1.set_title("Mid smelter flexibility (core scenario)", fontsize=TEXT_PT)
         # Hide x-axis label (Day) for the first subplot
         ax1.set_xlabel('')
         # ax1.set_xticklabels([])
         # Keep y-axis labels upright
         ax1.set_yticklabels(ax1.get_yticklabels(), rotation=0)
-        
+        _reduce_heatmap_day_ticks(ax1, df_mmm.columns)
+
         # Overlay aluminum storage level (without extra labels)
         if tech == "aluminum" and not daily_storage_mmm.empty:
             day_columns = df_mmm.columns
@@ -283,11 +407,11 @@ def plot_comparison_heatmap(n_mmm, n_nmm, config, output_dir, tech, province_fil
             if storage_values:
                 ax1_twin = ax1.twinx()
                 # Outline in white first
-                ax1_twin.plot(storage_positions, storage_values, 'w-', linewidth=3.5, zorder=1)
+                ax1_twin.plot(storage_positions, storage_values, "w-", linewidth=1.0, zorder=1)
                 # Then draw black line inside
-                ax1_twin.plot(storage_positions, storage_values, 'k-', linewidth=2, zorder=2)
-                ax1_twin.set_ylabel('Stored aluminum (Mt)', color='black')
-                ax1_twin.tick_params(axis='y', labelcolor='black')
+                ax1_twin.plot(storage_positions, storage_values, "k-", linewidth=0.7, zorder=2)
+                ax1_twin.set_ylabel("Stored aluminum (Mt)", color="black", fontsize=TEXT_PT)
+                ax1_twin.tick_params(axis="y", labelcolor="black", labelsize=TEXT_PT)
                 ax1_twin.set_xlim(0, len(day_columns))
     
     # Plot NMMU heatmap
@@ -295,16 +419,32 @@ def plot_comparison_heatmap(n_mmm, n_nmm, config, output_dir, tech, province_fil
         base_nmm_display = str(int(base_nmm / 1e3))  # display in GW
         
         if tech == "aluminum":
-            sns.heatmap(df_nmm, ax=ax2, cmap='coolwarm', cbar_kws={'label': 'pu', 'shrink': 0.8}, vmin=0.0, vmax=1.0)
+            sns.heatmap(
+                df_nmm,
+                ax=ax2,
+                cmap="coolwarm",
+                cbar_kws={"label": "pu", "shrink": 0.8},
+                vmin=0.0,
+                vmax=1.0,
+            )
         else:
-            sns.heatmap(df_nmm, ax=ax2, cmap='coolwarm', cbar_kws={'label': 'pu', 'shrink': 0.8}, vmin=-1.0, vmax=1.0)
-        
-        ax2.set_title(f'Non-constrained smelter flexibility')
+            sns.heatmap(
+                df_nmm,
+                ax=ax2,
+                cmap="coolwarm",
+                cbar_kws={"label": "pu", "shrink": 0.8},
+                vmin=-1.0,
+                vmax=1.0,
+            )
+        _style_heatmap_colorbar(ax2)
+
+        ax2.set_title("Non-constrained smelter flexibility", fontsize=TEXT_PT)
         # Add x-axis label for the second subplot
-        ax2.set_xlabel('Day')
+        ax2.set_xlabel("Day", fontsize=TEXT_PT)
         # Keep y-axis labels upright
         ax2.set_yticklabels(ax2.get_yticklabels(), rotation=0)
-        
+        _reduce_heatmap_day_ticks(ax2, df_nmm.columns)
+
         # Overlay aluminum storage level
         if tech == "aluminum" and not daily_storage_nmm.empty:
             day_columns = df_nmm.columns
@@ -319,24 +459,39 @@ def plot_comparison_heatmap(n_mmm, n_nmm, config, output_dir, tech, province_fil
             if storage_values:
                 ax2_twin = ax2.twinx()
                 # Outline in white first
-                ax2_twin.plot(storage_positions, storage_values, 'w-', linewidth=3.5, zorder=1)
+                ax2_twin.plot(storage_positions, storage_values, "w-", linewidth=1.0, zorder=1)
                 # Then draw black line inside
-                ax2_twin.plot(storage_positions, storage_values, 'k-', linewidth=2, label='Stored aluminum', zorder=2)
-                ax2_twin.set_ylabel('Stored aluminum (Mt)', color='black')
-                ax2_twin.tick_params(axis='y', labelcolor='black')
-                ax2_twin.legend(loc='lower right', bbox_to_anchor=(1.1, -0.5))
+                ax2_twin.plot(
+                    storage_positions,
+                    storage_values,
+                    "k-",
+                    linewidth=0.7,
+                    label="Stored aluminum",
+                    zorder=2,
+                )
+                ax2_twin.set_ylabel("Stored aluminum (Mt)", color="black", fontsize=TEXT_PT)
+                ax2_twin.tick_params(axis="y", labelcolor="black", labelsize=TEXT_PT)
+                ax2_twin.legend(
+                    loc="lower right",
+                    bbox_to_anchor=(1.02, -0.39),
+                    fontsize=TEXT_PT,
+                    frameon=False,
+                )
                 ax2_twin.set_xlim(0, len(day_columns))
     
-    # Adjust layout and leave more space for legend
+    for _ax in (ax1, ax2):
+        _ax.tick_params(axis="both", which="major", labelsize=TEXT_PT)
+
     plt.tight_layout()
-    # Further adjust spacing between subplots for right-side legend
-    plt.subplots_adjust(right=2)
-    
-    # plt.show()
-    
+    # Room for colorbars on the right; do not use right>1 (breaks PDF width)
+    plt.subplots_adjust(right=0.86, hspace=0.35)
+    # Shift colorbars after layout (tight_layout resets manual positions)
+    for _ax in (ax1, ax2):
+        _shift_heatmap_colorbar_right(_ax)
+
     # Save figure
-    output_path = os.path.join(province_dir, f"smelter_flexibility_comparison.png")
-    fig.savefig(output_path, dpi=150, bbox_inches='tight')
+    output_path = os.path.join(province_dir, "smelter_flexibility_comparison.pdf")
+    fig.savefig(output_path, format="pdf", bbox_inches="tight", facecolor="white")
     print(f"Saved {tech} comparison heatmap to: {output_path}")
     plt.close()
 

@@ -6,8 +6,100 @@ import os
 import pandas as pd
 from pathlib import Path
 from types import SimpleNamespace
-from pypsa.descriptors import Dict
-from pypsa.components import components, component_attrs
+import pypsa
+import numpy as np
+
+try:
+    # Older PyPSA exposed a small helper mapping here.
+    # Newer PyPSA removed/relocated it, so we fall back to a local shim.
+    from pypsa.descriptors import Dict  # type: ignore
+except Exception:
+    class Dict(dict):
+        """
+        Backwards-compatible mapping used across the PyPSA-Eur ecosystem.
+
+        Historically provided by `pypsa.descriptors.Dict`. Snakemake helpers and
+        some PyPSA-Eur-derived scripts rely on attribute-style access
+        (e.g. wc.foo) in addition to normal dict semantics.
+        """
+
+        def __getattr__(self, item):
+            try:
+                return self[item]
+            except KeyError as e:
+                raise AttributeError(item) from e
+
+        def __setattr__(self, key, value):
+            self[key] = value
+
+        def __delattr__(self, item):
+            try:
+                del self[item]
+            except KeyError as e:
+                raise AttributeError(item) from e
+
+
+# --- PyPSA API compatibility shims -------------------------------------------
+#
+# PyPSA 1.0 removed `Network.madd` (bulk add). This repo relies on it heavily,
+# so we provide a small wrapper using `Network.add`.
+if not hasattr(pypsa.Network, "madd"):
+    def _madd(self, component, names, suffix="", **kwargs):
+        # `names` can be any iterable (Index/list/Series/np.array).
+        if names is None:
+            return
+
+        # Make it list-like with stable length.
+        if isinstance(names, (pd.Index, pd.Series, np.ndarray)):
+            name_list = list(names)
+        else:
+            name_list = list(names)
+
+        n = len(name_list)
+
+        # Normalize per-component attributes: scalars broadcast, sequences index.
+        def _value_for_i(v, i):
+            # Common PyPSA pattern: time series as DataFrame with columns=names
+            # (e.g. p_set for loads/generators). Split by column.
+            if isinstance(v, pd.DataFrame):
+                # If columns cover the component names, take the appropriate column.
+                if all(name in v.columns for name in name_list):
+                    return v[name_list[i]]
+                # Otherwise, fall back to passing it through (PyPSA will error if incompatible).
+                return v
+
+            # Another common pattern: Series indexed by component names
+            # (e.g. p_nom_max per bus). Split by index.
+            if isinstance(v, pd.Series) and all(name in v.index for name in name_list):
+                return v.loc[name_list[i]]
+
+            if isinstance(v, (pd.Series, pd.Index, np.ndarray, list, tuple)):
+                # broadcast only if clearly scalar-like
+                if len(v) == n:
+                    return v[i]
+            return v
+
+        for i, name in enumerate(name_list):
+            attrs = {k: _value_for_i(v, i) for k, v in kwargs.items()}
+            self.add(component, f"{name}{suffix}", **attrs)
+
+    pypsa.Network.madd = _madd  # type: ignore[attr-defined]
+
+# PyPSA 1.0 removed `Network.mremove` (bulk remove). Provide a wrapper.
+if not hasattr(pypsa.Network, "mremove"):
+    def _mremove(self, component, names):
+        if names is None:
+            return
+        if isinstance(names, (pd.Index, pd.Series, np.ndarray)):
+            name_list = list(names)
+        else:
+            name_list = list(names)
+        if len(name_list) == 0:
+            return
+        for name in name_list:
+            self.remove(component, name)
+
+    pypsa.Network.mremove = _mremove  # type: ignore[attr-defined]
 
 def override_component_attrs(directory):
     """Tell PyPSA that links can have multiple outputs by
@@ -24,11 +116,39 @@ def override_component_attrs(directory):
     Dictionary of overriden component attributes.
     """
 
-    attrs = Dict({k : v.copy() for k,v in component_attrs.items()})
+    # PyPSA <= 0.29 exposed component definitions via `pypsa.components.component_attrs`.
+    # PyPSA >= 1.0 moved component definitions into `Network().components.<component>.defaults`.
+    # This helper keeps both variants working.
+    try:
+        # Old-style API (PyPSA < 1.0)
+        from pypsa.components import components as _components, component_attrs as _component_attrs  # type: ignore
 
-    for component, list_name in components.list_name.items():
-        fn = f"{directory}/{list_name}.csv"
-        if os.path.isfile(fn):
+        attrs = Dict({k: v.copy() for k, v in _component_attrs.items()})
+
+        for component, list_name in _components.list_name.items():
+            fn = f"{directory}/{list_name}.csv"
+            if os.path.isfile(fn):
+                overrides = pd.read_csv(fn, index_col=0, na_values="n/a")
+                attrs[component] = overrides.combine_first(attrs[component])
+
+        return attrs
+
+    except Exception:
+        # New-style API (PyPSA >= 1.0)
+        n = pypsa.Network()
+
+        # `n.components` is a store keyed by list_name (e.g. "links") with objects
+        # exposing `name` (e.g. "Link") and `defaults` (DataFrame of attributes).
+        attrs = Dict({c.name: c.defaults.copy() for c in n.components.values()})
+
+        directory = str(directory)
+        for fn in Path(directory).glob("*.csv"):
+            list_name = fn.stem  # e.g. "links"
+            # PyPSA 1.0+ discourages `item in n.components` and may raise a
+            # DeprecationWarning as an exception; use explicit keys instead.
+            if list_name not in n.components.keys():
+                continue
+            component = n.components[list_name].name  # e.g. "Link"
             overrides = pd.read_csv(fn, index_col=0, na_values="n/a")
             attrs[component] = overrides.combine_first(attrs[component])
 
@@ -85,24 +205,54 @@ def mock_snakemake(rulename, **wildcards):
     """
     import snakemake as sm
     import os
-    from pypsa.descriptors import Dict
     from snakemake.script import Snakemake
+
+    # Snakemake public API has changed across versions; internal classes may not
+    # be exposed at the top-level module anymore.
+    try:
+        from snakemake.workflow import Workflow
+        from snakemake.dag import DAG
+        from snakemake.jobs import Job
+    except Exception:
+        # Fallback for older snakemake versions
+        Workflow = getattr(sm, "Workflow")
+        DAG = getattr(sm.dag, "DAG")
+        Job = getattr(sm.jobs, "Job")
 
     script_dir = Path(__file__).parent.resolve()
     assert Path.cwd().resolve() == script_dir, \
       f'mock_snakemake has to be run from the repository scripts directory {script_dir}'
     os.chdir(script_dir.parent)
-    for p in sm.SNAKEFILE_CHOICES:
+
+    # Snakemake versions differ: older releases exposed SNAKEFILE_CHOICES, newer
+    # ones may not. Keep a small, robust fallback list.
+    snakefile_choices = getattr(
+        sm,
+        "SNAKEFILE_CHOICES",
+        (
+            "Snakefile",
+            "snakefile",
+            "workflow/Snakefile",
+            "workflow/snakefile",
+        ),
+    )
+
+    for p in snakefile_choices:
         if os.path.exists(p):
             snakefile = p
             break
-    workflow = sm.Workflow(snakefile, overwrite_configfiles=[])
+    else:
+        raise FileNotFoundError(
+            "Could not find a Snakefile. Looked for: "
+            + ", ".join(map(str, snakefile_choices))
+        )
+    workflow = Workflow(snakefile, overwrite_configfiles=[])
     workflow.include(snakefile)
     workflow.global_resources = {}
     rule = workflow.get_rule(rulename)
-    dag = sm.dag.DAG(workflow, rules=[rule])
+    dag = DAG(workflow, rules=[rule])
     wc = Dict(wildcards)
-    job = sm.jobs.Job(rule, dag, wc)
+    job = Job(rule, dag, wc)
 
     def make_accessable(*ios):
         for io in ios:

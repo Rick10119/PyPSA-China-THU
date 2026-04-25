@@ -350,8 +350,26 @@ def prepare_network(config):
     if config["heat_coupling"]:
 
         central_fraction = pd.read_hdf(snakemake.input.central_fraction)
-        with pd.HDFStore(snakemake.input.heat_demand_profile, mode='r') as store:
-            heat_demand = store['heat_demand_profiles']
+        with pd.HDFStore(snakemake.input.heat_demand_profile, mode="r") as store:
+            # Keep it simple: default key is `heat_demand_profiles`.
+            # If upstream overwrote the file with a different key, fall back to the first key found.
+            preferred = "/heat_demand_profiles"
+            if preferred in store.keys():
+                selected_key = preferred
+            else:
+                keys = list(store.keys())
+                if not keys:
+                    raise KeyError(f"No keys found in heat profile h5: {snakemake.input.heat_demand_profile}")
+                selected_key = keys[0]
+                logger.warning(
+                    "Heat profile key %s not found in %s; falling back to first key: %s (available keys: %s)",
+                    preferred,
+                    snakemake.input.heat_demand_profile,
+                    selected_key,
+                    keys,
+                )
+
+            heat_demand = store[selected_key]
             heat_demand = heat_demand.loc[network.snapshots]
 
         network.madd("Load",
@@ -365,6 +383,63 @@ def prepare_network(config):
                      suffix=" central heat",
                      bus=nodes + " central heat",
                      p_set=heat_demand[nodes].multiply(central_fraction))
+
+        # Optional: building thermal inertia as a demand-side heat store on both heat buses.
+        # This is configured via a per-province CSV with separate central/decentral parameters.
+        inertia_cfg = config.get("building_inertia", {}) if isinstance(config, dict) else {}
+        if inertia_cfg and bool(inertia_cfg.get("enabled", False)):
+            params_path = inertia_cfg.get("params_csv", "data/heating/building_inertia_template.csv")
+            inertia = pd.read_csv(params_path)
+            inertia["province"] = inertia["province"].astype(str)
+            inertia = inertia.set_index("province")
+
+            # Ensure carrier exists (no costs; pure flexibility element)
+            store_carrier = str(inertia_cfg.get("carrier", "building thermal mass"))
+            if store_carrier not in network.carriers.index:
+                network.add("Carrier", store_carrier)
+
+            def _series_for(col: str) -> pd.Series:
+                s = inertia.reindex(nodes)[col]
+                return pd.to_numeric(s, errors="coerce").fillna(0.0)
+
+            # central
+            Cc = _series_for("C_th_MWh_per_K_central")
+            dTc = _series_for("deltaT_K_central")
+            loss_c = _series_for("standing_loss_per_hour_central")
+            e_nom_c = (Cc * dTc).clip(lower=0.0)
+
+            # decentral
+            Cd = _series_for("C_th_MWh_per_K_decentral")
+            dTd = _series_for("deltaT_K_decentral")
+            loss_d = _series_for("standing_loss_per_hour_decentral")
+            e_nom_d = (Cd * dTd).clip(lower=0.0)
+
+            # Only add if there is any positive capacity, otherwise keep network identical.
+            if float(e_nom_c.sum()) > 0.0:
+                network.madd(
+                    "Store",
+                    nodes,
+                    suffix=" building thermal mass central",
+                    bus=nodes + " central heat",
+                    carrier=store_carrier,
+                    e_nom_extendable=False,
+                    e_nom=e_nom_c,
+                    standing_loss=loss_c,
+                    e_cyclic=True,
+                )
+
+            if float(e_nom_d.sum()) > 0.0:
+                network.madd(
+                    "Store",
+                    nodes,
+                    suffix=" building thermal mass decentral",
+                    bus=nodes + " decentral heat",
+                    carrier=store_carrier,
+                    e_nom_extendable=False,
+                    e_nom=e_nom_d,
+                    standing_loss=loss_d,
+                    e_cyclic=True,
+                )
 
     if config["add_gas"]:
         # add converter from fuel source

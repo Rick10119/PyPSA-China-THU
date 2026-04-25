@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: : 2025 Ruike Lyu, rl8728@princeton.edu
 """
 Generate config files for value tests and capacity tests.
 """
@@ -141,6 +142,8 @@ def run_value_tests(years: Iterable[int], clean: bool = True) -> None:
 
 
 def _calculate_actual_capacity_ratio(year: int, cap_ratio: float, demand_level: str) -> float:
+    # National primary-aluminum capacity / demand scenario (10k t/y), same series as
+    # scripts/plot_optimal_point.calculate_actual_capacity_ratio; not read from config here.
     total_capacity = 4500
     demand_by_year = {
         "2030": 2902.417177819193,

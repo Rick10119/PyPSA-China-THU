@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: : 2022 The PyPSA-China Authors
+# SPDX-FileCopyrightText: : 2022 The PyPSA-China Authors, 2025 Ruike Lyu, rl8728@princeton.edu
 #
 # SPDX-License-Identifier: MIT
 

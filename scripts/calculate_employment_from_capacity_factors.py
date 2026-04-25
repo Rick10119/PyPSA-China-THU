@@ -1,3 +1,4 @@
+# SPDX-FileCopyrightText: : 2025 Ruike Lyu, rl8728@princeton.edu
 """
 Calculate smelter based on average capacity factor data、coal、gasScript for monthly employment numbers by industry
 Calculation formula：Number of people employed = average capacity factor × Installed capacity × Number of employees per unit installed capacity

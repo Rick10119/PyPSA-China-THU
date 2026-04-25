@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: : 2025 Ruike Lyu, rl8728@princeton.edu
 """
 Refactored cost analysis plotting script.
 
@@ -18,9 +19,32 @@ import argparse
 from pathlib import Path
 import logging
 
-# Font settings
-plt.rcParams['font.sans-serif'] = ['Helvetica', 'Arial', 'DejaVu Sans']
-plt.rcParams['axes.unicode_minus'] = False
+# Publication: sans-serif (Helvetica / Arial), 6 pt, figure 150×110 mm, PDF output
+TEXT_PT = 6
+FIG_WIDTH_MM = 150
+FIG_HEIGHT_MM = 110
+
+
+def _mm_to_inches(mm: float) -> float:
+    return mm / 25.4
+
+
+def set_plot_style():
+    plt.rcParams.update(
+        {
+            "font.family": "sans-serif",
+            "font.sans-serif": ["Helvetica", "Arial", "Helvetica Neue", "DejaVu Sans"],
+            "font.size": TEXT_PT,
+            "axes.labelsize": TEXT_PT,
+            "axes.titlesize": TEXT_PT,
+            "xtick.labelsize": TEXT_PT,
+            "ytick.labelsize": TEXT_PT,
+            "legend.fontsize": TEXT_PT,
+            "axes.unicode_minus": False,
+            "pdf.fonttype": 42,
+        }
+    )
+
 
 # Logging
 logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
@@ -59,7 +83,8 @@ def get_category_colors():
 
 def create_cost_comparison_plot(df, output_dir):
     """Create cost comparison plots."""
-    
+    set_plot_style()
+
     # Create output directory
     plots_dir = output_dir / "scenario_plots"
     plots_dir.mkdir(parents=True, exist_ok=True)
@@ -75,7 +100,15 @@ def create_cost_comparison_plot(df, output_dir):
     demand_levels = ['L', 'M', 'H']
     
     # Figure: 3 rows (Market) x 4 columns (Flexibility)
-    fig, axes = plt.subplots(3, 4, figsize=(20, 15), sharey=True)
+    fig, axes = plt.subplots(
+        3,
+        4,
+        figsize=(
+            _mm_to_inches(FIG_WIDTH_MM),
+            _mm_to_inches(FIG_HEIGHT_MM),
+        ),
+        sharey=True,
+    )
     # fig.suptitle('Cost Changes by Market and Flexibility Scenarios', fontsize=16, fontweight='bold')
     
     # Create subplot for each Market–Flexibility combination
@@ -90,8 +123,15 @@ def create_cost_comparison_plot(df, output_dir):
             ]
             
             if current_data.empty:
-                ax.text(0.5, 0.5, f'No data\nMarket: {market}\nFlex: {flexibility}', 
-                       ha='center', va='center', transform=ax.transAxes, fontsize=20)
+                ax.text(
+                    0.5,
+                    0.5,
+                    f"No data\nMarket: {market}\nFlex: {flexibility}",
+                    ha="center",
+                    va="center",
+                    transform=ax.transAxes,
+                    fontsize=TEXT_PT,
+                )
                 continue
             
             # Group data by demand level
@@ -102,8 +142,15 @@ def create_cost_comparison_plot(df, output_dir):
                     demand_data[demand] = dict(zip(demand_subset['Category'], demand_subset['Value (CNY)']))
             
             if not demand_data:
-                ax.text(0.5, 0.5, 'No demand data', ha='center', va='center', 
-                       transform=ax.transAxes, fontsize=20)
+                ax.text(
+                    0.5,
+                    0.5,
+                    "No demand data",
+                    ha="center",
+                    va="center",
+                    transform=ax.transAxes,
+                    fontsize=TEXT_PT,
+                )
                 continue
             
             # Prepare stacked bar data in L/M/H order
@@ -112,8 +159,8 @@ def create_cost_comparison_plot(df, output_dir):
             width = 0.6
 
             # Draw stacked bars (per-column ordering to keep positive/negative parts readable)
-            bottom_pos = np.zeros(len(x_pos))  # up: cost reduction (Value<0, draw abs(value))
-            bottom_neg = np.zeros(len(x_pos))  # down: cost increase (Value>0, draw -value)
+            bottom_pos = np.zeros(len(x_pos))  # up: cost increase (Value>0)
+            bottom_neg = np.zeros(len(x_pos))  # down: cost reduction (Value<0)
 
             for i, demand in enumerate(demand_names):
                 demand_vals = demand_data.get(demand, {})
@@ -146,16 +193,16 @@ def create_cost_comparison_plot(df, output_dir):
                         return cats + [inv, op]
                     return cats + [op, inv]
 
-                # Cost reductions: Value < 0, sort by absolute value (larger closer to zero)
-                dec_cats = sorted(
-                    [c for c, v in demand_vals.items() if v < 0],
-                    key=lambda c: abs(demand_vals[c]),
+                # Cost increases: Value > 0, sort by value (larger closer to zero)
+                inc_cats = sorted(
+                    [c for c, v in demand_vals.items() if v > 0],
+                    key=lambda c: demand_vals[c],
                     reverse=True,
                 )
                 # Positive axis (upwards): operation should be above investment
-                dec_cats = _enforce_non_renewable_relative_order(dec_cats, operation_above=True)
-                for category in dec_cats:
-                    height = abs(demand_vals[category])
+                inc_cats = _enforce_non_renewable_relative_order(inc_cats, operation_above=True)
+                for category in inc_cats:
+                    height = demand_vals[category]  # positive
                     if height == 0:
                         continue
                     color = category_colors.get(category, plt.cm.tab20(global_categories.index(category) % 20))
@@ -169,16 +216,16 @@ def create_cost_comparison_plot(df, output_dir):
                     )
                     bottom_pos[i] += height
 
-                # Cost increases: Value > 0, sort by value (larger closer to zero)
-                inc_cats = sorted(
-                    [c for c, v in demand_vals.items() if v > 0],
-                    key=lambda c: demand_vals[c],
+                # Cost reductions: Value < 0, sort by absolute value (larger closer to zero)
+                dec_cats = sorted(
+                    [c for c, v in demand_vals.items() if v < 0],
+                    key=lambda c: abs(demand_vals[c]),
                     reverse=True,
                 )
                 # Negative axis (downwards): operation above investment → draw operation earlier
-                inc_cats = _enforce_non_renewable_relative_order(inc_cats, operation_above=False)
-                for category in inc_cats:
-                    height = -demand_vals[category]  # negative
+                dec_cats = _enforce_non_renewable_relative_order(dec_cats, operation_above=False)
+                for category in dec_cats:
+                    height = demand_vals[category]  # negative
                     if height == 0:
                         continue
                     color = category_colors.get(category, plt.cm.tab20(global_categories.index(category) % 20))
@@ -199,43 +246,57 @@ def create_cost_comparison_plot(df, output_dir):
                 total_value = sum(demand_data_dict.values())
                 net_values.append(total_value)
             
-            # Show net value above the positive stack
+            # Show net value with the correct sign convention:
+            # - net < 0 (reduction) label below with a minus sign
+            # - net > 0 (addition) label above with a plus/implicit sign
             for i, (x, net_value) in enumerate(zip(x_pos, net_values)):
-                # Text position: slightly above the positive stack
-                text_y = bottom_pos[i] + 5e9
-                
-                # Format net value (displayed as cost reduction, ≥0)
-                displayed_value = max(-net_value / 1e9, 0)
-                value_text = f'{displayed_value:.0f}'
-                
-                # Add label
-                ax.text(x, text_y, value_text, 
-                       ha='center', va='bottom' if net_value >= 0 else 'top',
-                       fontsize=18, fontweight='bold')
+                if net_value < 0:
+                    text_y = bottom_neg[i] - 0e9
+                    va = 'top'
+                else:
+                    text_y = bottom_pos[i] + 5e9
+                    va = 'bottom'
+
+                value_text = f'{net_value/1e9:.0f}'
+                ax.text(
+                    x,
+                    text_y,
+                    value_text,
+                    ha="center",
+                    va=va,
+                    fontsize=TEXT_PT,
+                    fontweight="bold",
+                )
             
             # X labels
             ax.set_xticks(x_pos)
             x_labels = [f'Demand: {d.replace("L", "Low").replace("M", "Mid").replace("H", "High")}' if i == 0 else d.replace("L", "Low").replace("M", "Mid").replace("H", "High") for i, d in enumerate(demand_names)]
-            ax.set_xticklabels(x_labels, fontsize=20)
+            ax.set_xticklabels(x_labels, fontsize=TEXT_PT)
             
             # Y axis
-            ax.set_ylim(-30e9, 80e9)
-            y_ticks = np.arange(-30e9, 81e9, 20e9)
+            ax.set_ylim(-80e9, 30e9)
+            y_ticks = np.arange(-80e9, 31e9, 20e9)
             y_labels = [f'{int(tick/1e9)}' for tick in y_ticks]
             ax.set_yticks(y_ticks)
-            ax.set_yticklabels(y_labels, fontsize=20)
+            ax.set_yticklabels(y_labels, fontsize=TEXT_PT)
             
             # Zero line
             ax.axhline(y=0, color='black', linestyle='-', alpha=0.5, linewidth=1)
             
             # Titles and labels
             if market_idx == 0:  # show Flexibility label on top row
-                ax.set_title(f'Flexibility: {scenario_descriptions[flexibility]}', 
-                           fontsize=20, fontweight='bold')
+                ax.set_title(
+                    f"Flexibility: {scenario_descriptions[flexibility]}",
+                    fontsize=TEXT_PT,
+                    fontweight="bold",
+                )
             
             if flex_idx == 0:  # show Market label on leftmost column
-                ax.set_ylabel(f'Market: {scenario_descriptions[market]}\nCost Change (Billion CNY)', 
-                            fontsize=20, fontweight='bold')
+                ax.set_ylabel(
+                    f"Market: {scenario_descriptions[market]}\nCost Change (Billion CNY)",
+                    fontsize=TEXT_PT,
+                    fontweight="bold",
+                )
             else:
                 ax.set_ylabel('')
     
@@ -258,14 +319,22 @@ def create_cost_comparison_plot(df, output_dir):
             legend_elements.append(plt.Rectangle((0,0),1,1, facecolor=color, 
                                                label=category, alpha=0.8))
     
-    fig.legend(handles=legend_elements, loc='lower center', bbox_to_anchor=(0.5, -0.07),
-               ncol=min(len(legend_elements), 4), fontsize=20, frameon=False)
-    
-    plt.tight_layout()
-    
+    # Lower center of legend at small y keeps it just under panels (negative y was far below figure)
+    fig.legend(
+        handles=legend_elements,
+        loc="lower center",
+        bbox_to_anchor=(0.5, 0.03),
+        bbox_transform=fig.transFigure,
+        ncol=min(len(legend_elements), 4),
+        fontsize=TEXT_PT,
+        frameon=False,
+    )
+
+    plt.tight_layout(rect=(0, 0.11, 1, 1))
+
     # Save figure
-    plot_file = plots_dir / "cost_comparison_refactored.png"
-    plt.savefig(plot_file, dpi=300, bbox_inches='tight', pad_inches=0.3)
+    plot_file = plots_dir / "cost_comparison_refactored.pdf"
+    plt.savefig(plot_file, format="pdf", bbox_inches="tight", pad_inches=0.2, facecolor="white")
     logger.info(f"Cost comparison figure saved to: {plot_file}")
     
     # plt.show()

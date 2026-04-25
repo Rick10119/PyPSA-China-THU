@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: : 2025 Ruike Lyu, rl8728@princeton.edu
 # -*- coding: utf-8 -*-
 """
 Plot scatter chart of optimal points showing capacity and net value.
@@ -223,7 +224,8 @@ def save_optimal_points_to_csv(optimal_points, plot_type, output_dir='results/op
         # Convert to DataFrame
         df = pd.DataFrame(optimal_points)
         
-        # Add additional calculated columns
+        # Add additional calculated columns (national demand, 10k t/y; same scenario as
+        # calculate_actual_capacity_ratio / generate_test_configs._calculate_actual_capacity_ratio)
         demand_by_year = {
             2030: 2902.417177819193,
             2040: 1508.1703393209764,
@@ -569,10 +571,9 @@ def calculate_actual_capacity_ratio(year: int, cap_ratio: float, demand_level: s
     Returns:
         Actual capacity ratio
     """
-    # Total capacity
+    # National installed capacity (10k t/y) and demand (10k t/y) for mid-demand scenario;
+    # keep in sync with generate_test_configs._calculate_actual_capacity_ratio.
     total_capacity = 4500
-    
-    # Set demand by year (using actual data)
     demand_by_year = {
         "2030": 2902.417177819193,
         "2040": 1508.1703393209764,
@@ -864,7 +865,7 @@ def plot_optimal_points_distribution(use_cache=True, save_csv=True):
     # Group data by year
     years = sorted(list(set([point['year'] for point in optimal_points])))
     
-    # Demand data (10,000 tons/year)
+    # National demand (10k t/y); same series as calculate_actual_capacity_ratio
     demand_by_year = {
         2030: 2902.417177819193,
         2040: 1508.1703393209764,
@@ -1044,7 +1045,7 @@ def plot_optimal_points_boxplot(use_cache=True, save_csv=True):
     # Format y-axis to show integers only
     ax1.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{int(x)}'))
     
-    # Add horizontal lines for annual demand by year
+    # Annual demand overlay (Mt/year); same totals as 10k-t/y series / 100 (see save_optimal_points_to_csv)
     demand_by_year = {
         2030: 29.0241717,
         2040: 15.0817033,
@@ -1087,7 +1088,7 @@ def plot_optimal_points_boxplot(use_cache=True, save_csv=True):
     for year, demand in demand_by_year.items():
         if year in years:
             legend_elements.append(plt.Line2D([0], [0], color=demand_colors[year], linestyle='--', linewidth=3, 
-                                            label=f'{year} Demand: {demand:.0f} 10k tons/year'))
+                                            label=f'{year} Demand: {demand:.0f} Mt/year'))
     
     # Add legend
     ax1.legend(handles=legend_elements, loc='upper right', fontsize=12)
@@ -1180,7 +1181,7 @@ def plot_optimal_points_scatter(use_cache=True, save_csv=True):
     # Add grid
     ax.grid(True, alpha=0.3)
     
-    # Add vertical lines for annual demand by year
+    # Annual demand reference (Mt/year) on capacity axis; same series as boxplot demand lines
     demand_by_year = {
         2030: 29.0241717,
         2040: 15.0817033,
@@ -1193,7 +1194,7 @@ def plot_optimal_points_scatter(use_cache=True, save_csv=True):
     for year, demand in demand_by_year.items():
         if year in years:  # Only plot demand lines for years that have data
             ax.axvline(x=demand, color=demand_colors[year], linestyle='--', linewidth=2, alpha=0.8, 
-                       label=f'{year} Demand: {demand:.0f} 10k tons/year')
+                       label=f'{year} Demand: {demand:.0f} Mt/year')
     
     # Create legend
     legend_elements = []
@@ -1222,7 +1223,7 @@ def plot_optimal_points_scatter(use_cache=True, save_csv=True):
     for year, demand in demand_by_year.items():
         if year in years:
             legend_elements.append(plt.Line2D([0], [0], color=demand_colors[year], linestyle='--', linewidth=2, 
-                                            label=f'{year} Demand: {demand:.0f} 10k tons/year'))
+                                            label=f'{year} Demand: {demand:.0f} Mt/year'))
     
     # Add legend
     ax.legend(handles=legend_elements, loc='upper right', fontsize=15, ncol=2)
