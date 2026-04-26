@@ -2,12 +2,12 @@
 #
 # SPDX-License-Identifier: CC0-1.0
 
-version: 0425.1H.1
+version: 0425.6H.1
 logging_level: INFO
 foresight: "myopic"
 
 # Single-node mode – if true, keep only one target province in the network
-using_single_node: False
+using_single_node: True
 single_node_province: "Zhejiang"  # Target province when single-node mode is enabled
 
 results_dir: 'results/'
@@ -17,7 +17,7 @@ mem_per_thread: 2500
 
 tmin: '-01-01 00:00'
 tmax: '-12-31 23:00'
-freq: '1h'
+freq: '6h'
 
 add_aluminum: False
 only_other_load: False
@@ -36,12 +36,6 @@ scenario:
   planning_horizons:
     - 2025
     - 2030
-    - 2035
-    - 2040
-    - 2045
-    - 2050
-    - 2055
-    - 2060
   co2_reduction:
     linear2060:
       '2025': -1.
