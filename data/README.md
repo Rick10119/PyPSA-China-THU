@@ -13,10 +13,10 @@ Technology cost data files organized by planning horizon year.
 - **`costs_YYYY.csv`**: Technology cost data for years 2020, 2025, 2030, 2035, 2040, 2045, 2050, 2055, 2060
 - Each file contains cost parameters (investment, FOM, VOM, etc.) for different energy technologies
 
-### `costs_constant/`
-Alternative cost data files with constant cost assumptions.
-- Contains the same structure as `costs/` but with constant cost values
-- Used for sensitivity analysis or baseline scenarios
+### `costs_constant/` (removed)
+This repo previously contained `data/costs_constant/` as an alternative constant-cost dataset.
+It has been removed to avoid duplicated/ambiguous cost inputs. The workflow reads
+`data/costs/costs_{planning_horizons}.csv` (see `Snakefile`).
 
 ### `existing_infrastructure/`
 Data on existing power generation infrastructure in China.

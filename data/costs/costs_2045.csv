@@ -347,7 +347,7 @@ coal,2045,CO2 intensity,0.34,tCO2/MWh_th,Entwicklung der spezifischen Kohlendiox
 coal,2045,FOM,1.6,%/year,Lazard s Levelized Cost of Energy Analysis - Version 13.0,
 coal,2045,VOM,3.5,EUR/MWh_e,Lazard s Levelized Cost of Energy Analysis - Version 13.0,
 coal,2045,efficiency,0.4900209459459458,per unit,Linear increase from Xiang et al nat energy 2023 to DKEA catalogue 2023 value for 2060,
-coal,2045,fuel,8.15,EUR/MWh_th,BP 2019,
+coal,2045,fuel,13.93,EUR/MWh_th,"Scaled from 2025 China 5500kcal coal proxy; https://www.hangyan.co/charts/3838782537304376716","Future-year coal fuel cost scaled by factor (2025 real proxy / legacy BP2019). 2025 uses 694 CNY/t (5500kcal) -> 13.93 EUR/MWh_th under 23.0 GJ/t, 3.6 GJ/MWh, 7.8 CNY/EUR."
 coal,2045,investment,505.3,EUR/kW_e,"https://www.cctd.com.cn/show-19-203452-1.html ""China Power Industry Annual Development Report 2020"" in Chinese",
 coal,2045,lifetime,40.0,years,Lazard s Levelized Cost of Energy Analysis - Version 13.0,
 csp-tower,2045,FOM,1.35,%/year,ATB CSP data (https://atb.nrel.gov/electricity/2021/concentrating_solar_power),
@@ -466,7 +466,7 @@ fuel cell,2045,efficiency,0.5,per unit,"Danish Energy Agency, technology_data_fo
 fuel cell,2045,investment,875.0,EUR/kW_e,"Danish Energy Agency, technology_data_for_el_and_dh.xlsx",12 LT-PEMFC CHP:  Nominal investment
 fuel cell,2045,lifetime,10.0,years,"Danish Energy Agency, technology_data_for_el_and_dh.xlsx",12 LT-PEMFC CHP:  Technical lifetime
 gas,2045,CO2 intensity,0.2,tCO2/MWh_th,Stoichiometric calculation with 50 GJ/t CH4,
-gas,2045,fuel,20.1,EUR/MWh_th,BP 2019,
+gas,2045,fuel,40.87,EUR/MWh_th,"Scaled from 2025 SHPGX pipeline gas spot proxy; https://finance.sina.com.cn/money/future/roll/2025-04-18/doc-inetqzhr2253621.shtml","Future-year gas fuel cost scaled by factor (2025 real proxy / legacy BP2019). 2025 uses 3.17 CNY/m3 -> 40.87 EUR/MWh_th under LHV 35.8 MJ/m3 and 7.8 CNY/EUR."
 gas boiler steam,2045,FOM,3.85,%/year,"Danish Energy Agency, technology_data_for_industrial_process_heat.xlsx",311.1c Steam boiler Gas:  Fixed O&M
 gas boiler steam,2045,VOM,1.0,EUR/MWh,"Danish Energy Agency, technology_data_for_industrial_process_heat.xlsx",311.1c Steam boiler Gas:  Variable O&M
 gas boiler steam,2045,efficiency,0.94,per unit,"Danish Energy Agency, technology_data_for_industrial_process_heat.xlsx","311.1c Steam boiler Gas:  Total efficiency, net, annual average"
