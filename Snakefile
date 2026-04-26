@@ -442,6 +442,6 @@ if config["foresight"] == "myopic":
 #     resources: mem_mb = ATLITE_NPROCESSES * 5000
 #     script: "scripts/build_biomass_potential.py"
 
-if config.get("plot", False):
+if config.get("plot", True):
     include: "rules/plot.smk"
 

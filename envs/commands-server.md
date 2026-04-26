@@ -5,6 +5,8 @@
 ```bash
 module load anaconda3/2024.6
 conda env update -f envs/environment.yaml
+conda activate pypsa
+python -c "import pypsa; print('pypsa', pypsa.__version__)"
 ```
 
 ## 2) Copy code to server directories
@@ -37,9 +39,9 @@ chmod +x submit_core_scenario.sh
 ## 4) Run production jobs (example: Sep 2)
 
 ```bash
-cd /scratch/gpfs/rl8728/PyPSA-China-1
+cd /scratch/gpfs/rl8728/PyPSA-China
 module load anaconda3/2024.6
-conda activate pypsa-china
+conda activate pypsa
 
 git restore .
 git pull

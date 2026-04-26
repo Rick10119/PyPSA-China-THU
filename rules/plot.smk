@@ -63,7 +63,7 @@ rule plot_heatmap:
         water_store = config['results_dir'] + 'version-' + str(config['version']) + '/plots/heatmap/{heating_demand}/water_tank/water_store-{opts}-{topology}-{pathway}-{planning_horizons}.png',
         battery = config['results_dir'] + 'version-' + str(config['version']) + '/plots/heatmap/{heating_demand}/battery/battery-{opts}-{topology}-{pathway}-{planning_horizons}.png',
         H2 = config['results_dir'] + 'version-' + str(config['version']) + '/plots/heatmap/{heating_demand}/H2/H2-{opts}-{topology}-{pathway}-{planning_horizons}.png',
-        aluminum = config['results_dir'] + 'version-' + str(config['version']) + '/plots/heatmap/{heating_demand}/aluminum/aluminum-{opts}-{topology}-{pathway}-{planning_horizons}.png',
+        # aluminum = config['results_dir'] + 'version-' + str(config['version']) + '/plots/heatmap/{heating_demand}/aluminum/aluminum-{opts}-{topology}-{pathway}-{planning_horizons}.png',
     script:  "../scripts/plot_heatmap.py"
 
 # rule plot_profile:
