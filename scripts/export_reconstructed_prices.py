@@ -45,6 +45,7 @@ def _select_provinces(prices: pd.DataFrame, provinces: Iterable[str] | None) -> 
 def export_prices(
     *,
     network_path: str,
+    baseline_network_path: str | None = None,
     out_csv: str,
     provinces: list[str] | None,
     week_freq: str,
@@ -52,6 +53,7 @@ def export_prices(
     line_cong_eps_mw: float,
     min_inflow_mw: float,
     price_mode: str = "marginal",
+    calibrate_with_baseline_max: bool = True,
     currency: str = "EUR",
     fx_cny_per_eur: float = 7.8,
 ) -> None:
@@ -64,6 +66,16 @@ def export_prices(
     else:
         raise ValueError("price_mode must be 'marginal' (mapped mode removed)")
     prices = _select_provinces(prices, provinces)
+
+    if calibrate_with_baseline_max:
+        if not baseline_network_path:
+            raise ValueError("calibrate_with_baseline_max=True requires baseline_network_path.")
+        n0 = pypsa.Network(baseline_network_path)
+        baseline = marginal_retail_prices(n0, config=cfg)
+        baseline = _select_provinces(baseline, provinces)
+        baseline = baseline.reindex(index=prices.index, columns=prices.columns).fillna(0.0).astype(float)
+        prices_f = prices.astype(float)
+        prices = prices_f.mask(prices_f < baseline, baseline)
 
     cur = str(currency).upper()
     if cur in {"CNY", "RMB"}:
@@ -81,6 +93,11 @@ def export_prices(
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--network", required=True, help="Solved postnetwork .nc path")
+    ap.add_argument(
+        "--baseline-network",
+        default=None,
+        help="Optional baseline/planning .nc used for price calibration (see --calibrate-max-with-baseline).",
+    )
     ap.add_argument("--out", required=True, help="Output CSV path")
     ap.add_argument("--province", action="append", default=None, help="Province to include (repeatable). If omitted, export all.")
     ap.add_argument("--week-freq", default="W-SUN", help="Week definition for weekly max (default: W-SUN)")
@@ -101,6 +118,14 @@ def main() -> None:
         ),
     )
     ap.add_argument(
+        "--calibrate-max-with-baseline",
+        action="store_true",
+        help=(
+            "When exporting, take elementwise max between dispatch LMPs (--network) and "
+            "baseline LMPs (--baseline-network)."
+        ),
+    )
+    ap.add_argument(
         "--currency",
         default="CNY",
         choices=["EUR", "CNY", "RMB"],
@@ -116,6 +141,7 @@ def main() -> None:
 
     export_prices(
         network_path=args.network,
+        baseline_network_path=args.baseline_network,
         out_csv=args.out,
         provinces=args.province,
         week_freq=str(args.week_freq),
@@ -123,6 +149,7 @@ def main() -> None:
         line_cong_eps_mw=float(args.line_cong_eps_mw),
         min_inflow_mw=float(args.min_inflow_mw),
         price_mode=str(args.price_mode),
+        calibrate_with_baseline_max=bool(args.calibrate_max_with_baseline),
         currency=str(args.currency),
         fx_cny_per_eur=float(args.fx_cny_per_eur),
     )
