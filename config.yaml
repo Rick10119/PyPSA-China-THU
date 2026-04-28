@@ -65,17 +65,33 @@ scenario:
   attr: 'p_nom'
   heating_demand: ['positive']
 
-# Post-processed electricity prices exported by Snakemake rule `reconstruct_market_prices`
-reconstruct_prices:
-  week_freq: "W-SUN"
-  # Cross-border import settlement (uncongested lines only):
-  # - min_offer: consumer price <= min(local, import offers) (more competitive)
-  # - max_offer: consumer price <= max(local, import offers) (more conservative)
-  import_agg: "min_offer"
-  line_cong_eps_mw: 1.e-3
-  min_inflow_mw: 1.e-3
-  # Optional explicit province list when `using_single_node: false`.
-  # provinces: ["Shandong", "Jiangsu"]
+# Second-stage dispatch-only: capacities fixed from solved postnetwork; coal/gas
+# main plant as piecewise bids (parallel capacity blocks). CHP remains scalar MC.
+# For CSV from this stage use marginal LMPs (`export_reconstructed_prices --price-mode marginal`).
+dispatch_segmented_prices:
+  enabled: true
+  # If true, zero `* gas fuel` generator marginal_cost while segmented OCGT uses full SRMC per block.
+  zero_gas_fuel_marginal_cost: true
+  export_prices: true
+  price_export:
+    week_freq: "W-SUN"
+    import_agg: "min_offer"
+    line_cong_eps_mw: 1.e-3
+    min_inflow_mw: 1.e-3
+    currency: "CNY"
+    fx_cny_per_eur: 7.8
+  # Per-segment marginal_cost (EUR/MWh, electricity): full bid stack when fuel gens are zeroed
+  # (`zero_gas_fuel_marginal_cost: true`) — each block is absolute SRMC+fuel+carbon+VOM as configured.
+  # Five segments; shares align with typical must-run → scarcity partition (see README_cursor.md).
+  carriers:
+    Generator:
+      coal cc:
+        shares: [0.50, 0.20, 0.15, 0.10, 0.05]
+        marginal_cost: [0.0, 45.0, 55.0, 75.0, 192.0]
+    Link:
+      OCGT gas:
+        shares: [0.50, 0.20, 0.15, 0.10, 0.05]
+        marginal_cost: [0.0, 85.0, 100.0, 120.0, 192.0]
 
 solving:
   solver:

@@ -24,7 +24,10 @@ _THIS_DIR = Path(__file__).resolve().parent
 if str(_THIS_DIR) not in sys.path:
     sys.path.insert(0, str(_THIS_DIR))
 
-from reconstruct_market_prices import ReconstructPriceConfig, reconstruct_market_prices  # noqa: E402
+from reconstruct_market_prices import (  # noqa: E402
+    ReconstructPriceConfig,
+    marginal_retail_prices,
+)
 
 
 def _select_provinces(prices: pd.DataFrame, provinces: Iterable[str] | None) -> pd.DataFrame:
@@ -48,18 +51,27 @@ def export_prices(
     import_agg: str,
     line_cong_eps_mw: float,
     min_inflow_mw: float,
+    price_mode: str = "marginal",
+    currency: str = "EUR",
+    fx_cny_per_eur: float = 7.8,
 ) -> None:
     n = pypsa.Network(network_path)
-    prices = reconstruct_market_prices(
-        n,
-        config=ReconstructPriceConfig(
-            week_freq=week_freq,
-            import_agg=import_agg,
-            line_cong_eps_mw=float(line_cong_eps_mw),
-            min_inflow_mw=float(min_inflow_mw),
-        ),
-    )
+    # Only kept for API symmetry; mapped mode removed.
+    _ = (week_freq, import_agg, line_cong_eps_mw, min_inflow_mw)
+    cfg = ReconstructPriceConfig(week_freq=week_freq)
+    if price_mode == "marginal":
+        prices = marginal_retail_prices(n, config=cfg)
+    else:
+        raise ValueError("price_mode must be 'marginal' (mapped mode removed)")
     prices = _select_provinces(prices, provinces)
+
+    cur = str(currency).upper()
+    if cur in {"CNY", "RMB"}:
+        prices = prices.astype(float) * float(fx_cny_per_eur)
+    elif cur in {"EUR"}:
+        prices = prices.astype(float)
+    else:
+        raise ValueError("currency must be EUR or CNY (RMB accepted as alias)")
 
     out_path = Path(out_csv)
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -80,6 +92,26 @@ def main() -> None:
     )
     ap.add_argument("--line-cong-eps-mw", type=float, default=1e-3, help="Congestion slack in MW (default: 1e-3)")
     ap.add_argument("--min-inflow-mw", type=float, default=1e-3, help="Ignore smaller line flows (default: 1e-3)")
+    ap.add_argument(
+        "--price-mode",
+        default="marginal",
+        choices=["marginal"],
+        help=(
+            "marginal: buses_t.marginal_price (mapped mode removed)."
+        ),
+    )
+    ap.add_argument(
+        "--currency",
+        default="CNY",
+        choices=["EUR", "CNY", "RMB"],
+        help="Output currency unit for prices (default: CNY).",
+    )
+    ap.add_argument(
+        "--fx-cny-per-eur",
+        type=float,
+        default=7.8,
+        help="FX rate used when --currency CNY/RMB (default: 7.8).",
+    )
     args = ap.parse_args()
 
     export_prices(
@@ -90,6 +122,9 @@ def main() -> None:
         import_agg=str(args.import_agg),
         line_cong_eps_mw=float(args.line_cong_eps_mw),
         min_inflow_mw=float(args.min_inflow_mw),
+        price_mode=str(args.price_mode),
+        currency=str(args.currency),
+        fx_cny_per_eur=float(args.fx_cny_per_eur),
     )
 
 

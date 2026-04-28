@@ -3,7 +3,7 @@ Plot day-based electricity prices for Shandong from a solved PyPSA network.
 
 This script:
 - loads a solved `.nc` network
-- reconstructs market prices via `reconstruct_market_prices`
+- uses marginal/LMP prices via `buses_t.marginal_price`
 - extracts the Shandong province electricity bus
 - selects an actual day (not an average) and plots its 24h curve:
   - default: for each season, pick the most representative day (closest to that season's mean 24h curve)
@@ -35,7 +35,7 @@ _THIS_DIR = Path(__file__).resolve().parent
 if str(_THIS_DIR) not in sys.path:
     sys.path.insert(0, str(_THIS_DIR))
 
-from reconstruct_market_prices import reconstruct_market_prices, ReconstructPriceConfig  # noqa: E402
+from reconstruct_market_prices import marginal_retail_prices, ReconstructPriceConfig  # noqa: E402
 
 
 def _season_of_month(month: int) -> str:
@@ -223,7 +223,7 @@ def main() -> None:
     n = pypsa.Network(args.network)
 
     cfg = ReconstructPriceConfig(price_tol=float(args.price_tol))
-    prices = reconstruct_market_prices(n, config=cfg)
+    prices = marginal_retail_prices(n, config=cfg)
 
     if args.province not in prices.columns:
         raise SystemExit(
