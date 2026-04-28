@@ -39,9 +39,26 @@ def _select_provinces(prices: pd.DataFrame, provinces: Iterable[str] | None) -> 
     return prices[prov]
 
 
-def export_prices(*, network_path: str, out_csv: str, provinces: list[str] | None, week_freq: str) -> None:
+def export_prices(
+    *,
+    network_path: str,
+    out_csv: str,
+    provinces: list[str] | None,
+    week_freq: str,
+    import_agg: str,
+    line_cong_eps_mw: float,
+    min_inflow_mw: float,
+) -> None:
     n = pypsa.Network(network_path)
-    prices = reconstruct_market_prices(n, config=ReconstructPriceConfig(week_freq=week_freq))
+    prices = reconstruct_market_prices(
+        n,
+        config=ReconstructPriceConfig(
+            week_freq=week_freq,
+            import_agg=import_agg,
+            line_cong_eps_mw=float(line_cong_eps_mw),
+            min_inflow_mw=float(min_inflow_mw),
+        ),
+    )
     prices = _select_provinces(prices, provinces)
 
     out_path = Path(out_csv)
@@ -55,6 +72,14 @@ def main() -> None:
     ap.add_argument("--out", required=True, help="Output CSV path")
     ap.add_argument("--province", action="append", default=None, help="Province to include (repeatable). If omitted, export all.")
     ap.add_argument("--week-freq", default="W-SUN", help="Week definition for weekly max (default: W-SUN)")
+    ap.add_argument(
+        "--import-agg",
+        default="min_offer",
+        choices=["min_offer", "max_offer"],
+        help="How to aggregate multiple uncongested import offers (default: min_offer)",
+    )
+    ap.add_argument("--line-cong-eps-mw", type=float, default=1e-3, help="Congestion slack in MW (default: 1e-3)")
+    ap.add_argument("--min-inflow-mw", type=float, default=1e-3, help="Ignore smaller line flows (default: 1e-3)")
     args = ap.parse_args()
 
     export_prices(
@@ -62,6 +87,9 @@ def main() -> None:
         out_csv=args.out,
         provinces=args.province,
         week_freq=str(args.week_freq),
+        import_agg=str(args.import_agg),
+        line_cong_eps_mw=float(args.line_cong_eps_mw),
+        min_inflow_mw=float(args.min_inflow_mw),
     )
 
 

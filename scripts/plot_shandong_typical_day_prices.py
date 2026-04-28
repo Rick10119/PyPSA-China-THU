@@ -31,10 +31,11 @@ import pypsa
 # can import sibling modules under `scripts/`.
 import sys
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(REPO_ROOT))
+_THIS_DIR = Path(__file__).resolve().parent
+if str(_THIS_DIR) not in sys.path:
+    sys.path.insert(0, str(_THIS_DIR))
 
-from scripts.reconstruct_market_prices import reconstruct_market_prices, ReconstructPriceConfig  # noqa: E402
+from reconstruct_market_prices import reconstruct_market_prices, ReconstructPriceConfig  # noqa: E402
 
 
 def _season_of_month(month: int) -> str:

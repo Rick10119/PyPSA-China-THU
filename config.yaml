@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: CC0-1.0
 
-version: 0425.1H.2
+version: 0425.1H.1
 logging_level: INFO
 foresight: "myopic"
 
@@ -64,6 +64,18 @@ scenario:
   opts: ['ll']
   attr: 'p_nom'
   heating_demand: ['positive']
+
+# Post-processed electricity prices exported by Snakemake rule `reconstruct_market_prices`
+reconstruct_prices:
+  week_freq: "W-SUN"
+  # Cross-border import settlement (uncongested lines only):
+  # - min_offer: consumer price <= min(local, import offers) (more competitive)
+  # - max_offer: consumer price <= max(local, import offers) (more conservative)
+  import_agg: "min_offer"
+  line_cong_eps_mw: 1.e-3
+  min_inflow_mw: 1.e-3
+  # Optional explicit province list when `using_single_node: false`.
+  # provinces: ["Shandong", "Jiangsu"]
 
 solving:
   solver:
