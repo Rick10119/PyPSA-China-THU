@@ -4,7 +4,7 @@
 #SBATCH --ntasks=1               # 总任务数
 #SBATCH --cpus-per-task=32       # 每个任务的CPU核心数
 #SBATCH --mem-per-cpu=20G        # 每个CPU核心的内存
-#SBATCH --time=5:30:00          # 总运行时间限制
+#SBATCH --time=15:30:00          # 总运行时间限制
 #SBATCH --mail-type=fail         # 作业失败时发送邮件
 #SBATCH --mail-user=rl8728@princeton.edu
 
