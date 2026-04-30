@@ -161,12 +161,25 @@ def split_links_carrier(
     carrier: str,
     shares: list[float],
     marginal_costs: list[float],
+    *,
+    only_bus1_carrier: str | None = None,
 ) -> None:
     if len(shares) != len(marginal_costs):
         raise ValueError("shares and marginal_costs must have same length")
     if abs(sum(shares) - 1.0) > 1e-6:
         raise ValueError(f"shares must sum to 1, got {sum(shares)}")
     targets = n.links[n.links["carrier"] == carrier].index.tolist()
+    if only_bus1_carrier is not None and hasattr(n, "buses") and not n.buses.empty:
+        want = str(only_bus1_carrier)
+        keep = []
+        for i in targets:
+            try:
+                b1 = n.links.at[i, "bus1"]
+                if str(n.buses.at[b1, "carrier"]) == want:
+                    keep.append(i)
+            except Exception:
+                continue
+        targets = keep
     for idx in targets:
         row = n.links.loc[idx]
         p_total = float(row["p_nom"])
@@ -223,6 +236,7 @@ def apply_segmented_carriers(n: pypsa.Network, carriers_cfg: dict) -> None:
             str(carrier),
             list(spec["shares"]),
             list(spec["marginal_cost"]),
+            only_bus1_carrier=(spec.get("only_bus1_carrier") if isinstance(spec, dict) else None),
         )
 
 
