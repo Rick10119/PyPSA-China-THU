@@ -45,6 +45,36 @@ def extra_functionality_dispatch(n, snapshots):
     add_transimission_constraints(n)
 
 
+def _ac_energy_balance_gwh(n: pypsa.Network) -> float:
+    """
+    Return AC-bus net energy balance (GWh) from exported/loaded network time series.
+    Near-zero means balanced. Large |value| indicates inconsistent AC accounting.
+    """
+    eb = n.statistics.energy_balance(aggregate_time="sum")
+    if isinstance(eb, pd.Series):
+        if "bus_carrier" in eb.index.names:
+            ac = eb[eb.index.get_level_values("bus_carrier") == "AC"]
+        else:
+            ac = eb
+    else:
+        # Defensive path for older/newer API shapes.
+        if "bus_carrier" in eb.columns:
+            ac = eb.loc[eb["bus_carrier"] == "AC", "value"]
+        else:
+            ac = eb["value"] if "value" in eb.columns else pd.Series(dtype=float)
+    return float(ac.sum() / 1000.0)
+
+
+def _log_ac_balance(n: pypsa.Network, stage: str, tol_gwh: float = 1e-3) -> None:
+    try:
+        gap = _ac_energy_balance_gwh(n)
+    except Exception as e:  # pragma: no cover - diagnostics only
+        logger.warning("AC energy-balance check failed at %s: %s", stage, e)
+        return
+    level = logger.warning if abs(gap) > tol_gwh else logger.info
+    level("AC energy-balance gap at %s: %.6f GWh", stage, gap)
+
+
 def _nom_opt_value(row, nom_col: str, opt_col: str) -> float:
     v = float(row.get(nom_col, 0.0) or 0.0)
     if opt_col in row.index and pd.notna(row[opt_col]):
@@ -121,7 +151,7 @@ def split_generators_carrier(
         if p_total < 1e-9:
             continue
         saved_ts: dict[str, pd.Series] = {}
-        for attr in ("p_max_pu", "p_min_pu"):
+        for attr in ("p_max_pu", "p_min_pu", "p"):
             pnl = getattr(n, "generators_t", None)
             if pnl is not None and hasattr(pnl, attr):
                 df = getattr(pnl, attr)
@@ -186,7 +216,7 @@ def split_links_carrier(
         if p_total < 1e-9:
             continue
         saved_ts: dict[str, pd.Series] = {}
-        for attr in ("p_max_pu", "p_min_pu"):
+        for attr in ("p_max_pu", "p_min_pu", "p0", "p1", "p2", "p3"):
             pnl = getattr(n, "links_t", None)
             if pnl is not None and hasattr(pnl, attr):
                 df = getattr(pnl, attr)
@@ -351,12 +381,20 @@ def run(
         zero_gas_fuel_marginal_cost(n)
     opts_list = [o for o in str(opts).split("-") if o]
     solve_dispatch_lp(n, config, solving, opts_list)
+    _log_ac_balance(n, "post-solve (in-memory)")
     os.makedirs(os.path.dirname(network_out), exist_ok=True)
     if hasattr(n, "links_t") and hasattr(n.links_t, "p2") and n.links_t.p2 is not None:
         n.links_t.p2 = n.links_t.p2.astype(float)
     if hasattr(n, "links_t") and hasattr(n.links_t, "p3"):
         n.links_t.p3 = n.links_t.p3.apply(pd.to_numeric, errors="coerce").fillna(0.0).infer_objects(copy=False)
+    _log_ac_balance(n, "pre-export (in-memory)")
     n.export_to_netcdf(network_out)
+    if dispatch_cfg.get("check_export_ac_balance", True):
+        try:
+            n_chk = pypsa.Network(network_out)
+            _log_ac_balance(n_chk, "post-export (reloaded)")
+        except Exception as e:  # pragma: no cover - diagnostics only
+            logger.warning("Post-export AC balance reload check failed: %s", e)
 
 
 if __name__ == "__main__":

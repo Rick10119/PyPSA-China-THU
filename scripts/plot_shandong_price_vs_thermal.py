@@ -61,6 +61,85 @@ def _shandong_thermal_dispatch(n: pypsa.Network, snapshots: pd.Index, province: 
     return s
 
 
+def export_price_vs_thermal_plots(
+    *,
+    n: pypsa.Network,
+    out_prefix: str | Path,
+    province: str = "Shandong",
+    week_freq: str = "W-SUN",
+    sample: int = 0,
+    price_mode: str = "marginal",
+    currency: str = "CNY",
+    fx_cny_per_eur: float = 7.8,
+) -> None:
+    cfg = ReconstructPriceConfig(week_freq=str(week_freq))
+
+    prices = marginal_retail_prices(n, config=cfg)
+    y_label = "Marginal price"
+    if province not in prices.columns:
+        raise ValueError(f"Province '{province}' not found in reconstructed prices columns.")
+
+    price = prices[province].copy()
+    price.index = pd.to_datetime(price.index)
+    cur = str(currency).upper()
+    if cur in {"CNY", "RMB"}:
+        price = price.astype(float) * float(fx_cny_per_eur)
+        y_unit = "CNY/MWh"
+    else:
+        price = price.astype(float)
+        y_unit = "EUR/MWh"
+
+    th = _shandong_thermal_dispatch(n, price.index, province)
+    th.index = pd.to_datetime(th.index)
+
+    df = pd.concat([price.rename("price"), th], axis=1).dropna()
+
+    out_prefix = Path(out_prefix)
+    out_prefix.parent.mkdir(parents=True, exist_ok=True)
+
+    # Optional downsample for scatter clarity
+    if sample and sample > 0 and len(df) > sample:
+        df_sc = df.sample(n=int(sample), random_state=0)
+    else:
+        df_sc = df
+
+    # 1) Scatter
+    plt.figure(figsize=(7.2, 5.2))
+    plt.scatter(
+        df_sc["thermal_dispatch_MW"].to_numpy(),
+        df_sc["price"].to_numpy(),
+        s=6,
+        alpha=0.25,
+        linewidths=0,
+    )
+    plt.xlabel("Thermal dispatch (coal+gas) [MW]")
+    plt.ylabel(f"{y_label} [{y_unit}]")
+    plt.title(f"{province}: full-year {price_mode} price vs thermal dispatch")
+    plt.grid(True, alpha=0.25)
+    plt.tight_layout()
+    plt.savefig(out_prefix.with_suffix(".scatter.png"), dpi=180)
+
+    # 2) Time series (dual axis)
+    plt.figure(figsize=(11, 4.8))
+    ax1 = plt.gca()
+    ax1.plot(df.index, df["price"], color="#d62728", linewidth=1.0, label="price")
+    ax1.set_ylabel(f"{y_label} [{y_unit}]", color="#d62728")
+    ax1.tick_params(axis="y", labelcolor="#d62728")
+    ax1.grid(True, alpha=0.25)
+
+    ax2 = ax1.twinx()
+    ax2.plot(df.index, df["thermal_dispatch_MW"], color="#1f77b4", linewidth=0.8, alpha=0.85, label="thermal")
+    ax2.set_ylabel("Thermal dispatch (coal+gas) [MW]", color="#1f77b4")
+    ax2.tick_params(axis="y", labelcolor="#1f77b4")
+
+    plt.title(f"{province}: full-year {price_mode} price and thermal dispatch")
+    plt.tight_layout()
+    plt.savefig(out_prefix.with_suffix(".timeseries.png"), dpi=180)
+
+    # 3) Export the paired data
+    df.to_csv(out_prefix.with_suffix(".csv"), index_label="snapshot")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--network", required=True, help="Path to solved network .nc")
@@ -82,74 +161,17 @@ def main() -> None:
     )
     ap.add_argument("--fx-cny-per-eur", type=float, default=7.8, help="FX used when currency=CNY/RMB.")
     args = ap.parse_args()
-
     n = pypsa.Network(args.network)
-    cfg = ReconstructPriceConfig(week_freq=str(args.week_freq))
-
-    prices = marginal_retail_prices(n, config=cfg)
-    y_label = "Marginal price"
-    if args.province not in prices.columns:
-        raise SystemExit(f"Province '{args.province}' not found in reconstructed prices columns.")
-
-    price = prices[args.province].copy()
-    price.index = pd.to_datetime(price.index)
-    cur = str(args.currency).upper()
-    if cur in {"CNY", "RMB"}:
-        price = price.astype(float) * float(args.fx_cny_per_eur)
-        y_unit = "CNY/MWh"
-    else:
-        price = price.astype(float)
-        y_unit = "EUR/MWh"
-
-    th = _shandong_thermal_dispatch(n, price.index, args.province)
-    th.index = pd.to_datetime(th.index)
-
-    df = pd.concat([price.rename("price"), th], axis=1).dropna()
-
-    out_prefix = Path(args.out_prefix)
-    out_prefix.parent.mkdir(parents=True, exist_ok=True)
-
-    # Optional downsample for scatter clarity
-    if args.sample and args.sample > 0 and len(df) > args.sample:
-        df_sc = df.sample(n=int(args.sample), random_state=0)
-    else:
-        df_sc = df
-
-    # 1) Scatter
-    plt.figure(figsize=(7.2, 5.2))
-    plt.scatter(
-        df_sc["thermal_dispatch_MW"].to_numpy(),
-        df_sc["price"].to_numpy(),
-        s=6,
-        alpha=0.25,
-        linewidths=0,
+    export_price_vs_thermal_plots(
+        n=n,
+        out_prefix=args.out_prefix,
+        province=args.province,
+        week_freq=str(args.week_freq),
+        sample=int(args.sample),
+        price_mode=str(args.price_mode),
+        currency=str(args.currency),
+        fx_cny_per_eur=float(args.fx_cny_per_eur),
     )
-    plt.xlabel("Thermal dispatch (coal+gas) [MW]")
-    plt.ylabel(f"{y_label} [{y_unit}]")
-    plt.title(f"{args.province}: full-year {args.price_mode} price vs thermal dispatch")
-    plt.grid(True, alpha=0.25)
-    plt.tight_layout()
-    plt.savefig(out_prefix.with_suffix(".scatter.png"), dpi=180)
-
-    # 2) Time series (dual axis)
-    plt.figure(figsize=(11, 4.8))
-    ax1 = plt.gca()
-    ax1.plot(df.index, df["price"], color="#d62728", linewidth=1.0, label="price")
-    ax1.set_ylabel(f"{y_label} [{y_unit}]", color="#d62728")
-    ax1.tick_params(axis="y", labelcolor="#d62728")
-    ax1.grid(True, alpha=0.25)
-
-    ax2 = ax1.twinx()
-    ax2.plot(df.index, df["thermal_dispatch_MW"], color="#1f77b4", linewidth=0.8, alpha=0.85, label="thermal")
-    ax2.set_ylabel("Thermal dispatch (coal+gas) [MW]", color="#1f77b4")
-    ax2.tick_params(axis="y", labelcolor="#1f77b4")
-
-    plt.title(f"{args.province}: full-year {args.price_mode} price and thermal dispatch")
-    plt.tight_layout()
-    plt.savefig(out_prefix.with_suffix(".timeseries.png"), dpi=180)
-
-    # 3) Export the paired data
-    df.to_csv(out_prefix.with_suffix(".csv"), index_label="snapshot")
 
 
 if __name__ == "__main__":

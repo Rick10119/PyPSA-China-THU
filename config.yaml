@@ -8,7 +8,7 @@ foresight: "myopic"
 
 # Single-node mode – if true, keep only one target province in the network
 using_single_node: False
-single_node_province: "Zhejiang"  # Target province when single-node mode is enabled
+single_node_province: "Shandong"  # Target province when single-node mode is enabled
 
 results_dir: 'results/'
 summary_dir: 'summary/'
@@ -90,14 +90,14 @@ dispatch_segmented_prices:
       # - Do NOT include fuel-bus generators like `coal`/`gas` here; they do not directly set power LMPs.
       coal power plant:
         shares: [0.50, 0.20, 0.15, 0.10, 0.05]
-        marginal_cost: [0.0, 45.0, 55.0, 75.0, 192.0]
+        marginal_cost: [5.0, 45.0, 55.0, 75.0, 192.0]
       coal cc:
         shares: [0.50, 0.20, 0.15, 0.10, 0.05]
-        marginal_cost: [0.0, 45.0, 55.0, 75.0, 192.0]
+        marginal_cost: [5.0, 45.0, 55.0, 75.0, 192.0]
     Link:
       OCGT gas:
         shares: [0.50, 0.20, 0.15, 0.10, 0.05]
-        marginal_cost: [0.0, 85.0, 100.0, 120.0, 192.0]
+        marginal_cost: [10.0, 85.0, 100.0, 120.0, 192.0]
         # OCGT injects to AC; keep only AC-output links if any variants exist.
         only_bus1_carrier: "AC"
 
