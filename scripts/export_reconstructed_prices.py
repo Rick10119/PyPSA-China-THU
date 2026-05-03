@@ -215,6 +215,14 @@ def _province_offer_blocks(
 
 
 def _build_interp_curve(blocks: list[tuple[float, float]]) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Piecewise-linear mapped price vs. weekly-normalised thermal load ratio.
+
+    Blocks are sorted by marginal cost (merit order). Cumulative capacity fractions
+    run to 1. The first segment starts at (load ratio 0, price 0); then between
+    consecutive cumulative boundaries, price varies linearly to the marginal cost
+    of the corresponding merit-order block (continuous piecewise linear).
+    """
     if not blocks:
         # Fallback curve aligned with README example (EUR/MWh).
         x = np.array([0.0, 0.50, 0.70, 0.85, 0.95, 1.00], dtype=float)
@@ -227,11 +235,22 @@ def _build_interp_curve(blocks: list[tuple[float, float]]) -> tuple[np.ndarray, 
     if cap_sum <= 0:
         pmax = float(np.max(prices)) if prices.size else 0.0
         return np.array([0.0, 1.0], dtype=float), np.array([0.0, max(pmax, 0.0)], dtype=float)
-    cum = np.cumsum(caps) / cap_sum
-    x = np.concatenate(([0.0], np.clip(cum, 0.0, 1.0)))
-    pmin = float(np.min(prices)) if prices.size else 0.0
-    y = np.concatenate(([max(pmin, 0.0)], prices))
-    return x, y
+    cum = np.clip(np.cumsum(caps) / cap_sum, 0.0, 1.0)
+    # Knots: (0, 0), (cum_0, mc_1), (cum_1, mc_2), …, (cum_{n-1}, mc_n).
+    x = np.concatenate(([0.0], cum))
+    y = np.concatenate(([0.0], prices))
+    # Strictly increasing xp for np.interp: merge duplicate cumulative shares (last y wins).
+    x_list: list[float] = []
+    y_list: list[float] = []
+    for xi, yi in zip(x.tolist(), y.tolist()):
+        yi = max(float(yi), 0.0)
+        if x_list and xi <= x_list[-1] + 1e-15:
+            x_list[-1] = float(xi)
+            y_list[-1] = yi
+        else:
+            x_list.append(float(xi))
+            y_list.append(yi)
+    return np.asarray(x_list, dtype=float), np.asarray(y_list, dtype=float)
 
 
 def _local_mapped_prices(
