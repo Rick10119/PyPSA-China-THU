@@ -19,6 +19,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import yaml
 
 import matplotlib.pyplot as plt
 import pypsa
@@ -32,33 +33,116 @@ if str(_THIS_DIR) not in sys.path:
 from reconstruct_market_prices import ReconstructPriceConfig, marginal_retail_prices  # noqa: E402
 
 
-def _thermal_mask(n: pypsa.Network) -> pd.Series:
-    car = n.generators.carrier.astype(str).str.lower()
-    return car.str.contains("coal", regex=False) | car.str.contains("gas", regex=False)
+def _default_config_path() -> Path:
+    return _THIS_DIR.parent / "config.yaml"
 
 
-def _shandong_thermal_dispatch(n: pypsa.Network, snapshots: pd.Index, province: str) -> pd.Series:
+def _load_mapped_carrier_config(config_path: str | Path | None = None) -> tuple[set[str], dict[str, str]]:
     """
-    Sum coal+gas generator dispatch attributed to the province electricity bus.
-
-    Notes:
-    - In this repo, thermal generators may sit on buses like:
-      - 'Shandong' (electricity bus)
-      - 'Shandong coal' / 'Shandong gas' (fuel buses)
-    - For a quick diagnostic, we include any generator whose bus string contains the province name.
-      (This avoids missing 'Shandong coal' buses.)
+    Load carrier filters for mapped-price reconstruction from config:
+    dispatch_segmented_prices.mapped_carriers.{Generator,Link}
+    (fallback: dispatch_segmented_prices.carriers.{Generator,Link}).
     """
-    mask_th = _thermal_mask(n)
-    bus = n.generators.bus.astype(str)
-    mask_bus = bus.str.contains(province, regex=False)
-    gens = n.generators.index[mask_th & mask_bus]
-    if len(gens) == 0:
-        return pd.Series(0.0, index=snapshots, name="thermal_dispatch_MW")
+    cfg_path = Path(config_path) if config_path is not None else _default_config_path()
+    if not cfg_path.exists():
+        raise FileNotFoundError(f"Mapped carrier config not found: {cfg_path}")
 
-    p = n.generators_t.p.reindex(index=snapshots, columns=gens)
-    s = p.sum(axis=1)
-    s.name = "thermal_dispatch_MW"
-    return s
+    with cfg_path.open("r", encoding="utf-8") as f:
+        cfg = yaml.safe_load(f) or {}
+
+    dsp = cfg.get("dispatch_segmented_prices", {}) or {}
+    carriers = dsp.get("mapped_carriers", {}) or dsp.get("carriers", {}) or {}
+    gen_cfg = carriers.get("Generator", {}) or {}
+    link_cfg = carriers.get("Link", {}) or {}
+    if not isinstance(gen_cfg, dict) or not isinstance(link_cfg, dict):
+        raise ValueError(
+            "Invalid mapped carrier config: expected "
+            "dispatch_segmented_prices.mapped_carriers.{Generator,Link} "
+            "(or fallback dispatch_segmented_prices.carriers.{Generator,Link}) "
+            "to be mappings."
+        )
+
+    generator_carriers = {str(k) for k in gen_cfg.keys()}
+    link_carrier_to_bus1_carrier: dict[str, str] = {}
+    for k, v in link_cfg.items():
+        c = str(k)
+        only_bus1 = ""
+        if isinstance(v, dict):
+            only_bus1 = str(v.get("only_bus1_carrier", "") or "")
+        link_carrier_to_bus1_carrier[c] = only_bus1
+    return generator_carriers, link_carrier_to_bus1_carrier
+
+
+def _resolve_bus_province(bus_name: str) -> str:
+    return str(bus_name).split(" ", 1)[0]
+
+
+def _generator_selected(carrier: str, generator_carriers: set[str]) -> bool:
+    return str(carrier) in generator_carriers
+
+
+def _link_selected(n: pypsa.Network, row: pd.Series, link_carrier_to_bus1_carrier: dict[str, str]) -> bool:
+    c = str(row.get("carrier", ""))
+    if c not in link_carrier_to_bus1_carrier:
+        return False
+    bus1_req = str(link_carrier_to_bus1_carrier.get(c, "") or "")
+    if not bus1_req:
+        return True
+    b1 = str(row.get("bus1", ""))
+    if not b1 or not hasattr(n, "buses") or b1 not in n.buses.index:
+        return False
+    return str(n.buses.at[b1, "carrier"]) == bus1_req
+
+
+def _shandong_thermal_dispatch(
+    n: pypsa.Network,
+    snapshots: pd.Index,
+    province: str,
+    *,
+    generator_carriers: set[str],
+    link_carrier_to_bus1_carrier: dict[str, str],
+) -> pd.Series:
+    """
+    Sum mapped thermal output (Generator + Link electric injection) for one province.
+
+    This keeps the plot consistent with mapped-price carrier selection:
+    - Generator carriers from mapped config
+    - Link carriers from mapped config, using injection at bus1 (-p1)
+    """
+    out = pd.Series(0.0, index=snapshots, name="thermal_dispatch_MW", dtype=float)
+    province = str(province)
+
+    if (
+        hasattr(n, "generators")
+        and not n.generators.empty
+        and hasattr(n, "generators_t")
+        and hasattr(n.generators_t, "p")
+    ):
+        gen = n.generators
+        gmask = gen["carrier"].astype(str).map(lambda c: _generator_selected(c, generator_carriers))
+        gidx = gen.index[gmask]
+        if len(gidx):
+            gp = n.generators_t.p.reindex(index=snapshots, columns=gidx).fillna(0.0)
+            for g in gidx:
+                p = _resolve_bus_province(str(gen.at[g, "bus"]))
+                if p == province:
+                    out = out.add(pd.to_numeric(gp[g], errors="coerce").fillna(0.0).clip(lower=0.0), fill_value=0.0)
+
+    if hasattr(n, "links") and not n.links.empty and hasattr(n, "links_t") and hasattr(n.links_t, "p1"):
+        links = n.links
+        lmask = links.apply(lambda r: _link_selected(n, r, link_carrier_to_bus1_carrier), axis=1)
+        lidx = links.index[lmask]
+        if len(lidx):
+            p1 = n.links_t.p1.reindex(index=snapshots, columns=lidx).fillna(0.0)
+            for l in lidx:
+                p = _resolve_bus_province(str(links.at[l, "bus1"]))
+                if p == province:
+                    inj = (-pd.to_numeric(p1[l], errors="coerce").fillna(0.0)).clip(lower=0.0)
+                    out = out.add(inj, fill_value=0.0)
+
+    out = out.fillna(0.0)
+    out.name = "thermal_dispatch_MW"
+    return out
 
 
 def export_price_vs_thermal_plots(
@@ -71,6 +155,7 @@ def export_price_vs_thermal_plots(
     price_mode: str = "marginal",
     currency: str = "CNY",
     fx_cny_per_eur: float = 7.8,
+    config_path: str | Path | None = None,
 ) -> None:
     cfg = ReconstructPriceConfig(week_freq=str(week_freq))
 
@@ -89,7 +174,15 @@ def export_price_vs_thermal_plots(
         price = price.astype(float)
         y_unit = "EUR/MWh"
 
-    th = _shandong_thermal_dispatch(n, price.index, province)
+    generator_carriers, link_carrier_to_bus1_carrier = _load_mapped_carrier_config(config_path=config_path)
+    th = _shandong_thermal_dispatch(
+        n,
+        price.index,
+        province,
+        generator_carriers=generator_carriers,
+        link_carrier_to_bus1_carrier=link_carrier_to_bus1_carrier,
+    )
+    th = th.rename("thermal_dispatch_MW")
     th.index = pd.to_datetime(th.index)
 
     df = pd.concat([price.rename("price"), th], axis=1).dropna()
@@ -160,6 +253,7 @@ def main() -> None:
         help="Output currency for plotted/exported price series (default: CNY).",
     )
     ap.add_argument("--fx-cny-per-eur", type=float, default=7.8, help="FX used when currency=CNY/RMB.")
+    ap.add_argument("--config", default=None, help="Optional config.yaml path used for mapped carrier selection.")
     args = ap.parse_args()
     n = pypsa.Network(args.network)
     export_price_vs_thermal_plots(
@@ -171,6 +265,7 @@ def main() -> None:
         price_mode=str(args.price_mode),
         currency=str(args.currency),
         fx_cny_per_eur=float(args.fx_cny_per_eur),
+        config_path=(str(args.config) if args.config else None),
     )
 
 

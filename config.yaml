@@ -18,6 +18,10 @@ mem_per_thread: 2500
 tmin: '-01-01 00:00'
 tmax: '-12-31 23:00'
 freq: '1h'
+# Uniform electric-load multiplier (applied to all snapshots/provinces).
+# This scales level only and preserves the hourly shape.
+# 2025 national calibration target (103682e8 kWh) / current input (8589.8044 TWh) = 1.20704
+load_scale: 1.20704
 
 add_aluminum: False
 only_other_load: False
@@ -35,13 +39,13 @@ scenario:
   topology: "current+FCG" # "current" or "FCG" or "current+FCG" or "current+Neighbor"
   planning_horizons:
     - 2025
-    - 2030
-    - 2035
-    - 2040
-    - 2045
-    - 2050
-    - 2055
-    - 2060
+    # - 2030
+    # - 2035
+    # - 2040
+    # - 2045
+    # - 2050
+    # - 2055
+    # - 2060
   co2_reduction:
     linear2060:
       '2025': -1.
@@ -89,16 +93,31 @@ dispatch_segmented_prices:
       # - `coal cc` and `coal power plant` are on AC buses in current postnetworks.
       # - Do NOT include fuel-bus generators like `coal`/`gas` here; they do not directly set power LMPs.
       coal power plant:
-        shares: [0.50, 0.20, 0.15, 0.10, 0.05]
+        shares: [0.40, 0.30, 0.15, 0.10, 0.05]
         marginal_cost: [5.0, 45.0, 55.0, 75.0, 192.0]
       coal cc:
-        shares: [0.50, 0.20, 0.15, 0.10, 0.05]
-        marginal_cost: [5.0, 45.0, 55.0, 75.0, 192.0]
+        shares: [0.40, 0.30, 0.15, 0.10, 0.05]
+        marginal_cost: [10.0, 70.0, 90.0, 110.0, 300.0]
     Link:
       OCGT gas:
-        shares: [0.50, 0.20, 0.15, 0.10, 0.05]
+        shares: [0.30, 0.40, 0.15, 0.10, 0.05]
         marginal_cost: [10.0, 85.0, 100.0, 120.0, 192.0]
         # OCGT injects to AC; keep only AC-output links if any variants exist.
+        only_bus1_carrier: "AC"
+  # Optional carrier filter used ONLY by export_reconstructed_prices.py mapped sidecar.
+  # Keep CHP here (not in `carriers`) so dispatch segmentation does not split CHP links.
+  mapped_carriers:
+    Generator:
+      coal power plant: {}
+      coal cc: {}
+    Link:
+      OCGT gas:
+        only_bus1_carrier: "AC"
+      CHP gas:
+        # CHP has heat-side links too; mapped-price reconstruction should only use electric output to AC.
+        only_bus1_carrier: "AC"
+      CHP coal:
+        # CHP has heat-side links too; mapped-price reconstruction should only use electric output to AC.
         only_bus1_carrier: "AC"
 
 solving:

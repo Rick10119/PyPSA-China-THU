@@ -45,34 +45,37 @@ def extra_functionality_dispatch(n, snapshots):
     add_transimission_constraints(n)
 
 
-def _ac_energy_balance_gwh(n: pypsa.Network) -> float:
-    """
-    Return AC-bus net energy balance (GWh) from exported/loaded network time series.
-    Near-zero means balanced. Large |value| indicates inconsistent AC accounting.
-    """
+def _energy_balance_series(n: pypsa.Network) -> pd.Series:
+    """Return energy-balance series in MWh for robust diagnostics across PyPSA APIs."""
     eb = n.statistics.energy_balance(aggregate_time="sum")
     if isinstance(eb, pd.Series):
-        if "bus_carrier" in eb.index.names:
-            ac = eb[eb.index.get_level_values("bus_carrier") == "AC"]
-        else:
-            ac = eb
-    else:
-        # Defensive path for older/newer API shapes.
-        if "bus_carrier" in eb.columns:
-            ac = eb.loc[eb["bus_carrier"] == "AC", "value"]
-        else:
-            ac = eb["value"] if "value" in eb.columns else pd.Series(dtype=float)
-    return float(ac.sum() / 1000.0)
+        return eb
+    # Defensive path for older/newer API shapes.
+    if "value" in eb.columns:
+        return pd.to_numeric(eb["value"], errors="coerce").fillna(0.0)
+    return pd.Series(dtype=float)
 
 
 def _log_ac_balance(n: pypsa.Network, stage: str, tol_gwh: float = 1e-3) -> None:
     try:
-        gap = _ac_energy_balance_gwh(n)
+        eb = _energy_balance_series(n)
     except Exception as e:  # pragma: no cover - diagnostics only
-        logger.warning("AC energy-balance check failed at %s: %s", stage, e)
+        logger.warning("Energy-balance check failed at %s: %s", stage, e)
         return
-    level = logger.warning if abs(gap) > tol_gwh else logger.info
-    level("AC energy-balance gap at %s: %.6f GWh", stage, gap)
+
+    total_gap = float(eb.sum() / 1000.0)
+    level = logger.warning if abs(total_gap) > tol_gwh else logger.info
+    level("System energy-balance gap at %s: %.6f GWh", stage, total_gap)
+
+    # AC-only subtotal is informative for cross-carrier exchanges, but not a hard balance check.
+    ac_gap = None
+    if isinstance(eb.index, pd.MultiIndex) and "bus_carrier" in eb.index.names:
+        ac = eb[eb.index.get_level_values("bus_carrier") == "AC"]
+        ac_gap = float(ac.sum() / 1000.0)
+    if ac_gap is None:
+        logger.info("AC-subsystem net exchange at %s: unavailable", stage)
+    else:
+        logger.info("AC-subsystem net exchange at %s: %.6f GWh", stage, ac_gap)
 
 
 def _nom_opt_value(row, nom_col: str, opt_col: str) -> float:

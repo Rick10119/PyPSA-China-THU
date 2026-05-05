@@ -21,6 +21,8 @@ Snakemake 规则 `add_existing_baseyear` 会读取 `data/existing_infrastructure
 - `data/existing_infrastructure/battery capacity.csv`（新增）
 - `data/existing_infrastructure/PHS capacity.csv`（新增）
 - `data/existing_infrastructure/coal capacity.csv`
+- `data/existing_infrastructure/CHP coal capacity.csv`（存量供热侧燃煤 CHP，`add_existing_baseyear` 会读入）
+- `data/existing_infrastructure/CHP gas capacity.csv`（存量燃气 CHP）
 - `data/existing_infrastructure/OCGT capacity.csv`
 - `data/existing_infrastructure/nuclear capacity.csv`
 
@@ -102,6 +104,8 @@ offwind_{p,2025} = W_{p,2025} \cdot f_p,\quad onwind_{p,2025} = W_{p,2025}\cdot 
 - `data/existing_infrastructure/battery capacity.csv`（新增）
 - `data/existing_infrastructure/PHS capacity.csv`（新增）
 - `data/existing_infrastructure/coal capacity.csv`（新增 `2025` 列）
+- `data/existing_infrastructure/CHP coal capacity.csv`（新增 `2025` 列）
+- `data/existing_infrastructure/CHP gas capacity.csv`（新增 `2025` 列）
 - `data/existing_infrastructure/OCGT capacity.csv`（新增 `2025` 列）
 - `data/existing_infrastructure/nuclear capacity.csv`（新增 `2025` 列）
 
@@ -112,6 +116,8 @@ offwind_{p,2025} = W_{p,2025} \cdot f_p,\quad onwind_{p,2025} = W_{p,2025}\cdot 
 - 电池（新型储能）：源文档逐年值求和写入 `2025`；缺失省份使用 **(solar2020 + wind2020)** 作为代理权重分摊余量，并在此处明确标注为估算。
 - 抽水蓄能（PHS）：以 `data/hydro/PHS_p_nom.csv` 的省际分布作为权重，并用“2025 全国 65GW - 文件内现有合计 36.39GW”的差额作为 2021–2025 窗口新增规模进行分摊（估算）。
 - 火电（coal/OCGT）：以国家口径火电装机“2025 年末 1539.04GW - 2020 年末 1245.17GW”得到 2021–2025 新增规模，并按 `coal capacity.csv` 与 `OCGT capacity.csv` 的 2020 列占比在两者之间分摊；省内再按各自 2020 列占比分摊（估算）。
+- **煤电 CHP（`CHP coal capacity.csv`）**：`查找中国各省电力装机数据.md` 对 CHP 仅有政策与定性讨论，没有与 `coal capacity.csv` 同级的逐年省际矩阵，因此上一轮只把并网煤电 CSV 补齐到 `2025`。若基准年设为 2025，缺列会导致脚本读不到增量。现为与模型内部口径自洽：**先按本节火电方法得到各省 `coal capacity.csv` 的 `2025` 窗口**，再假定 CHP 在“煤电存量”中与纯凝煤电按 **2020 年存量结构比例**同步扩张：令 \(\Sigma_{coal}\)、\(\Sigma_{CHP}\) 分别为同一批省份上 `coal` 与 `CHP coal` 的 **2020 列**之和，\(T=\sum_p \Delta coal_{p,2025}\) 为这些省份 `coal capacity.csv` 的 `2025` 窗口合计，则煤电 CHP 全国窗口增量近似为 \(\gamma\,T\)，其中 \(\gamma=\Sigma_{CHP}/(\Sigma_{coal}+\Sigma_{CHP})\)；省内分摊取 \(\Delta CHP_{p,2025}=\gamma\,T\cdot CHP_{p,2020}/\Sigma_{CHP}\)，**2020 年本省 CHP 为 0 的省份在本次估算中亦为 0**（明确简化假设）。
+- **气电 CHP（`CHP gas capacity.csv`）**：同样在源文档中缺少与 `OCGT capacity.csv` 对齐的省际矩阵。与煤电 CHP 对称：令 \(\Sigma_{OCGT}\) 为全表 **`OCGT capacity.csv` 的 2020 列**之和，\(\Sigma_{gasCHP}\) 为 **`CHP gas capacity.csv` 的 2020 列**之和，\(U=\sum_p \Delta OCGT_{p,2025}\) 为 `OCGT capacity.csv` 的 `2025` 窗口合计，则 \(\gamma_{gas}=\Sigma_{gasCHP}/(\Sigma_{OCGT}+\Sigma_{gasCHP})\)，全国气电 CHP 窗口增量取 \(\gamma_{gas}\,U\)，省内分摊 \(\Delta gasCHP_{p,2025}=\gamma_{gas}\,U\cdot gasCHP_{p,2020}/\Sigma_{gasCHP}\)（权重为 0 的省亦为 0）。**局限**：\(\Sigma_{OCGT}+\Sigma_{gasCHP}\) 仅占模型所收录省份，且与全国性气电快报不等价；若要更写实，宜用全国气电/分布式气电分项替换 \(U\) 与本表分摊。
 - 核电：以“2025 年末 62.52GW - 2020 年末 49.89GW”得到 2021–2025 新增规模，并按 `nuclear capacity.csv` 的 2020 列省际占比分摊（估算）。
 
 电池能量容量换算说明：
@@ -127,7 +133,7 @@ E = P \times 2.58
 
 - 本方法对未列出省份/未提供完整省级矩阵的技术属于**估算**，适用于在缺少完整统计表时，快速将基准窗口平移到 2025 的工程化处理。
 - 若未来获得“所有省份完整矩阵”，建议直接覆盖写入，替代余量分摊/代理权重分摊。
-- 对煤电/气电/抽蓄/核电等技术，本次使用了全国总量差分与 2020 省际结构的组合估算；请在发表/汇报时明确其不确定性。
+- 对煤电/气电/抽蓄/核电等技术，本次使用了全国总量差分与 2020 省际结构的组合估算；**煤电 CHP、气电 CHP**的 `2025` 列为省际统计缺失下的**推导量**（分别按 2020 结构从煤电/OCGT 的窗口增量比例切分），请在发表/汇报时明确其不确定性。其它热力侧存量（如 **`coal boiler`、热泵等**）若仍只列至历史末年而基准年又要求对应列存在，同样需要补齐或暂时从 `existing_infrastructure` 去掉。
 
 ## 7. 外部数据来源链接（本次用到的“全国口径”锚点）
 

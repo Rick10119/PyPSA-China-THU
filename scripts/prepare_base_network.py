@@ -176,12 +176,15 @@ def prepare_network(config):
                         sense="<=",
                         constant=co2_limit)
 
-    #load demand data
+    # load demand data
     with pd.HDFStore(snakemake.input.elec_load, mode='r') as store:
         load = 1e6 * store['load']
         load = load.loc[network.snapshots]
 
     load.columns = pro_names
+    # Apply a pure level scaling (no shape change) for load calibration.
+    load_scale = float(config.get("load_scale", 1.0))
+    load = load * load_scale
     
     if config["add_aluminum"] and config["aluminum"]["grid_interaction"][planning_horizons]:
         # Use the dedicated scenario helper functions for aluminum-related parameters

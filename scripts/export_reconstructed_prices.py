@@ -40,7 +40,8 @@ def _default_config_path() -> Path:
 def _load_mapped_carrier_config(config_path: str | Path | None = None) -> tuple[set[str], dict[str, str]]:
     """
     Load carrier filters for mapped-price reconstruction from config:
-    dispatch_segmented_prices.carriers.{Generator,Link}.
+    dispatch_segmented_prices.mapped_carriers.{Generator,Link}
+    (fallback: dispatch_segmented_prices.carriers.{Generator,Link}).
 
     Returns:
       (generator_carriers, link_carrier_to_bus1_carrier)
@@ -53,20 +54,23 @@ def _load_mapped_carrier_config(config_path: str | Path | None = None) -> tuple[
         cfg = yaml.safe_load(f) or {}
 
     dsp = cfg.get("dispatch_segmented_prices", {}) or {}
-    carriers = dsp.get("carriers", {}) or {}
+    carriers = dsp.get("mapped_carriers", {}) or dsp.get("carriers", {}) or {}
     gen_cfg = carriers.get("Generator", {}) or {}
     link_cfg = carriers.get("Link", {}) or {}
     if not isinstance(gen_cfg, dict) or not isinstance(link_cfg, dict):
         raise ValueError(
             "Invalid mapped carrier config: expected "
-            "dispatch_segmented_prices.carriers.{Generator,Link} to be mappings."
+            "dispatch_segmented_prices.mapped_carriers.{Generator,Link} "
+            "(or fallback dispatch_segmented_prices.carriers.{Generator,Link}) "
+            "to be mappings."
         )
 
     generator_carriers = {str(k) for k in gen_cfg.keys()}
     if not generator_carriers:
         raise ValueError(
             "Mapped carrier config requires at least one carrier under "
-            "dispatch_segmented_prices.carriers.Generator."
+            "dispatch_segmented_prices.mapped_carriers.Generator "
+            "(or fallback dispatch_segmented_prices.carriers.Generator)."
         )
     link_carrier_to_bus1_carrier: dict[str, str] = {}
     for k, v in link_cfg.items():
@@ -78,7 +82,8 @@ def _load_mapped_carrier_config(config_path: str | Path | None = None) -> tuple[
     if not link_carrier_to_bus1_carrier:
         raise ValueError(
             "Mapped carrier config requires at least one carrier under "
-            "dispatch_segmented_prices.carriers.Link."
+            "dispatch_segmented_prices.mapped_carriers.Link "
+            "(or fallback dispatch_segmented_prices.carriers.Link)."
         )
 
     return generator_carriers, link_carrier_to_bus1_carrier
