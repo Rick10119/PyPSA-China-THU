@@ -156,23 +156,35 @@ def export_price_vs_thermal_plots(
     currency: str = "CNY",
     fx_cny_per_eur: float = 7.8,
     config_path: str | Path | None = None,
+    price_series: pd.Series | None = None,
+    price_label: str | None = None,
 ) -> None:
-    cfg = ReconstructPriceConfig(week_freq=str(week_freq))
-
-    prices = marginal_retail_prices(n, config=cfg)
-    y_label = "Marginal price"
-    if province not in prices.columns:
-        raise ValueError(f"Province '{province}' not found in reconstructed prices columns.")
-
-    price = prices[province].copy()
-    price.index = pd.to_datetime(price.index)
-    cur = str(currency).upper()
-    if cur in {"CNY", "RMB"}:
-        price = price.astype(float) * float(fx_cny_per_eur)
-        y_unit = "CNY/MWh"
+    if price_series is None:
+        cfg = ReconstructPriceConfig(week_freq=str(week_freq))
+        prices = marginal_retail_prices(n, config=cfg)
+        if province not in prices.columns:
+            raise ValueError(f"Province '{province}' not found in reconstructed prices columns.")
+        price = prices[province].copy()
+        y_label = str(price_label) if price_label else "Marginal price"
+        cur = str(currency).upper()
+        if cur in {"CNY", "RMB"}:
+            price = price.astype(float) * float(fx_cny_per_eur)
+            y_unit = "CNY/MWh"
+        else:
+            price = price.astype(float)
+            y_unit = "EUR/MWh"
     else:
-        price = price.astype(float)
-        y_unit = "EUR/MWh"
+        price = pd.to_numeric(price_series, errors="coerce").astype(float)
+        y_label = str(price_label) if price_label else "Mapped price"
+        cur = str(currency).upper()
+        if cur in {"CNY", "RMB"}:
+            y_unit = "CNY/MWh"
+        elif cur in {"EUR"}:
+            y_unit = "EUR/MWh"
+        else:
+            raise ValueError("currency must be EUR or CNY (RMB accepted as alias)")
+
+    price.index = pd.to_datetime(price.index)
 
     generator_carriers, link_carrier_to_bus1_carrier = _load_mapped_carrier_config(config_path=config_path)
     th = _shandong_thermal_dispatch(
@@ -207,7 +219,10 @@ def export_price_vs_thermal_plots(
     )
     plt.xlabel("Thermal dispatch (coal+gas) [MW]")
     plt.ylabel(f"{y_label} [{y_unit}]")
-    plt.title(f"{province}: full-year {price_mode} price vs thermal dispatch")
+    title_mode = str(price_mode)
+    if price_series is not None and price_label:
+        title_mode = str(price_label).lower().replace(" ", "_")
+    plt.title(f"{province}: full-year {title_mode} price vs thermal dispatch")
     plt.grid(True, alpha=0.25)
     plt.tight_layout()
     plt.savefig(out_prefix.with_suffix(".scatter.png"), dpi=180)
@@ -225,7 +240,7 @@ def export_price_vs_thermal_plots(
     ax2.set_ylabel("Thermal dispatch (coal+gas) [MW]", color="#1f77b4")
     ax2.tick_params(axis="y", labelcolor="#1f77b4")
 
-    plt.title(f"{province}: full-year {price_mode} price and thermal dispatch")
+    plt.title(f"{province}: full-year {title_mode} price and thermal dispatch")
     plt.tight_layout()
     plt.savefig(out_prefix.with_suffix(".timeseries.png"), dpi=180)
 

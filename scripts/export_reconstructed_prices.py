@@ -89,6 +89,130 @@ def _load_mapped_carrier_config(config_path: str | Path | None = None) -> tuple[
     return generator_carriers, link_carrier_to_bus1_carrier
 
 
+def _load_mapped_price_control_points(
+    config_path: str | Path | None = None,
+) -> tuple[np.ndarray, np.ndarray] | None:
+    """
+    Load mapped-price control points from config.
+
+    Supported locations:
+    - dispatch_segmented_prices.price_export.control_points: {x: [...], y: [...]}
+    - dispatch_segmented_prices.price_export.mapped_price_control_points: {x: [...], y: [...]}
+    - dispatch_segmented_prices.control_points / mapped_price_control_points
+
+    If explicit control points are absent, fallback to
+    `dispatch_segmented_prices.carriers` segment config and construct:
+      x = [0, cumulative(shares)]
+      y = [0, 0, marginal_cost[1], ..., marginal_cost[-1]]
+    so the first segment is flat at zero and subsequent segments are linear.
+
+    Returns (x, y) if present/derived and valid, else None.
+    Rule required by reconstruction:
+    - The first segment price is always 0, so the first two y-knots are forced to 0.
+    """
+    cfg_path = Path(config_path) if config_path is not None else _default_config_path()
+    if not cfg_path.exists():
+        return None
+
+    with cfg_path.open("r", encoding="utf-8") as f:
+        cfg = yaml.safe_load(f) or {}
+    dsp = cfg.get("dispatch_segmented_prices", {}) or {}
+    pe = dsp.get("price_export", {}) or {}
+
+    cand = (
+        pe.get("control_points")
+        or pe.get("mapped_price_control_points")
+        or dsp.get("control_points")
+        or dsp.get("mapped_price_control_points")
+    )
+    x_raw: list[float] | None = None
+    y_raw: list[float] | None = None
+    if isinstance(cand, dict):
+        x0 = cand.get("x")
+        y0 = cand.get("y")
+        if isinstance(x0, (list, tuple)) and isinstance(y0, (list, tuple)) and len(x0) == len(y0) and len(x0) > 0:
+            x_raw = [float(v) for v in x0]
+            y_raw = [float(v) for v in y0]
+
+    # Fallback: derive curve from segmented carrier config.
+    if x_raw is None or y_raw is None:
+        carriers_cfg = dsp.get("carriers", {}) or {}
+        gen_cfg = carriers_cfg.get("Generator", {}) or {}
+        link_cfg = carriers_cfg.get("Link", {}) or {}
+        specs: list[dict] = []
+        if isinstance(gen_cfg, dict):
+            specs.extend(v for v in gen_cfg.values() if isinstance(v, dict))
+        if isinstance(link_cfg, dict):
+            specs.extend(v for v in link_cfg.values() if isinstance(v, dict))
+
+        seg_spec = next(
+            (
+                s
+                for s in specs
+                if isinstance(s.get("shares"), (list, tuple))
+                and isinstance(s.get("marginal_cost"), (list, tuple))
+                and len(s.get("shares")) == len(s.get("marginal_cost"))
+                and len(s.get("shares")) >= 2
+            ),
+            None,
+        )
+        if seg_spec is None:
+            return None
+
+        shares = np.asarray([float(v) for v in seg_spec.get("shares", [])], dtype=float)
+        mc = np.asarray([float(v) for v in seg_spec.get("marginal_cost", [])], dtype=float)
+        ssum = float(np.sum(shares))
+        if shares.size < 2 or mc.size != shares.size or ssum <= 0.0:
+            return None
+        cum = np.clip(np.cumsum(shares / ssum), 0.0, 1.0)
+        x_raw = [0.0] + cum.tolist()
+        y_raw = [0.0, 0.0] + [max(float(v), 0.0) for v in mc[1:].tolist()]
+
+    x = np.asarray([float(v) for v in x_raw], dtype=float)
+    y = np.asarray([max(float(v), 0.0) for v in y_raw], dtype=float)
+
+    # Sort by x and clip to feasible load-ratio range.
+    order = np.argsort(x)
+    x = np.clip(x[order], 0.0, 1.0)
+    y = y[order]
+
+    # Ensure the curve starts at LR=0.
+    if x[0] > 0.0:
+        x = np.concatenate(([0.0], x))
+        y = np.concatenate(([0.0], y))
+    else:
+        x[0] = 0.0
+
+    # Merge duplicate x knots (keep last y), required by np.interp.
+    x_list: list[float] = []
+    y_list: list[float] = []
+    for xi, yi in zip(x.tolist(), y.tolist()):
+        if x_list and xi <= x_list[-1] + 1e-15:
+            x_list[-1] = float(xi)
+            y_list[-1] = float(yi)
+        else:
+            x_list.append(float(xi))
+            y_list.append(float(yi))
+
+    x = np.asarray(x_list, dtype=float)
+    y = np.asarray(y_list, dtype=float)
+    if x.size == 0:
+        return None
+
+    # Enforce mapped-price rule:
+    # first segment is all zeros, and only later segments are linear.
+    y[0] = 0.0
+    if y.size >= 2:
+        y[1] = 0.0
+
+    # Ensure right boundary exists.
+    if x[-1] < 1.0:
+        x = np.concatenate((x, [1.0]))
+        y = np.concatenate((y, [y[-1]]))
+
+    return x, y
+
+
 def _province_elec_buses(n: pypsa.Network) -> pd.Index:
     buses_df = n.buses
     if "carrier" in buses_df.columns:
@@ -221,7 +345,7 @@ def _province_offer_blocks(
 
 def _build_interp_curve(blocks: list[tuple[float, float]]) -> tuple[np.ndarray, np.ndarray]:
     """
-    Piecewise-linear mapped price vs. weekly-normalised thermal load ratio.
+    Piecewise-linear mapped price vs. thermal load ratio.
 
     Blocks are sorted by marginal cost (merit order). Cumulative capacity fractions
     run to 1. The first segment starts at (load ratio 0, price 0); then between
@@ -264,6 +388,7 @@ def _local_mapped_prices(
     *,
     generator_carriers: set[str],
     link_carrier_to_bus1_carrier: dict[str, str],
+    config_path: str | Path | None = None,
 ) -> pd.DataFrame:
     provinces = _province_elec_buses(n)
     snapshots = pd.Index(n.snapshots)
@@ -280,15 +405,28 @@ def _local_mapped_prices(
         generator_carriers=generator_carriers,
         link_carrier_to_bus1_carrier=link_carrier_to_bus1_carrier,
     )
+    cfg_curve = _load_mapped_price_control_points(config_path=config_path)
     out = pd.DataFrame(index=snapshots, columns=list(map(str, provinces)), dtype=float)
 
-    # Weekly max of local thermal output -> load ratio LR in [0,1].
-    week_max = thermal.groupby(pd.Grouper(freq=str(week_freq))).transform("max")
-    week_max = week_max.where(week_max > 0.0, 1.0)
-    lr = (thermal / week_max).clip(lower=0.0, upper=1.0).fillna(0.0)
+    # Two-step load-ratio construction:
+    # 1) Base load ratio = actual output / total installed capacity.
+    # 2) Weekly-max adjustment = divide by weekly peak load ratio.
+    # This preserves weekly-shape normalization while keeping a capacity-based anchor.
+    cap_by_province = pd.Series(
+        {p: float(sum(cap for cap, _ in blocks.get(p, []))) for p in out.columns},
+        dtype=float,
+    )
+    cap_by_province = cap_by_province.where(cap_by_province > 0.0, np.nan)
+    lr_base = thermal.divide(cap_by_province, axis=1).clip(lower=0.0, upper=1.0)
+    lr_week_max = lr_base.groupby(pd.Grouper(freq=str(week_freq))).transform("max")
+    lr_week_max = lr_week_max.where(lr_week_max > 0.0, np.nan)
+    lr = lr_base.divide(lr_week_max).clip(lower=0.0, upper=1.0).fillna(0.0)
 
     for p in out.columns:
-        x, y = _build_interp_curve(blocks.get(p, []))
+        if cfg_curve is not None:
+            x, y = cfg_curve
+        else:
+            x, y = _build_interp_curve(blocks.get(p, []))
         out[p] = np.interp(lr[p].to_numpy(dtype=float), x, y).astype(float)
 
     return out.fillna(0.0).clip(lower=0.0)
@@ -377,6 +515,7 @@ def mapped_retail_prices(
         week_freq=str(week_freq),
         generator_carriers=generator_carriers,
         link_carrier_to_bus1_carrier=link_carrier_to_bus1_carrier,
+        config_path=config_path,
     )
     return _apply_cross_border_imports(
         n,
@@ -472,6 +611,7 @@ def export_prices(
             plot_prefix = Path(shandong_plot_prefix)
         else:
             plot_prefix = out_path.parent / "plots" / f"shandong_price_vs_thermal_{out_path.stem}"
+        shandong_mapped_price = mapped_prices["Shandong"] if "Shandong" in mapped_prices.columns else None
         export_price_vs_thermal_plots(
             n=n,
             out_prefix=plot_prefix,
@@ -481,6 +621,8 @@ def export_prices(
             price_mode=str(price_mode),
             currency=str(currency),
             fx_cny_per_eur=float(fx_cny_per_eur),
+            price_series=shandong_mapped_price,
+            price_label="Mapped price",
         )
 
 

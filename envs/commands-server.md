@@ -27,6 +27,7 @@ git fetch --all --prune
 git checkout "price-simulation"
 git pull
 snakemake --unlock
+snakemake -np
 sbatch job.slurm
 
 chmod +x submit_multiple_jobs.sh

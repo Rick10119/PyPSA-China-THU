@@ -2,12 +2,12 @@
 #
 # SPDX-License-Identifier: CC0-1.0
 
-version: 0425.1H.1
+version: 0425.6H.1
 logging_level: INFO
 foresight: "myopic"
 
 # Single-node mode – if true, keep only one target province in the network
-using_single_node: False
+using_single_node: True
 single_node_province: "Shandong"  # Target province when single-node mode is enabled
 
 results_dir: 'results/'
@@ -47,15 +47,15 @@ scenario:
     # - 2055
     # - 2060
   co2_reduction:
-    linear2060:
-      '2025': -1.
-      '2030': 0.143
-      '2035': 0.286
-      '2040': 0.429
-      '2045': 0.571
-      '2050': 0.714
-      '2055': 0.857
-      '2060': 1.0
+    # linear2060:
+    #   '2025': -1.
+    #   '2030': 0.143
+    #   '2035': 0.286
+    #   '2040': 0.429
+    #   '2045': 0.571
+    #   '2050': 0.714
+    #   '2055': 0.857
+    #   '2060': 1.0
     linear2050:
       '2025': -1.
       '2030': 0.0
