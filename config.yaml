@@ -40,12 +40,6 @@ scenario:
   planning_horizons:
     - 2025
     - 2030
-    - 2035
-    - 2040
-    - 2045
-    - 2050
-    - 2055
-    - 2060
   co2_reduction:
     # linear2060:
     #   '2025': -1.
