@@ -65,6 +65,20 @@
 - `scripts/export_reconstructed_prices.py --price-mode mapped`（默认）：使用周负荷率映射曲线，适用于**规划阶段**解出的 `postnetwork`，此时优化里火电多为单一边际成本。
 - 对**分段 dispatch 解出的网络**，应使用 `--price-mode marginal`：直接使用各省级 AC bus 的 `buses_t.marginal_price`（不做省间进口折算；输电已在 dispatch 对偶中体现）。**不要**再对同一结果跑 `mapped` 模式，否则等于在已内生分段的出清之上再叠一层负荷率报价映射。
 
+**`mapped` 模式下“跨省输电”考虑逻辑（当前实现已开启）**
+
+- 本地价：先对每个省按本地火电出力构造 `local_price(p, t)`（负荷率映射曲线）。
+- 联络线筛选：仅处理 `bus0` 与 `bus1` 都是省级电力节点（省-省 link）的线路。
+- 未拥塞判定：当 `|p0| <= p_nom - line_cong_eps_mw` 视为可用外来电通道。
+- 潮流方向：
+  - `p0 > min_inflow_mw`：表示 `bus0 -> bus1` 净送电，受端 `bus1` 可获得来自 `bus0` 的进口报价；
+  - `p0 < -min_inflow_mw`：表示 `bus1 -> bus0` 净送电，受端 `bus0` 可获得来自 `bus1` 的进口报价。
+- 进口报价折算：送端本地价按线路效率折算损耗，`offer = local_price(send) / efficiency`（反向用 `efficiency2`，缺失则回落到 `efficiency`）。
+- 省内最终价：把本地价与所有可行进口报价聚合后取优：
+  - `import_agg: min_offer`（默认）取最小进口报价，再与本地价取 `min`；
+  - `import_agg: max_offer` 取最大进口报价，再与本地价取 `min`。
+- 参数位置：`scripts/export_reconstructed_prices.py` 的 CLI 参数 `--import-agg`、`--line-cong-eps-mw`、`--min-inflow-mw`。
+
 #### 分段 `marginal_cost` 与 `shares`：全成本报价与五段模板（`dispatch_segmented_prices`）
 
 **成本边界（现货重构 / 二阶段 dispatch）**  

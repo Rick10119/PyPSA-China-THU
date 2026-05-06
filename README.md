@@ -42,6 +42,28 @@ Each stage reads from `config.yaml` and data files under `data/`, and writes int
 
 Older versions of this repo included an experimental **heat-only** workflow that relied on **exogenous electricity prices**. That approach is deprecated in this repo; electricity price analysis should use post-processing based on solved networks (see `scripts/reconstruct_market_prices.py`).
 
+### Mapped-price cross-province transmission adjustment
+
+For `scripts/export_reconstructed_prices.py` in mapped mode, cross-province transmission is explicitly considered:
+
+- Build a local mapped price `local_price(p, t)` for each province first (from weekly-normalized thermal load ratio).
+- Only province-to-province links are considered (`bus0` and `bus1` both in provincial AC buses).
+- A link is treated as uncongested when `|p0| <= p_nom - line_cong_eps_mw`.
+- Flow direction is inferred from `p0`:
+  - `p0 > min_inflow_mw`: `bus0 -> bus1`, so `bus1` receives an import offer from `bus0`.
+  - `p0 < -min_inflow_mw`: `bus1 -> bus0`, so `bus0` receives an import offer from `bus1`.
+- Import offer is loss-adjusted by link efficiency:
+  - forward uses `efficiency`, reverse uses `efficiency2` (fallback to `efficiency` if missing),
+  - offer formula is `offer = local_price(send) / efficiency`.
+- Final mapped price is the better of local and import offers:
+  - `import_agg=min_offer` (default): aggregate by minimum import offer, then `min(local, import_offer)`;
+  - `import_agg=max_offer`: aggregate by maximum import offer, then `min(local, import_offer)`.
+
+Related CLI options:
+- `--import-agg`
+- `--line-cong-eps-mw`
+- `--min-inflow-mw`
+
 ## Installation
 
 ### Prerequisites

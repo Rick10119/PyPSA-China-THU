@@ -410,17 +410,20 @@ def _local_mapped_prices(
 
     # Two-step load-ratio construction:
     # 1) Base load ratio = actual output / total installed capacity.
-    # 2) Weekly-max adjustment = divide by weekly peak load ratio.
-    # This preserves weekly-shape normalization while keeping a capacity-based anchor.
+    # 2) Monthly-max adjustment = divide by monthly peak load ratio.
+    # This preserves intra-period shape normalization while keeping a capacity-based anchor.
     cap_by_province = pd.Series(
         {p: float(sum(cap for cap, _ in blocks.get(p, []))) for p in out.columns},
         dtype=float,
     )
     cap_by_province = cap_by_province.where(cap_by_province > 0.0, np.nan)
     lr_base = thermal.divide(cap_by_province, axis=1).clip(lower=0.0, upper=1.0)
-    lr_week_max = lr_base.groupby(pd.Grouper(freq=str(week_freq))).transform("max")
-    lr_week_max = lr_week_max.where(lr_week_max > 0.0, np.nan)
-    lr = lr_base.divide(lr_week_max).clip(lower=0.0, upper=1.0).fillna(0.0)
+    # Keep `week_freq` for backward-compatible interfaces, but the mapped ratio
+    # denominator is fixed to monthly maxima per user-defined methodology.
+    _ = week_freq
+    lr_month_max = lr_base.groupby(pd.Grouper(freq="MS")).transform("max")
+    lr_month_max = lr_month_max.where(lr_month_max > 0.0, np.nan)
+    lr = lr_base.divide(lr_month_max).clip(lower=0.0, upper=1.0).fillna(0.0)
 
     for p in out.columns:
         if cfg_curve is not None:
@@ -440,9 +443,24 @@ def _is_uncongested(link_row: pd.Series, p0_t: pd.Series, eps_mw: float) -> pd.S
     return (loading <= max(p_nom - float(eps_mw), 0.0)).fillna(False)
 
 
-def _apply_cross_border_imports(
+def _province_marginal_prices(
+    n: pypsa.Network,
+    provinces: pd.Index,
+    snapshots: pd.Index,
+) -> pd.DataFrame:
+    cols = list(map(str, provinces))
+    out = pd.DataFrame(0.0, index=snapshots, columns=cols, dtype=float)
+    if not hasattr(n, "buses_t") or not hasattr(n.buses_t, "marginal_price"):
+        return out
+    mp = n.buses_t.marginal_price.reindex(index=snapshots, columns=cols)
+    mp = mp.apply(pd.to_numeric, errors="coerce").fillna(0.0).astype(float)
+    return out.add(mp, fill_value=0.0)
+
+
+def _apply_cross_border_exports(
     n: pypsa.Network,
     local_prices: pd.DataFrame,
+    marginal_prices: pd.DataFrame,
     *,
     import_agg: str,
     line_cong_eps_mw: float,
@@ -451,7 +469,8 @@ def _apply_cross_border_imports(
     provinces = list(local_prices.columns)
     prov_set = set(provinces)
     local = local_prices.copy().astype(float)
-    offers: dict[str, list[pd.Series]] = {p: [] for p in provinces}
+    marginal = marginal_prices.reindex(index=local.index, columns=local.columns).fillna(0.0).astype(float)
+    export_price_candidates: dict[str, list[pd.Series]] = {p: [] for p in provinces}
 
     if not hasattr(n, "links") or n.links.empty or not hasattr(n, "links_t") or not hasattr(n.links_t, "p0"):
         return local
@@ -475,27 +494,29 @@ def _apply_cross_border_imports(
         eta_rev = max(eta_rev, 1e-6)
 
         # Forward flow: b0 -> b1 if p0 > 0.
+        # Exporting province b0 references receiving province b1 price,
+        # mapped back with distance/loss correction.
         fwd_mask = uncong & (p0 > float(min_inflow_mw))
         if fwd_mask.any():
-            offer_fwd = (local[b0] / eta_fwd).where(fwd_mask)
-            offers[b1].append(offer_fwd)
+            ref_fwd = (marginal[b1] * eta_fwd).where(fwd_mask)
+            export_price_candidates[b0].append(ref_fwd)
 
         # Reverse flow: b1 -> b0 if p0 < 0.
         rev_mask = uncong & (p0 < -float(min_inflow_mw))
         if rev_mask.any():
-            offer_rev = (local[b1] / eta_rev).where(rev_mask)
-            offers[b0].append(offer_rev)
+            ref_rev = (marginal[b0] * eta_rev).where(rev_mask)
+            export_price_candidates[b1].append(ref_rev)
 
     out = local.copy()
     for p in provinces:
-        if not offers[p]:
+        if not export_price_candidates[p]:
             continue
-        mat = pd.concat(offers[p], axis=1)
-        if import_agg == "max_offer":
-            agg_offer = mat.max(axis=1, skipna=True)
-        else:
-            agg_offer = mat.min(axis=1, skipna=True)
-        out[p] = np.minimum(local[p], agg_offer.fillna(local[p]))
+        mat = pd.concat(export_price_candidates[p], axis=1)
+        # For exporting province, use the highest receiving-side reference price.
+        # Keep import_agg argument for backward-compatible interfaces.
+        _ = import_agg
+        agg_ref = mat.max(axis=1, skipna=True)
+        out[p] = np.maximum(local[p], agg_ref.fillna(local[p]))
 
     return out.fillna(0.0).clip(lower=0.0)
 
@@ -517,9 +538,15 @@ def mapped_retail_prices(
         link_carrier_to_bus1_carrier=link_carrier_to_bus1_carrier,
         config_path=config_path,
     )
-    return _apply_cross_border_imports(
+    marginal = _province_marginal_prices(
+        n,
+        provinces=pd.Index(local.columns),
+        snapshots=pd.Index(local.index),
+    )
+    return _apply_cross_border_exports(
         n,
         local,
+        marginal,
         import_agg=str(import_agg),
         line_cong_eps_mw=float(line_cong_eps_mw),
         min_inflow_mw=float(min_inflow_mw),
@@ -636,12 +663,22 @@ def main() -> None:
     )
     ap.add_argument("--out", required=True, help="Output CSV path")
     ap.add_argument("--province", action="append", default=None, help="Province to include (repeatable). If omitted, export all.")
-    ap.add_argument("--week-freq", default="W-SUN", help="Week definition for weekly max (default: W-SUN)")
+    ap.add_argument(
+        "--week-freq",
+        default="SM",
+        help=(
+            "Deprecated compatibility argument. "
+            "Mapped load-ratio denominator now uses fixed half-month maxima."
+        ),
+    )
     ap.add_argument(
         "--import-agg",
         default="min_offer",
         choices=["min_offer", "max_offer"],
-        help="How to aggregate multiple uncongested import offers (default: min_offer)",
+        help=(
+            "Deprecated compatibility argument. "
+            "Current mapped export adjustment always uses highest receiving-side reference."
+        ),
     )
     ap.add_argument("--line-cong-eps-mw", type=float, default=1e-3, help="Congestion slack in MW (default: 1e-3)")
     ap.add_argument("--min-inflow-mw", type=float, default=1e-3, help="Ignore smaller line flows (default: 1e-3)")
