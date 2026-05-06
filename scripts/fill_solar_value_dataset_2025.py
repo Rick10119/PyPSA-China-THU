@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """
-Fill 2025 rows in solar_value_dataset.xlsx from dispatch results.
+Fill solar value dataset rows for planning years 2025-2060.
 
-Inputs:
+Inputs per year:
 - dispatch segmented network (.nc): solar generation/demand/capacity side metrics
 - mapped dispatch prices CSV: nodal price time series for value-factor metrics
 
-Writes only rows 2-33 (first province block) in the workbook.
+Capacity adjustment rule:
+- 2025: apply real-capacity correction from `solar capacity.csv`
+- 2030 and later: no capacity correction (use model capacity directly)
 """
 
 from __future__ import annotations
@@ -21,27 +23,13 @@ from openpyxl import load_workbook
 
 ROOT = Path(__file__).resolve().parents[1]
 VERSION_DIR = ROOT / "results" / "version-0505.1H.2"
-NETWORK_PATH = (
-    VERSION_DIR
-    / "dispatch_segmented"
-    / "positive"
-    / "postnetwork-dispatch-seg-ll-current+FCG-linear2050-2025.nc"
-)
-PRICE_CSV_PATH = (
-    VERSION_DIR
-    / "prices"
-    / "dispatch_segmented"
-    / "positive"
-    / "dispatch_segmented_prices-ll-current+FCG-linear2050-2025_mapped.csv"
-)
+HEATING_DEMAND = "positive"
+SCENARIO_STEM = "ll-current+FCG-linear2050"
+TARGET_YEARS = list(range(2025, 2065, 5))
 XLSX_PATH = VERSION_DIR / "solar_value_dataset.xlsx"
-BACKUP_PATH = VERSION_DIR / "solar_value_dataset.2025-backup.xlsx"
+BACKUP_PATH = VERSION_DIR / "solar_value_dataset.multi-year-backup.xlsx"
 REAL_SOLAR_CAP_PATH = ROOT / "data" / "existing_infrastructure" / "solar capacity.csv"
-CAP_COMPARE_PATH = VERSION_DIR / "solar_capacity_compare_2025.csv"
-
-# Workbook row block for 2025
-ROW_START = 2
-ROW_END = 33
+CAP_COMPARE_PATH = VERSION_DIR / "solar_capacity_compare_by_year.csv"
 
 # Workbook province -> source province names
 PROVINCE_MAP = {
@@ -61,6 +49,31 @@ def _group_sum_by_bus(frame: pd.DataFrame, bus_of_component: pd.Series) -> pd.Da
     return frame.T.groupby(bus_of_component).sum().T
 
 
+def _network_path(year: int) -> Path:
+    return (
+        VERSION_DIR
+        / "dispatch_segmented"
+        / HEATING_DEMAND
+        / f"postnetwork-dispatch-seg-{SCENARIO_STEM}-{year}.nc"
+    )
+
+
+def _price_csv_path(year: int) -> Path:
+    return (
+        VERSION_DIR
+        / "prices"
+        / "dispatch_segmented"
+        / HEATING_DEMAND
+        / f"dispatch_segmented_prices-{SCENARIO_STEM}-{year}_mapped.csv"
+    )
+
+
+def _block_starts(ws) -> list[int]:
+    zones = [ws.cell(r, 1).value for r in range(2, ws.max_row + 1)]
+    first_zone = zones[0]
+    return [i + 2 for i, z in enumerate(zones) if z == first_zone]
+
+
 def _load_real_solar_capacity_2025() -> pd.Series:
     cap = pd.read_csv(REAL_SOLAR_CAP_PATH)
     required_cols = ["Region", "2010", "2015", "2020", "2025"]
@@ -72,10 +85,17 @@ def _load_real_solar_capacity_2025() -> pd.Series:
     return real_cap
 
 
-def _compute_metrics() -> pd.DataFrame:
-    n = pypsa.Network(NETWORK_PATH)
+def _compute_metrics_for_year(year: int, adjust_capacity: bool) -> tuple[pd.DataFrame, pd.DataFrame]:
+    network_path = _network_path(year)
+    price_csv_path = _price_csv_path(year)
+    if not network_path.exists():
+        raise FileNotFoundError(f"Dispatch network not found for {year}: {network_path}")
+    if not price_csv_path.exists():
+        raise FileNotFoundError(f"Mapped price CSV not found for {year}: {price_csv_path}")
 
-    prices = pd.read_csv(PRICE_CSV_PATH)
+    n = pypsa.Network(network_path)
+
+    prices = pd.read_csv(price_csv_path)
     prices = prices.rename(columns={"snapshot": "time"})
     prices["time"] = pd.to_datetime(prices["time"])
     prices = prices.set_index("time").sort_index()
@@ -102,7 +122,7 @@ def _compute_metrics() -> pd.DataFrame:
     solar_available_bus = _group_sum_by_bus(avail, solar_bus)
 
     solar_capacity_bus = n.generators.loc[solar_gens].groupby("bus")["p_nom_opt"].sum()
-    real_solar_capacity_bus = _load_real_solar_capacity_2025()
+    real_solar_capacity_bus = _load_real_solar_capacity_2025() if adjust_capacity else pd.Series(dtype=float)
 
     ac_buses = n.buses.index[n.buses.carrier.astype(str) == "AC"]
 
@@ -152,8 +172,8 @@ def _compute_metrics() -> pd.DataFrame:
         total_gen_mwh = float(total_gen_s.sum())
         available_mwh = float(available_s.sum())
         nc_cap_mw = float(solar_capacity_bus.get(province, 0.0))
-        real_cap_mw = float(real_solar_capacity_bus.get(province, nc_cap_mw))
-        cap_ratio = (real_cap_mw / nc_cap_mw) if nc_cap_mw > 0 else 0.0
+        real_cap_mw = float(real_solar_capacity_bus.get(province, nc_cap_mw)) if adjust_capacity else nc_cap_mw
+        cap_ratio = (real_cap_mw / nc_cap_mw) if nc_cap_mw > 0 else 1.0
         solar_mwh_for_penetration = solar_mwh * cap_ratio
 
         pv_value_num = float((dispatch_s * price_s).sum())
@@ -171,10 +191,12 @@ def _compute_metrics() -> pd.DataFrame:
 
         cap_compare_rows.append(
             {
+                "year": year,
                 "province": province,
                 "nc_solar_capacity_mw": nc_cap_mw,
                 "real_solar_capacity_mw": real_cap_mw,
                 "real_to_nc_ratio": cap_ratio,
+                "capacity_adjusted": adjust_capacity,
             }
         )
 
@@ -191,42 +213,67 @@ def _compute_metrics() -> pd.DataFrame:
             }
         )
 
-    pd.DataFrame(cap_compare_rows).set_index("province").to_csv(CAP_COMPARE_PATH)
-    return pd.DataFrame(rows).set_index("province")
+    cap_compare_df = pd.DataFrame(cap_compare_rows)
+    return pd.DataFrame(rows).set_index("province"), cap_compare_df
 
 
-def _write_workbook(metrics: pd.DataFrame) -> None:
+def _write_workbook(metrics_by_year: dict[int, pd.DataFrame]) -> None:
     copy2(XLSX_PATH, BACKUP_PATH)
 
     wb = load_workbook(XLSX_PATH)
     ws = wb["Sheet1"]
 
-    for row in range(ROW_START, ROW_END + 1):
-        zone = ws.cell(row=row, column=1).value
-        if not zone:
-            continue
-        zone = str(zone)
-        source_zone = _mapped_name(zone)
-        if source_zone not in metrics.index:
-            raise KeyError(f"Province not found in computed metrics: {zone} -> {source_zone}")
+    starts = _block_starts(ws)
+    years_by_block = [2025 + 5 * i for i in range(len(starts))]
+    block_size = (starts[1] - starts[0]) if len(starts) > 1 else 32
 
-        m = metrics.loc[source_zone]
-        ws.cell(row=row, column=2, value=2025)
-        ws.cell(row=row, column=3, value=float(m["solar_ele_GWh"]))
-        ws.cell(row=row, column=4, value=float(m["value_factor_numerator"]))
-        ws.cell(row=row, column=5, value=float(m["value_factor_denominator"]))
-        ws.cell(row=row, column=6, value=float(m["value_factor"]))
-        ws.cell(row=row, column=7, value=float(m["solar_penetration"]))
-        ws.cell(row=row, column=8, value=float(m["solar_curtailment_rate"]))
-        ws.cell(row=row, column=9, value=float(m["solar_capacity_factor"]))
+    for start, year in zip(starts, years_by_block):
+        if year not in TARGET_YEARS or year not in metrics_by_year:
+            continue
+        metrics = metrics_by_year[year]
+        for row in range(start, min(start + block_size, ws.max_row + 1)):
+            zone = ws.cell(row=row, column=1).value
+            if not zone:
+                continue
+            zone = str(zone)
+            source_zone = _mapped_name(zone)
+            if source_zone not in metrics.index:
+                raise KeyError(f"Province not found in computed metrics: {zone} -> {source_zone}")
+
+            m = metrics.loc[source_zone]
+            ws.cell(row=row, column=2, value=year)
+            ws.cell(row=row, column=3, value=float(m["solar_ele_GWh"]))
+            ws.cell(row=row, column=4, value=float(m["value_factor_numerator"]))
+            ws.cell(row=row, column=5, value=float(m["value_factor_denominator"]))
+            ws.cell(row=row, column=6, value=float(m["value_factor"]))
+            ws.cell(row=row, column=7, value=float(m["solar_penetration"]))
+            ws.cell(row=row, column=8, value=float(m["solar_curtailment_rate"]))
+            ws.cell(row=row, column=9, value=float(m["solar_capacity_factor"]))
 
     wb.save(XLSX_PATH)
 
 
 def main() -> None:
-    metrics = _compute_metrics()
-    _write_workbook(metrics)
-    print(f"Filled 2025 rows in: {XLSX_PATH}")
+    metrics_by_year: dict[int, pd.DataFrame] = {}
+    cap_compare_all: list[pd.DataFrame] = []
+    for year in TARGET_YEARS:
+        try:
+            metrics, cap_compare = _compute_metrics_for_year(year, adjust_capacity=(year == 2025))
+        except FileNotFoundError as e:
+            print(f"Skip {year}: {e}")
+            continue
+        metrics_by_year[year] = metrics
+        cap_compare_all.append(cap_compare)
+
+    if not metrics_by_year:
+        raise RuntimeError("No years were processed. Check dispatch outputs and mapped price CSV files.")
+
+    if cap_compare_all:
+        pd.concat(cap_compare_all, ignore_index=True).to_csv(CAP_COMPARE_PATH, index=False)
+
+    _write_workbook(metrics_by_year)
+    print(f"Filled years: {sorted(metrics_by_year.keys())}")
+    print(f"Target years: {TARGET_YEARS}")
     print(f"Backup created: {BACKUP_PATH}")
 
 
