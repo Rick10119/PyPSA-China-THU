@@ -135,7 +135,7 @@ if config["foresight"] == "myopic":
             ),
 
             expand(
-                config['results_dir'] + 'version-' + str(config['version']) + '/postnetworks/{heating_demand}/postnetwork-{opts}-{topology}-{pathway}-{planning_horizons}.nc',
+                config['results_dir'] + 'version-' + str(config['version']) + '/dispatch_segmented/{heating_demand}/postnetwork-dispatch-seg-{opts}-{topology}-{pathway}-{planning_horizons}.nc',
                 **config["scenario"]
             )
 

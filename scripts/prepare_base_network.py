@@ -6,6 +6,7 @@
 from vresutils.costdata import annuity
 from _helpers import configure_logging,override_component_attrs
 import pypsa
+import logging
 from shapely.geometry import Point
 import geopandas as gpd
 import pandas as pd
@@ -17,6 +18,28 @@ from shapely.ops import transform
 import xarray as xr
 from functions import pro_names, HVAC_cost_curve
 from add_electricity import load_costs
+
+logger = logging.getLogger(__name__)
+
+def load_provincial_renewable_potential_overrides(csv_path):
+    """
+    Load province-level renewable capacity assumptions from CSV.
+    Input unit in CSV is 10,000 kW; returns MW series for model use.
+    """
+    df = pd.read_csv(csv_path)
+    required_cols = {"province", "onwind_10kw", "offwind_10kw", "solar_10kw"}
+    missing = required_cols.difference(df.columns)
+    if missing:
+        raise ValueError(f"Missing columns in {csv_path}: {sorted(missing)}")
+
+    df = df.set_index("province")
+    scale_mw_per_10kw = 10.0  # 1 万千瓦 = 10 MW
+
+    onwind = pd.to_numeric(df["onwind_10kw"], errors="coerce") * scale_mw_per_10kw
+    offwind = pd.to_numeric(df["offwind_10kw"], errors="coerce") * scale_mw_per_10kw
+    solar = pd.to_numeric(df["solar_10kw"], errors="coerce") * scale_mw_per_10kw
+
+    return onwind.rename("onwind"), offwind.rename("offwind"), solar.rename("solar")
 
 def haversine(p1,p2):
     """Calculate the great circle distance in km between two points on
@@ -103,6 +126,23 @@ def prepare_network(config):
     if offwind_p_max_pu.index.tz is not None:
         offwind_p_max_pu.index = offwind_p_max_pu.index.tz_localize(None)
     offwind_p_max_pu = offwind_p_max_pu.loc[date_range].set_index(network.snapshots)
+    onwind_p_nom_max = ds_onwind['p_nom_max'].to_pandas()
+    offwind_p_nom_max = ds_offwind['p_nom_max'].to_pandas()
+    solar_p_nom_max = ds_solar['p_nom_max'].to_pandas()
+
+    potential_override_path = "data/p_nom/renewable_potential_assumptions_2019.csv"
+    try:
+        onwind_override, offwind_override, solar_override = load_provincial_renewable_potential_overrides(
+            potential_override_path
+        )
+        onwind_p_nom_max.update(onwind_override.reindex(onwind_p_nom_max.index))
+        offwind_p_nom_max.update(offwind_override.reindex(offwind_p_nom_max.index))
+        solar_p_nom_max.update(solar_override.reindex(solar_p_nom_max.index))
+    except FileNotFoundError:
+        logger.warning(
+            "Renewable potential override file not found (%s); falling back to profile-derived p_nom_max.",
+            potential_override_path,
+        )
 
     def rename_province(label):
         rename = {
@@ -813,7 +853,7 @@ def prepare_network(config):
                  bus=nodes,
                  carrier="onwind",
                  p_nom_extendable=True,
-                 p_nom_max=ds_onwind['p_nom_max'].to_pandas(),
+                 p_nom_max=onwind_p_nom_max,
                  capital_cost = costs.at['onwind','capital_cost'],
                  marginal_cost=costs.at['onwind','marginal_cost'],
                  p_max_pu=onwind_p_max_pu,
@@ -826,7 +866,7 @@ def prepare_network(config):
                  bus=offwind_nodes,
                  carrier="offwind",
                  p_nom_extendable=True,
-                 p_nom_max=ds_offwind['p_nom_max'].to_pandas(),
+                 p_nom_max=offwind_p_nom_max,
                  capital_cost = costs.at['offwind','capital_cost'],
                  marginal_cost=costs.at['offwind','marginal_cost'],
                  p_max_pu=offwind_p_max_pu,
@@ -838,7 +878,7 @@ def prepare_network(config):
                  bus=nodes,
                  carrier="solar",
                  p_nom_extendable=True,
-                 p_nom_max=ds_solar['p_nom_max'].to_pandas(),
+                 p_nom_max=solar_p_nom_max,
                  capital_cost = costs.at['solar','capital_cost'],
                  marginal_cost=costs.at['solar','marginal_cost'],
                  p_max_pu=solar_p_max_pu,
