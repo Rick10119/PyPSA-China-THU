@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: CC0-1.0
 
-version: 0505.1H.2
+version: 0506.1H.1
 logging_level: INFO
 foresight: "myopic"
 
@@ -41,11 +41,11 @@ scenario:
     - 2025
     - 2030
     - 2035
-    # - 2040
-    # - 2045
-    # - 2050
-    # - 2055
-    # - 2060
+    - 2040
+    - 2045
+    - 2050
+    - 2055
+    - 2060
   co2_reduction:
     # linear2060:
     #   '2025': -1.
