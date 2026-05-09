@@ -6,6 +6,7 @@
 #SBATCH --mem=24G
 #SBATCH --time=01:30:00
 #SBATCH --mail-type=fail
+#SBATCH --mail-type=end
 #SBATCH --mail-user=rl8728@princeton.edu
 
 # 设置日志文件
