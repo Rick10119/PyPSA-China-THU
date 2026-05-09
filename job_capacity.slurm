@@ -7,6 +7,7 @@
 #SBATCH --time=01:30:00
 #SBATCH --mail-type=fail
 #SBATCH --mail-type=end
+#SBATCH --mail-type=start
 #SBATCH --mail-user=rl8728@princeton.edu
 
 # 设置日志文件
@@ -30,7 +31,7 @@ echo
 
 START_TIME=$(date +%s)
 
-VERSION="${VERSION:-0505.1H.2}"
+VERSION="${VERSION:-}"
 CONFIG_PATH="${CONFIG_PATH:-config.yaml}"
 OUTPUT_PATH="${OUTPUT_PATH:-}"
 STRICT="${STRICT:-0}"
@@ -41,12 +42,19 @@ fi
 
 echo "运行脚本: scripts/export_national_solar_capacity_from_planning_nc.py"
 echo "CONFIG_PATH=$CONFIG_PATH"
-echo "VERSION=$VERSION"
+if [ -n "$VERSION" ]; then
+    echo "VERSION=$VERSION (env override)"
+else
+    echo "VERSION=<from config>"
+fi
 echo "OUTPUT_PATH=${OUTPUT_PATH:-<default>}"
 echo "STRICT=$STRICT"
 echo
 
-CMD="python scripts/export_national_solar_capacity_from_planning_nc.py --config \"$CONFIG_PATH\" --version \"$VERSION\" $STRICT_ARG"
+CMD="python scripts/export_national_solar_capacity_from_planning_nc.py --config \"$CONFIG_PATH\" $STRICT_ARG"
+if [ -n "$VERSION" ]; then
+    CMD="$CMD --version \"$VERSION\""
+fi
 if [ -n "$OUTPUT_PATH" ]; then
     CMD="$CMD --output \"$OUTPUT_PATH\""
 fi

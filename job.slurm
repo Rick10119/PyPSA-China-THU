@@ -7,6 +7,7 @@
 #SBATCH --time=47:30:00          # 总运行时间限制
 #SBATCH --mail-type=fail         # 作业失败时发送邮件
 #SBATCH --mail-type=end
+#SBATCH --mail-type=start
 #SBATCH --mail-user=rl8728@princeton.edu
 
 # 设置日志文件
