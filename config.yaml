@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: CC0-1.0
 
-version: 0506.1H.1
+version: 0509.1H.1
 logging_level: INFO
 foresight: "myopic"
 
@@ -68,6 +68,19 @@ scenario:
   opts: ['ll']
   attr: 'p_nom'
   heating_demand: ['positive']
+
+solar_capacity_guard:
+  enabled: true
+  national_capacity_csv: data/p_nom/national_solar_capacity_from_planning_nc.csv
+  # 2025 special rule: use historical cumulative capacity as national baseline
+  # (sum of 2010/2015/2020/2025 columns in historical_capacity_csv), then apply tolerance.
+  use_historical_2025_baseline: true
+  historical_capacity_csv: data/existing_infrastructure/solar capacity.csv
+  historical_year_columns: ["2010", "2015", "2020", "2025"]
+  # One-sided bound: allow underbuild, forbid overbuild.
+  allow_underbuild_only: true
+  reference_year: 2025
+  tolerance: 0.2
 
 # Second-stage dispatch-only: capacities fixed from solved postnetwork; coal/gas
 # main plant as piecewise bids (parallel capacity blocks). CHP remains scalar MC.

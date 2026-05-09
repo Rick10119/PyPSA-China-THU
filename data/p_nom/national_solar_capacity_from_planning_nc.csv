@@ -1,2 +1,9 @@
 year,national_solar_capacity_mw,national_solar_capacity_gw,network_path
-2025,2053857.5319401307,2053.8575319401307,/Users/rick/Documents/GitHub/PyPSA-China-THU/results/version-0505.1H.2/postnetworks/positive/postnetwork-ll-current+FCG-linear2050-2025.nc
+2025,2017820.018833144,2017.820018833144,/scratch/gpfs/JENKINS/rl8728/PyPSA-China/results/version-0506.1H.1/postnetworks/positive/postnetwork-ll-current+FCG-linear2050-2025.nc
+2030,3505323.2411834197,3505.3232411834197,/scratch/gpfs/JENKINS/rl8728/PyPSA-China/results/version-0506.1H.1/postnetworks/positive/postnetwork-ll-current+FCG-linear2050-2030.nc
+2035,4593785.662105383,4593.785662105383,/scratch/gpfs/JENKINS/rl8728/PyPSA-China/results/version-0506.1H.1/postnetworks/positive/postnetwork-ll-current+FCG-linear2050-2035.nc
+2040,5737445.254086878,5737.445254086878,/scratch/gpfs/JENKINS/rl8728/PyPSA-China/results/version-0506.1H.1/postnetworks/positive/postnetwork-ll-current+FCG-linear2050-2040.nc
+2045,6958967.01747508,6958.96701747508,/scratch/gpfs/JENKINS/rl8728/PyPSA-China/results/version-0506.1H.1/postnetworks/positive/postnetwork-ll-current+FCG-linear2050-2045.nc
+2050,8478132.163034156,8478.132163034155,/scratch/gpfs/JENKINS/rl8728/PyPSA-China/results/version-0506.1H.1/postnetworks/positive/postnetwork-ll-current+FCG-linear2050-2050.nc
+2055,9510777.1899908,9510.7771899908,/scratch/gpfs/JENKINS/rl8728/PyPSA-China/results/version-0506.1H.1/postnetworks/positive/postnetwork-ll-current+FCG-linear2050-2055.nc
+2060,10120410.64536534,10120.41064536534,/scratch/gpfs/JENKINS/rl8728/PyPSA-China/results/version-0506.1H.1/postnetworks/positive/postnetwork-ll-current+FCG-linear2050-2060.nc

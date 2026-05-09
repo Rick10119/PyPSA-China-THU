@@ -60,6 +60,35 @@ def _get_solar_reference_shares(config, planning_year: int, scenario_context: di
     return cap_by_bus / total
 
 
+def _get_historical_2025_baseline_mw(config, guard_cfg: dict) -> float:
+    """
+    Compute national 2025 baseline from historical installed-capacity table.
+
+    Default behavior:
+    - read `data/existing_infrastructure/solar capacity.csv`
+    - sum columns 2010/2015/2020/2025 across provinces
+    """
+    hist_path = Path(
+        str(guard_cfg.get("historical_capacity_csv", "data/existing_infrastructure/solar capacity.csv"))
+    )
+    if not hist_path.is_absolute():
+        hist_path = Path(__file__).resolve().parents[1] / hist_path
+    if not hist_path.exists():
+        raise FileNotFoundError(f"Historical solar capacity file not found: {hist_path}")
+
+    year_cols = guard_cfg.get("historical_year_columns", ["2010", "2015", "2020", "2025"])
+    if not isinstance(year_cols, list) or not year_cols:
+        raise ValueError("solar_capacity_guard.historical_year_columns must be a non-empty list.")
+
+    df = pd.read_csv(hist_path)
+    missing = [c for c in year_cols if c not in df.columns]
+    if missing:
+        raise ValueError(f"Missing historical year columns {missing} in {hist_path}")
+
+    baseline_mw = float(df[year_cols].apply(pd.to_numeric, errors="coerce").fillna(0.0).sum().sum())
+    return baseline_mw
+
+
 def apply_solar_capacity_guard(n, config, scenario_context: dict | None = None):
     """
     Apply provincial min/max solar capacity bounds from national targets.
@@ -92,7 +121,18 @@ def apply_solar_capacity_guard(n, config, scenario_context: dict | None = None):
         logger.info("Solar capacity guard: no national target for year %s; skip.", planning_year)
         return
 
-    national_target_mw = float(targets.at[planning_year, "national_solar_capacity_mw"])
+    use_hist_2025 = bool(guard_cfg.get("use_historical_2025_baseline", True))
+    if planning_year == 2025 and use_hist_2025:
+        try:
+            national_target_mw = _get_historical_2025_baseline_mw(config, guard_cfg)
+        except Exception as e:
+            logger.warning(
+                "Solar capacity guard: failed to compute 2025 historical baseline, fallback to CSV target: %s",
+                e,
+            )
+            national_target_mw = float(targets.at[planning_year, "national_solar_capacity_mw"])
+    else:
+        national_target_mw = float(targets.at[planning_year, "national_solar_capacity_mw"])
     if national_target_mw <= 0:
         logger.warning("Solar capacity guard: non-positive national target for %s; skip.", planning_year)
         return
@@ -104,8 +144,15 @@ def apply_solar_capacity_guard(n, config, scenario_context: dict | None = None):
         return
 
     tol = float(guard_cfg.get("tolerance", 0.2))
-    lower_mult = max(0.0, 1.0 - tol)
-    upper_mult = 1.0 + tol
+    # If enabled, apply one-sided cap only:
+    # can underbuild, cannot overbuild allocated target.
+    allow_underbuild_only = bool(guard_cfg.get("allow_underbuild_only", True))
+    if allow_underbuild_only:
+        lower_mult = 0.0
+        upper_mult = 1.0
+    else:
+        lower_mult = max(0.0, 1.0 - tol)
+        upper_mult = 1.0 + tol
 
     solar = n.generators[n.generators.carrier == "solar"]
     ext = solar[solar.p_nom_extendable]
