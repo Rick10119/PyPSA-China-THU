@@ -22,7 +22,7 @@ from openpyxl import load_workbook
 
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION_DIR = ROOT / "results" / "version-0505.1H.2"
+VERSION_DIR = ROOT / "results" / "version-0509.1H.1"
 HEATING_DEMAND = "positive"
 SCENARIO_STEM = "ll-current+FCG-linear2050"
 TARGET_YEARS = list(range(2025, 2065, 5))
