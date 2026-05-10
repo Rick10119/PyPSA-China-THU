@@ -38,6 +38,14 @@ PROVINCE_MAP = {
     "EastInnerMongolia": "InnerMongolia",
 }
 
+# 2025 proxy split for Inner Mongolia east/west.
+# Source used: 2025 Inner Mongolia power bulletin reports generation shares
+# (蒙东 21.93%, 蒙西 78.07%). Public direct PV east/west split was not found.
+INNER_MONGOLIA_SPLIT_2025 = {
+    "EastInnerMongolia": 0.2193,
+    "WestInnerMongolia": 0.7807,
+}
+
 
 def _mapped_name(province: str) -> str:
     return PROVINCE_MAP.get(province, province)
@@ -241,8 +249,11 @@ def _write_workbook(metrics_by_year: dict[int, pd.DataFrame]) -> None:
                 raise KeyError(f"Province not found in computed metrics: {zone} -> {source_zone}")
 
             m = metrics.loc[source_zone]
+            solar_ele_gwh = float(m["solar_ele_GWh"])
+            if year == 2025 and source_zone == "InnerMongolia" and zone in INNER_MONGOLIA_SPLIT_2025:
+                solar_ele_gwh *= INNER_MONGOLIA_SPLIT_2025[zone]
             ws.cell(row=row, column=2, value=year)
-            ws.cell(row=row, column=3, value=float(m["solar_ele_GWh"]))
+            ws.cell(row=row, column=3, value=solar_ele_gwh)
             ws.cell(row=row, column=4, value=float(m["value_factor_numerator"]))
             ws.cell(row=row, column=5, value=float(m["value_factor_denominator"]))
             ws.cell(row=row, column=6, value=float(m["value_factor"]))

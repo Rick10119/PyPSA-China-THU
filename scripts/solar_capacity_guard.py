@@ -3,61 +3,8 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-import pypsa
 
 logger = logging.getLogger(__name__)
-
-
-def _scenario_value(v):
-    if isinstance(v, list):
-        return v[0] if v else None
-    return v
-
-
-def _get_solar_reference_shares(config, planning_year: int, scenario_context: dict | None = None) -> pd.Series:
-    """
-    Get provincial solar-capacity shares from the reference year network (default 2025).
-    """
-    cfg = config.get("solar_capacity_guard", {})
-    ref_year = int(cfg.get("reference_year", 2025))
-    repo_root = Path(__file__).resolve().parents[1]
-
-    results_dir = str(config.get("results_dir", "results/")).strip()
-    version = str(config.get("version", "")).strip()
-    scenario = config.get("scenario", {})
-    context = scenario_context or {}
-
-    opts = str(context.get("opts", _scenario_value(scenario.get("opts"))))
-    topology = str(context.get("topology", _scenario_value(scenario.get("topology"))))
-    pathway = str(context.get("pathway", _scenario_value(scenario.get("pathway"))))
-    heating_demand = str(context.get("heating_demand", _scenario_value(scenario.get("heating_demand"))))
-
-    ref_path = (
-        repo_root
-        / results_dir
-        / f"version-{version}"
-        / "postnetworks"
-        / heating_demand
-        / f"postnetwork-{opts}-{topology}-{pathway}-{ref_year}.nc"
-    )
-
-    if not ref_path.exists():
-        raise FileNotFoundError(
-            f"Reference network for provincial share not found: {ref_path} "
-            f"(planning year {planning_year})"
-        )
-
-    n_ref = pypsa.Network(ref_path)
-    solar_ref = n_ref.generators[n_ref.generators.carrier == "solar"]
-    if solar_ref.empty:
-        raise ValueError(f"No solar generators in reference network: {ref_path}")
-
-    cap_col = "p_nom_opt" if "p_nom_opt" in solar_ref.columns else "p_nom"
-    cap_by_bus = solar_ref.groupby("bus")[cap_col].sum()
-    total = float(cap_by_bus.sum())
-    if total <= 0:
-        raise ValueError(f"Reference-year solar capacity is non-positive: {ref_path}")
-    return cap_by_bus / total
 
 
 def _get_historical_2025_baseline_mw(config, guard_cfg: dict) -> float:
@@ -89,6 +36,38 @@ def _get_historical_2025_baseline_mw(config, guard_cfg: dict) -> float:
     return baseline_mw
 
 
+def _get_historical_solar_shares(config, guard_cfg: dict) -> pd.Series:
+    """
+    Get provincial share vector from historical installed capacity table.
+    Shares are based on sum(historical_year_columns) by province.
+    """
+    hist_path = Path(
+        str(guard_cfg.get("historical_capacity_csv", "data/existing_infrastructure/solar capacity.csv"))
+    )
+    if not hist_path.is_absolute():
+        hist_path = Path(__file__).resolve().parents[1] / hist_path
+    if not hist_path.exists():
+        raise FileNotFoundError(f"Historical solar capacity file not found: {hist_path}")
+
+    year_cols = guard_cfg.get("historical_year_columns", ["2010", "2015", "2020", "2025"])
+    if "Region" not in pd.read_csv(hist_path, nrows=1).columns:
+        raise ValueError(f"'Region' column missing in {hist_path}")
+
+    df = pd.read_csv(hist_path)
+    missing = [c for c in year_cols if c not in df.columns]
+    if missing:
+        raise ValueError(f"Missing historical year columns {missing} in {hist_path}")
+
+    df = df.copy()
+    df[year_cols] = df[year_cols].apply(pd.to_numeric, errors="coerce").fillna(0.0)
+    by_region = df.groupby("Region")[year_cols].sum().sum(axis=1)
+    total = float(by_region.sum())
+    if total <= 0:
+        raise ValueError(f"Historical total solar capacity is non-positive in {hist_path}")
+    shares = by_region / total
+    return shares
+
+
 def apply_solar_capacity_guard(n, config, scenario_context: dict | None = None):
     """
     Apply provincial min/max solar capacity bounds from national targets.
@@ -103,6 +82,16 @@ def apply_solar_capacity_guard(n, config, scenario_context: dict | None = None):
         return
 
     planning_year = int(pd.DatetimeIndex(n.snapshots)[0].year)
+    apply_start_year = int(guard_cfg.get("apply_start_year", 2025))
+    apply_end_year = int(guard_cfg.get("apply_end_year", 2060))
+    if planning_year < apply_start_year or planning_year > apply_end_year:
+        logger.info(
+            "Solar capacity guard: year %s outside [%s, %s], skip.",
+            planning_year,
+            apply_start_year,
+            apply_end_year,
+        )
+        return
     csv_path = Path(
         str(guard_cfg.get("national_capacity_csv", "data/p_nom/national_solar_capacity_from_planning_nc.csv"))
     )
@@ -121,16 +110,9 @@ def apply_solar_capacity_guard(n, config, scenario_context: dict | None = None):
         logger.info("Solar capacity guard: no national target for year %s; skip.", planning_year)
         return
 
-    use_hist_2025 = bool(guard_cfg.get("use_historical_2025_baseline", True))
-    if planning_year == 2025 and use_hist_2025:
-        try:
-            national_target_mw = _get_historical_2025_baseline_mw(config, guard_cfg)
-        except Exception as e:
-            logger.warning(
-                "Solar capacity guard: failed to compute 2025 historical baseline, fallback to CSV target: %s",
-                e,
-            )
-            national_target_mw = float(targets.at[planning_year, "national_solar_capacity_mw"])
+    use_historical_2025_baseline = bool(guard_cfg.get("use_historical_2025_baseline", True))
+    if planning_year == 2025 and use_historical_2025_baseline:
+        national_target_mw = _get_historical_2025_baseline_mw(config, guard_cfg)
     else:
         national_target_mw = float(targets.at[planning_year, "national_solar_capacity_mw"])
     if national_target_mw <= 0:
@@ -138,9 +120,9 @@ def apply_solar_capacity_guard(n, config, scenario_context: dict | None = None):
         return
 
     try:
-        shares = _get_solar_reference_shares(config, planning_year, scenario_context=scenario_context)
+        shares = _get_historical_solar_shares(config, guard_cfg)
     except Exception as e:
-        logger.warning("Solar capacity guard: failed to get provincial shares: %s", e)
+        logger.warning("Solar capacity guard: failed to get historical provincial shares: %s", e)
         return
 
     tol = float(guard_cfg.get("tolerance", 0.2))

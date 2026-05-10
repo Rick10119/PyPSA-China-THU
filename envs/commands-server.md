@@ -26,6 +26,7 @@ conda activate pypsa
 git fetch --all --prune
 git checkout "price-simulation"
 git pull
+sbatch job_capacity_price.slurm
 snakemake --unlock
 snakemake -np
 sbatch job.slurm
