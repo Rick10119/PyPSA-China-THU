@@ -76,7 +76,7 @@ find ./results | xargs touch
 ## 6) Plotting / debugging (example: Sep 2)
 
 ```bash
-find ./results/version-0506.1H.1 | xargs touch 
+find ./results/version-0509.1H.1 | xargs touch 
 snakemake --unlock
 snakemake --configfile configs/config_MMMF_2050_10p.yaml -np --rerun-incomplete --ignore-incomplete --rerun-triggers mtime
 snakemake --configfile configs/config_MMMF_2050_10p.yaml --cores 6 --rerun-incomplete --ignore-incomplete --rerun-triggers mtime
