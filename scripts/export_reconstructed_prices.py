@@ -441,20 +441,26 @@ def _local_mapped_prices(
 
     # Two-step load-ratio construction:
     # 1) Base load ratio = actual output / total installed capacity.
-    # 2) Monthly-max adjustment = divide by monthly peak load ratio.
-    # This preserves intra-period shape normalization while keeping a capacity-based anchor.
+    # 2) Annual-max adjustment = divide by peak load ratio within each calendar year.
+    #    (Shorter-window peaks such as weekly/monthly are not used.)
+    # This preserves intra-period shape while anchoring the bid curve to yearly max utilisation.
     cap_by_province = pd.Series(
         {p: float(sum(cap for cap, _ in blocks.get(p, []))) for p in out.columns},
         dtype=float,
     )
     cap_by_province = cap_by_province.where(cap_by_province > 0.0, np.nan)
     lr_base = thermal.divide(cap_by_province, axis=1).clip(lower=0.0, upper=1.0)
-    # Keep `week_freq` for backward-compatible interfaces, but the mapped ratio
-    # denominator is fixed to monthly maxima per user-defined methodology.
+    # Keep `week_freq` for backward-compatible interfaces; normalization uses annual peaks only.
     _ = week_freq
-    lr_month_max = lr_base.groupby(pd.Grouper(freq="MS")).transform("max")
-    lr_month_max = lr_month_max.where(lr_month_max > 0.0, np.nan)
-    lr = lr_base.divide(lr_month_max).clip(lower=0.0, upper=1.0).fillna(0.0)
+    idx = lr_base.index
+    if not isinstance(idx, pd.DatetimeIndex):
+        raise TypeError(
+            "mapped load-ratio annual normalization requires a DatetimeIndex on network snapshots; "
+            f"got {type(idx).__name__}"
+        )
+    lr_year_max = lr_base.groupby(idx.year).transform("max")
+    lr_year_max = lr_year_max.where(lr_year_max > 0.0, np.nan)
+    lr = lr_base.divide(lr_year_max).clip(lower=0.0, upper=1.0).fillna(0.0)
 
     for p in out.columns:
         if cfg_curve is not None:
@@ -709,7 +715,7 @@ def main() -> None:
         default="SM",
         help=(
             "Deprecated compatibility argument. "
-            "Mapped load-ratio denominator now uses fixed half-month maxima."
+            "Mapped load-ratio denominator uses each calendar year's maximum thermal load ratio."
         ),
     )
     ap.add_argument(

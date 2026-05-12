@@ -34,7 +34,7 @@ START_TIME=$(date +%s)
 echo "运行脚本: scripts/fill_solar_value_dataset_2025.py"
 echo
 
-CMD="python scripts/fill_solar_value_dataset_2025.py"
+CMD="python scripts/fill_solar_value_dataset_2025.py  --mapped-csv"
 
 echo "执行命令: $CMD"
 eval "$CMD"

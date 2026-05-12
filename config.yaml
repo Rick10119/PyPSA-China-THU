@@ -95,6 +95,7 @@ dispatch_segmented_prices:
   zero_gas_fuel_marginal_cost: true
   export_prices: true
   price_export:
+    # Legacy CLI flag only; mapped thermal load ratio normalizes by each calendar year's peak (not week/month).
     week_freq: "W-SUN"
     import_agg: "min_offer"
     line_cong_eps_mw: 1.e-3
