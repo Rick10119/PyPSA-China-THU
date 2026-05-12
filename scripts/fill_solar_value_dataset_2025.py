@@ -4,7 +4,9 @@ Fill solar value dataset rows for planning years 2025-2060.
 
 Inputs per year:
 - dispatch segmented network (.nc): solar generation/demand/capacity side metrics
-- mapped dispatch prices CSV: nodal price time series for value-factor metrics
+- provincial LMP time series for value-factor metrics (default: planning postnetwork
+  `buses_t.marginal_price`, EUR/MWh converted with FX to match legacy CSV convention)
+- optional: mapped dispatch prices CSV (pass --mapped-csv)
 
 Capacity adjustment rule:
 - 2025: apply real-capacity correction from `solar capacity.csv`
@@ -13,13 +15,21 @@ Capacity adjustment rule:
 
 from __future__ import annotations
 
+import argparse
 from pathlib import Path
 from shutil import copy2
+
+import sys
 
 import pandas as pd
 import pypsa
 from openpyxl import load_workbook
 
+_SCRIPTS = Path(__file__).resolve().parent
+if str(_SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS))
+
+from reconstruct_market_prices import ReconstructPriceConfig, marginal_retail_prices  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 VERSION_DIR = ROOT / "results" / "version-0509.1H.1"
@@ -30,6 +40,9 @@ XLSX_PATH = VERSION_DIR / "solar_value_dataset.xlsx"
 BACKUP_PATH = VERSION_DIR / "solar_value_dataset.multi-year-backup.xlsx"
 REAL_SOLAR_CAP_PATH = ROOT / "data" / "existing_infrastructure" / "solar capacity.csv"
 CAP_COMPARE_PATH = VERSION_DIR / "solar_capacity_compare_by_year.csv"
+
+# Default: LMPs from capacity-planning solve (EUR/MWh in typical PyPSA cost tables).
+PLANNING_LMP_FX_CNY_PER_EUR = 7.8
 
 # Workbook province -> source province names
 PROVINCE_MAP = {
@@ -66,6 +79,25 @@ def _network_path(year: int) -> Path:
     )
 
 
+def _planning_network_path(year: int) -> Path:
+    return (
+        VERSION_DIR
+        / "postnetworks"
+        / HEATING_DEMAND
+        / f"postnetwork-{SCENARIO_STEM}-{year}.nc"
+    )
+
+
+def _price_column_for_bus(bus: str, price_cols: set[str]) -> str | None:
+    """Resolve dispatch bus name to a column in the planning LMP frame (single InnerMongolia etc.)."""
+    if bus in price_cols:
+        return bus
+    alt = PROVINCE_MAP.get(bus)
+    if alt and alt in price_cols:
+        return alt
+    return None
+
+
 def _price_csv_path(year: int) -> Path:
     return (
         VERSION_DIR
@@ -93,25 +125,46 @@ def _load_real_solar_capacity_2025() -> pd.Series:
     return real_cap
 
 
-def _compute_metrics_for_year(year: int, adjust_capacity: bool) -> tuple[pd.DataFrame, pd.DataFrame]:
+def _compute_metrics_for_year(
+    year: int,
+    adjust_capacity: bool,
+    *,
+    price_source: str,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
     network_path = _network_path(year)
-    price_csv_path = _price_csv_path(year)
     if not network_path.exists():
         raise FileNotFoundError(f"Dispatch network not found for {year}: {network_path}")
-    if not price_csv_path.exists():
-        raise FileNotFoundError(f"Mapped price CSV not found for {year}: {price_csv_path}")
 
     n = pypsa.Network(network_path)
-
-    prices = pd.read_csv(price_csv_path)
-    prices = prices.rename(columns={"snapshot": "time"})
-    prices["time"] = pd.to_datetime(prices["time"])
-    prices = prices.set_index("time").sort_index()
-
     snapshots = pd.DatetimeIndex(n.snapshots)
-    prices = prices.reindex(snapshots)
-    if prices.isna().any().any():
-        raise ValueError("Mapped price CSV and network snapshots do not align exactly.")
+
+    if price_source == "planning_marginal":
+        planning_path = _planning_network_path(year)
+        if not planning_path.exists():
+            raise FileNotFoundError(f"Planning network not found for {year}: {planning_path}")
+        n_plan = pypsa.Network(planning_path)
+        prices = marginal_retail_prices(n_plan, config=ReconstructPriceConfig()).astype(float)
+        prices = prices * float(PLANNING_LMP_FX_CNY_PER_EUR)
+        prices = prices.reindex(snapshots)
+        if prices.isna().any().any():
+            raise ValueError(
+                f"Planning LMPs for {year} do not cover all dispatch snapshots (check {planning_path})."
+            )
+    elif price_source == "mapped_csv":
+        price_csv_path = _price_csv_path(year)
+        if not price_csv_path.exists():
+            raise FileNotFoundError(f"Mapped price CSV not found for {year}: {price_csv_path}")
+        prices = pd.read_csv(price_csv_path)
+        prices = prices.rename(columns={"snapshot": "time"})
+        prices["time"] = pd.to_datetime(prices["time"])
+        prices = prices.set_index("time").sort_index()
+        prices = prices.reindex(snapshots)
+        if prices.isna().any().any():
+            raise ValueError("Mapped price CSV and network snapshots do not align exactly.")
+    else:
+        raise ValueError(f"Unknown price_source: {price_source!r}")
+
+    price_col_set = set(prices.columns.astype(str))
 
     # Select solar generators (include all carriers containing 'solar').
     solar_mask = n.generators.carrier.astype(str).str.contains("solar", case=False, regex=False)
@@ -146,10 +199,12 @@ def _compute_metrics_for_year(year: int, adjust_capacity: bool) -> tuple[pd.Data
     # system weighted-average market value = sum(total_gen * nodal_price) / sum(total_gen)
     system_value_num = 0.0
     system_gen_sum = 0.0
-    common_system_buses = [b for b in prices.columns if b in total_gen_bus.columns]
-    for b in common_system_buses:
+    for b in total_gen_bus.columns:
+        pc = _price_column_for_bus(str(b), price_col_set)
+        if pc is None:
+            continue
         g = total_gen_bus[b]
-        p = prices[b].astype(float)
+        p = prices[pc].astype(float)
         system_value_num += float((g * p).sum())
         system_gen_sum += float(g.sum())
     system_avg_market_value = (system_value_num / system_gen_sum) if system_gen_sum > 0 else 0.0
@@ -172,7 +227,8 @@ def _compute_metrics_for_year(year: int, adjust_capacity: bool) -> tuple[pd.Data
         available_s = solar_available_bus.get(province, pd.Series(0.0, index=snapshots))
         total_gen_s = total_gen_bus.get(province, pd.Series(0.0, index=snapshots))
         load_s = load_bus_ts.get(province, pd.Series(0.0, index=snapshots))
-        price_s = prices.get(province, pd.Series(0.0, index=snapshots)).astype(float)
+        pc = _price_column_for_bus(str(province), price_col_set)
+        price_s = prices[pc].astype(float) if pc is not None else pd.Series(0.0, index=snapshots)
 
         solar_mwh = float(dispatch_s.sum())
         solar_gwh = solar_mwh / 1000.0
@@ -265,11 +321,24 @@ def _write_workbook(metrics_by_year: dict[int, pd.DataFrame]) -> None:
 
 
 def main() -> None:
+    ap = argparse.ArgumentParser(description="Fill solar_value_dataset.xlsx from dispatch + price series.")
+    ap.add_argument(
+        "--mapped-csv",
+        action="store_true",
+        help="Use dispatch_segmented *_mapped.csv prices instead of planning postnetwork LMPs (legacy).",
+    )
+    args = ap.parse_args()
+    price_source = "mapped_csv" if args.mapped_csv else "planning_marginal"
+
     metrics_by_year: dict[int, pd.DataFrame] = {}
     cap_compare_all: list[pd.DataFrame] = []
     for year in TARGET_YEARS:
         try:
-            metrics, cap_compare = _compute_metrics_for_year(year, adjust_capacity=(year == 2025))
+            metrics, cap_compare = _compute_metrics_for_year(
+                year,
+                adjust_capacity=(year == 2025),
+                price_source=price_source,
+            )
         except FileNotFoundError as e:
             print(f"Skip {year}: {e}")
             continue
@@ -277,12 +346,16 @@ def main() -> None:
         cap_compare_all.append(cap_compare)
 
     if not metrics_by_year:
-        raise RuntimeError("No years were processed. Check dispatch outputs and mapped price CSV files.")
+        raise RuntimeError(
+            "No years were processed. Check dispatch_segmented .nc files and, when using default pricing, "
+            "matching planning postnetworks under postnetworks/ (or pass --mapped-csv with CSV exports)."
+        )
 
     if cap_compare_all:
         pd.concat(cap_compare_all, ignore_index=True).to_csv(CAP_COMPARE_PATH, index=False)
 
     _write_workbook(metrics_by_year)
+    print(f"Price source: {price_source}")
     print(f"Filled years: {sorted(metrics_by_year.keys())}")
     print(f"Target years: {TARGET_YEARS}")
     print(f"Backup created: {BACKUP_PATH}")

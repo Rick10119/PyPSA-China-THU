@@ -16,6 +16,8 @@ mv ~/Documents/PyPSA-China /scratch/gpfs/rl8728/PyPSA-China
 cp -R ~/Documents/PyPSA-China /scratch/gpfs/rl8728/PyPSA-China
 ```
 
+https://mydella.princeton.edu/pun/sys/dashboard/files/fs//scratch/gpfs/JENKINS/rl8728/PyPSA-China/results
+
 ## 3) Scenario test (JENKINS path)
 
 ```bash

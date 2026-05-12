@@ -3,9 +3,11 @@ Export reconstructed electricity prices from a solved PyPSA network `.nc`.
 
 This is intended to be called from Snakemake (preferred) or from CLI.
 
-Output is a CSV shaped like:
-- index: snapshots
-- columns: selected provinces (electricity buses)
+Output CSVs (same snapshot index, selected provinces unless --province is omitted for nodal):
+- Primary: marginal (provincial) prices from `buses_t.marginal_price`
+- Sidecar: mapped reconstruction from segmented thermal bids (+ export adjustments)
+- Sidecar: **nodal** marginal prices — full `buses_t.marginal_price` (all buses with duals),
+  or the same column subset as `--province` when provinces are restricted
 """
 
 from __future__ import annotations
@@ -224,6 +226,35 @@ def _province_elec_buses(n: pypsa.Network) -> pd.Index:
     if len(elec_buses) == 0:
         raise ValueError("No electricity (AC) province buses found for mapped reconstruction.")
     return elec_buses
+
+
+def _all_bus_marginal_prices(n: pypsa.Network) -> pd.DataFrame:
+    """Every column in `buses_t.marginal_price`, numeric and clipped like `marginal_retail_prices`."""
+    if not hasattr(n, "buses_t") or not hasattr(n.buses_t, "marginal_price"):
+        raise ValueError(
+            "Network has no `buses_t.marginal_price` (run an economic dispatch solve first)."
+        )
+    mp = n.buses_t.marginal_price
+    return mp.apply(pd.to_numeric, errors="coerce").fillna(0.0).clip(lower=0.0).astype(float)
+
+
+def _select_nodal_marginal(nodal: pd.DataFrame, provinces: list[str] | None) -> pd.DataFrame:
+    if provinces is None:
+        return nodal
+    prov = [p for p in map(str, provinces) if p]
+    if not prov:
+        return nodal
+    missing = [p for p in prov if p not in nodal.columns]
+    if missing:
+        raise ValueError(f"Requested provinces not found in nodal marginal_price: {missing[:10]}")
+    return nodal[prov]
+
+
+def _calibrate_nodal_with_baseline(nodal: pd.DataFrame, n_baseline: pypsa.Network) -> pd.DataFrame:
+    base = _all_bus_marginal_prices(n_baseline)
+    base = base.reindex(index=nodal.index, columns=nodal.columns).fillna(0.0).astype(float)
+    disp = nodal.astype(float)
+    return disp.mask(disp < base, base)
 
 
 def _resolve_bus_province(bus_name: str, provinces: set[str]) -> str | None:
@@ -594,6 +625,10 @@ def export_prices(
         raise ValueError("price_mode must be 'marginal'")
     prices = _select_provinces(prices, provinces)
 
+    nodal_marginal = _all_bus_marginal_prices(n)
+    nodal_marginal = nodal_marginal.reindex(index=prices.index)
+    nodal_marginal = _select_nodal_marginal(nodal_marginal, provinces)
+
     # New sidecar output: mapped prices reconstructed from dispatch result.
     mapped_prices = mapped_retail_prices(
         n,
@@ -616,14 +651,18 @@ def export_prices(
         prices = prices_f.mask(prices_f < baseline, baseline)
         mapped_f = mapped_prices.astype(float)
         mapped_prices = mapped_f.mask(mapped_f < baseline, baseline)
+        nodal_marginal = _calibrate_nodal_with_baseline(nodal_marginal, n0)
 
     cur = str(currency).upper()
     if cur in {"CNY", "RMB"}:
-        prices = prices.astype(float) * float(fx_cny_per_eur)
-        mapped_prices = mapped_prices.astype(float) * float(fx_cny_per_eur)
+        fx = float(fx_cny_per_eur)
+        prices = prices.astype(float) * fx
+        mapped_prices = mapped_prices.astype(float) * fx
+        nodal_marginal = nodal_marginal.astype(float) * fx
     elif cur in {"EUR"}:
         prices = prices.astype(float)
         mapped_prices = mapped_prices.astype(float)
+        nodal_marginal = nodal_marginal.astype(float)
     else:
         raise ValueError("currency must be EUR or CNY (RMB accepted as alias)")
 
@@ -632,6 +671,8 @@ def export_prices(
     prices.to_csv(out_path, index_label="snapshot")
     mapped_out_path = out_path.with_name(f"{out_path.stem}_mapped{out_path.suffix}")
     mapped_prices.to_csv(mapped_out_path, index_label="snapshot")
+    nodal_out_path = out_path.with_name(f"{out_path.stem}_nodal_marginal{out_path.suffix}")
+    nodal_marginal.to_csv(nodal_out_path, index_label="snapshot")
 
     if plot_shandong_price_thermal:
         if shandong_plot_prefix:
