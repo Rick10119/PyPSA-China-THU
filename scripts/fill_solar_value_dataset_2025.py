@@ -38,7 +38,7 @@ PROVINCE_MAP = {
     "EastInnerMongolia": "InnerMongolia",
 }
 
-# 2025 proxy split for Inner Mongolia east/west.
+# Proxy split for Inner Mongolia east/west (applied to all modeled years).
 # Source used: 2025 Inner Mongolia power bulletin reports generation shares
 # (蒙东 21.93%, 蒙西 78.07%). Public direct PV east/west split was not found.
 INNER_MONGOLIA_SPLIT_2025 = {
@@ -250,7 +250,7 @@ def _write_workbook(metrics_by_year: dict[int, pd.DataFrame]) -> None:
 
             m = metrics.loc[source_zone]
             solar_ele_gwh = float(m["solar_ele_GWh"])
-            if year == 2025 and source_zone == "InnerMongolia" and zone in INNER_MONGOLIA_SPLIT_2025:
+            if source_zone == "InnerMongolia" and zone in INNER_MONGOLIA_SPLIT_2025:
                 solar_ele_gwh *= INNER_MONGOLIA_SPLIT_2025[zone]
             ws.cell(row=row, column=2, value=year)
             ws.cell(row=row, column=3, value=solar_ele_gwh)
