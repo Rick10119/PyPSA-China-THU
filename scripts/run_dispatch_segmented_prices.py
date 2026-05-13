@@ -13,10 +13,11 @@ Price export: use `export_reconstructed_prices.py --price-mode marginal` on this
 `.nc` output. Do not use `--price-mode mapped` on top of segmented dispatch (double bid).
 
 Configurable defaults live in ``config.yaml`` under ``dispatch_segmented_prices`` (authoritative).
-When ``first_segment_from_fuel_cost`` is true (default), the first block uses **fuel-only**
-EUR/MWh_el from ``data/costs/costs_{planning_year}.csv`` (same convention as ``add_electricity``:
-``fuel / efficiency`` on the electricity output; coal CC uses ``coal`` efficiency × 0.9). Remaining
-segments still follow ``marginal_cost`` in config. See README_cursor.md for the full-stack template.
+When ``first_segment_from_fuel_cost`` is true (default), fuel-only EUR/MWh_el comes from
+``data/costs/costs_{planning_year}.csv`` (``fuel / efficiency`` on electricity; coal CC uses
+coal η×0.9). If ``segment_mc_fuel_mult`` has the same length as ``marginal_cost``, every segment
+becomes ``fuel * segment_mc_fuel_mult[k]``; otherwise only the first block is set to fuel and the
+rest keep YAML values (legacy).
 
 Snakemake rule: `run_dispatch_segmented`.
 """
@@ -75,9 +76,18 @@ def patch_first_segment_marginal_from_fuel_cost(
     *,
     dispatch_cfg: dict,
 ) -> None:
-    """Replace ``marginal_cost[0]`` from techno-economic fuel / efficiency (first block = fuel-only)."""
+    """Set segment marginal costs from techno-economic fuel / efficiency.
+
+    - If ``segment_mc_fuel_mult`` is absent or its length mismatches segment count:
+      only ``marginal_cost[0]`` is set to fuel-only EUR/MWh_el (legacy behaviour).
+    - If ``segment_mc_fuel_mult`` has the same length as ``marginal_cost``:
+      ``marginal_cost[k] = fuel * segment_mc_fuel_mult[k]`` for every block.
+
+    If ``first_segment_from_fuel_cost`` is false, this function is a no-op.
+    """
     if not dispatch_cfg.get("first_segment_from_fuel_cost", True):
         return
+    mult_default = dispatch_cfg.get("segment_mc_fuel_mult")
     for comp_name in ("Generator", "Link"):
         cmap = carriers_cfg.get(comp_name) or {}
         if not isinstance(cmap, dict):
@@ -92,14 +102,37 @@ def patch_first_segment_marginal_from_fuel_cost(
             if v is None:
                 continue
             mc_list = [float(x) for x in mc]
-            mc_list[0] = float(v)
-            spec["marginal_cost"] = mc_list
-            logger.info(
-                "First segment marginal_cost from fuel (EUR/MWh_el): %s / %s = %.4f",
-                comp_name,
-                carrier,
-                v,
-            )
+            nseg = len(mc_list)
+            if isinstance(mult_default, (list, tuple)) and len(mult_default) == nseg:
+                mults = [float(m) for m in mult_default]
+                for k in range(nseg):
+                    mc_list[k] = float(v) * mults[k]
+                spec["marginal_cost"] = mc_list
+                logger.info(
+                    "Segment marginal_cost fuel x segment_mc_fuel_mult (EUR/MWh_el): %s / %s base=%.4f mults=%s",
+                    comp_name,
+                    carrier,
+                    v,
+                    mults,
+                )
+            else:
+                if isinstance(mult_default, (list, tuple)):
+                    logger.warning(
+                        "segment_mc_fuel_mult length %s != segment count %s for %s / %s; "
+                        "only first segment patched with fuel cost.",
+                        len(mult_default),
+                        nseg,
+                        comp_name,
+                        carrier,
+                    )
+                mc_list[0] = float(v)
+                spec["marginal_cost"] = mc_list
+                logger.info(
+                    "First segment marginal_cost from fuel (EUR/MWh_el): %s / %s = %.4f",
+                    comp_name,
+                    carrier,
+                    v,
+                )
 
 
 def extra_functionality_dispatch(n, snapshots):

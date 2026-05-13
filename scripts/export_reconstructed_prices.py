@@ -222,6 +222,154 @@ def _load_mapped_price_control_points(
     return x, y
 
 
+def _load_mapped_supply_curve_settings(
+    config_path: str | Path | None = None,
+) -> dict | None:
+    """
+    Optional piecewise linear mapping: mapped_price = mult(lr) * province_ref_fuel_eur_mwh_el.
+
+    Config: ``dispatch_segmented_prices.price_export.mapped_supply_curve`` with:
+    - lr_threshold_first: load ratio (after monthly norm) up to this value → price mult 0
+    - mult_at_bandwidth_start: mult just above lr_threshold_first (typically 1.0 = 100% fuel)
+    - lr_knots: upper bounds of linear pieces (ascending, last should be 1.0)
+    - mult_at_knots: multiplier at each knot (same length as lr_knots)
+
+    If this block is absent, fall back to control-point / merit-order curves.
+    """
+    cfg_path = Path(config_path) if config_path is not None else _default_config_path()
+    if not cfg_path.exists():
+        return None
+
+    with cfg_path.open("r", encoding="utf-8") as f:
+        cfg = yaml.safe_load(f) or {}
+    dsp = cfg.get("dispatch_segmented_prices", {}) or {}
+    pe = dsp.get("price_export", {}) or {}
+    cand = pe.get("mapped_supply_curve") or {}
+    if not isinstance(cand, dict):
+        return None
+
+    ks = cand.get("lr_knots")
+    ms = cand.get("mult_at_knots")
+    t0 = cand.get("lr_threshold_first")
+    if not isinstance(ks, (list, tuple)) or not isinstance(ms, (list, tuple)):
+        return None
+    if len(ks) != len(ms) or len(ks) < 1:
+        return None
+    if t0 is None:
+        return None
+    try:
+        t0_f = float(t0)
+        knots = [float(v) for v in ks]
+        mults = [float(v) for v in ms]
+        m_start = float(cand.get("mult_at_bandwidth_start", 1.0))
+    except (TypeError, ValueError):
+        return None
+    if t0_f < 0 or t0_f > 1.0 or knots != sorted(knots):
+        raise ValueError("mapped_supply_curve: lr_threshold_first must be in [0,1] and lr_knots ascending.")
+    if knots[0] <= t0_f:
+        raise ValueError("mapped_supply_curve: lr_knots[0] must be greater than lr_threshold_first.")
+
+    return {
+        "lr_threshold_first": t0_f,
+        "lr_knots": knots,
+        "mult_at_knots": mults,
+        "mult_at_bandwidth_start": m_start,
+    }
+
+
+def _mapped_multiplier_from_lr_normalized(lr: np.ndarray, s: dict) -> np.ndarray:
+    """Piecewise-linear multiplier vs normalized load ratio (see _load_mapped_supply_curve_settings)."""
+    t0 = float(s["lr_threshold_first"])
+    knots: list[float] = list(s["lr_knots"])
+    mults: list[float] = list(s["mult_at_knots"])
+    m_start = float(s.get("mult_at_bandwidth_start", 1.0))
+    lr_clip = np.clip(np.asarray(lr, dtype=float), 0.0, 1.0 + 1e-12)
+    out = np.zeros_like(lr_clip, dtype=float)
+    mask_le = lr_clip <= t0
+    out[mask_le] = 0.0
+    active = lr_clip > t0
+    lo = t0
+    m_lo = m_start
+    for hi, m_hi in zip(knots, mults):
+        seg = active & (lr_clip > lo) & (lr_clip <= hi)
+        if np.any(seg):
+            out[seg] = m_lo + (lr_clip[seg] - lo) / max(hi - lo, 1e-15) * (m_hi - m_lo)
+        lo = hi
+        m_lo = m_hi
+    tail = lr_clip > knots[-1]
+    if np.any(tail):
+        out[tail] = mults[-1]
+    return np.clip(out, 0.0, np.inf)
+
+
+def _province_ref_fuel_eur_from_seg0_network(
+    n: pypsa.Network,
+    province: str,
+    *,
+    generator_carriers: set[str],
+    link_carrier_to_bus1_carrier: dict[str, str],
+) -> float | None:
+    """Capacity-weighted marginal cost on ``__seg0`` splits (EUR/MWh_el), interpreted as bid fuel tier."""
+    prov_set = {str(province)}
+    wsum = 0.0
+    capsum = 0.0
+
+    if hasattr(n, "generators") and not n.generators.empty:
+        gen = n.generators
+        for g, row in gen.iterrows():
+            if not str(g).endswith("__seg0"):
+                continue
+            if not _generator_selected(row.get("carrier", ""), generator_carriers):
+                continue
+            pbus = _resolve_bus_province(str(row.get("bus", "")), prov_set)
+            if pbus is None:
+                continue
+            cap = float(pd.to_numeric(row.get("p_nom", 0.0), errors="coerce") or 0.0)
+            mc = float(pd.to_numeric(row.get("marginal_cost", 0.0), errors="coerce") or 0.0)
+            if cap > 1e-9 and mc >= 0.0:
+                wsum += cap * mc
+                capsum += cap
+
+    if hasattr(n, "links") and not n.links.empty:
+        links = n.links
+        for l, row in links.iterrows():
+            if not str(l).endswith("__seg0"):
+                continue
+            if not _link_selected(n, row, link_carrier_to_bus1_carrier):
+                continue
+            pbus = _resolve_bus_province(str(row.get("bus1", "")), prov_set)
+            if pbus is None:
+                continue
+            p_nom = float(pd.to_numeric(row.get("p_nom", 0.0), errors="coerce") or 0.0)
+            eta = float(pd.to_numeric(row.get("efficiency", 1.0), errors="coerce") or 1.0)
+            cap = p_nom * max(eta, 0.0)
+            mc = float(pd.to_numeric(row.get("marginal_cost", 0.0), errors="coerce") or 0.0)
+            if cap > 1e-9 and mc >= 0.0:
+                wsum += cap * mc
+                capsum += cap
+
+    if capsum <= 1e-9:
+        return None
+    return float(wsum / capsum)
+
+
+def _province_ref_fuel_eur_from_blocks(blocks: list[tuple[float, float]]) -> float | None:
+    """Fallback: capacity-weighted mean marginal cost from plant-level blocks."""
+    if not blocks:
+        return None
+    w = 0.0
+    s = 0.0
+    for cap, mc in blocks:
+        c = max(float(cap), 0.0)
+        if c <= 0.0:
+            continue
+        w += c * float(mc)
+        s += c
+    if s <= 1e-9:
+        return None
+    return float(w / s)
+
+
 def _province_elec_buses(n: pypsa.Network) -> pd.Index:
     buses_df = n.buses
     if "carrier" in buses_df.columns:
@@ -443,33 +591,48 @@ def _local_mapped_prices(
         generator_carriers=generator_carriers,
         link_carrier_to_bus1_carrier=link_carrier_to_bus1_carrier,
     )
-    cfg_curve = _load_mapped_price_control_points(config_path=config_path)
+    supply_settings = _load_mapped_supply_curve_settings(config_path=config_path)
+    cfg_curve = _load_mapped_price_control_points(config_path=config_path) if supply_settings is None else None
     out = pd.DataFrame(index=snapshots, columns=list(map(str, provinces)), dtype=float)
 
     # Two-step load-ratio construction:
     # 1) Base load ratio = actual output / total installed capacity.
-    # 2) Annual-max adjustment = divide by peak load ratio within each calendar year.
-    #    (Shorter-window peaks such as weekly/monthly are not used.)
-    # This preserves intra-period shape while anchoring the bid curve to yearly max utilisation.
+    # 2) Monthly-max adjustment = divide by peak load ratio within each calendar month
+    #    (per province, using the same snapshot month on the index).
+    # This preserves intra-month shape while anchoring the bid curve to that month’s peak utilisation.
     cap_by_province = pd.Series(
         {p: float(sum(cap for cap, _ in blocks.get(p, []))) for p in out.columns},
         dtype=float,
     )
     cap_by_province = cap_by_province.where(cap_by_province > 0.0, np.nan)
     lr_base = thermal.divide(cap_by_province, axis=1).clip(lower=0.0, upper=1.0)
-    # Keep `week_freq` for backward-compatible interfaces; normalization uses annual peaks only.
+    # Keep `week_freq` for backward-compatible interfaces; normalization uses monthly peaks only.
     _ = week_freq
     idx = lr_base.index
     if not isinstance(idx, pd.DatetimeIndex):
         raise TypeError(
-            "mapped load-ratio annual normalization requires a DatetimeIndex on network snapshots; "
+            "mapped load-ratio monthly normalization requires a DatetimeIndex on network snapshots; "
             f"got {type(idx).__name__}"
         )
-    lr_year_max = lr_base.groupby(idx.year).transform("max")
-    lr_year_max = lr_year_max.where(lr_year_max > 0.0, np.nan)
-    lr = lr_base.divide(lr_year_max).clip(lower=0.0, upper=1.0).fillna(0.0)
+    month_key = idx.to_period("M")
+    lr_month_max = lr_base.groupby(month_key).transform("max")
+    lr_month_max = lr_month_max.where(lr_month_max > 0.0, np.nan)
+    lr = lr_base.divide(lr_month_max).clip(lower=0.0, upper=1.0).fillna(0.0)
 
     for p in out.columns:
+        if supply_settings is not None:
+            fuel_ref = _province_ref_fuel_eur_from_seg0_network(
+                n,
+                p,
+                generator_carriers=generator_carriers,
+                link_carrier_to_bus1_carrier=link_carrier_to_bus1_carrier,
+            )
+            if fuel_ref is None or fuel_ref <= 0.0:
+                fuel_ref = _province_ref_fuel_eur_from_blocks(blocks.get(p, []) or [])
+            if fuel_ref is not None and float(fuel_ref) > 0.0:
+                mult = _mapped_multiplier_from_lr_normalized(lr[p].to_numpy(dtype=float), supply_settings)
+                out[p] = (mult * float(fuel_ref)).astype(float)
+                continue
         if cfg_curve is not None:
             x, y = cfg_curve
         else:
@@ -734,7 +897,7 @@ def main() -> None:
         default="SM",
         help=(
             "Deprecated compatibility argument. "
-            "Mapped load-ratio denominator uses each calendar year's maximum thermal load ratio."
+            "Mapped load-ratio denominator uses each calendar month's maximum thermal load ratio."
         ),
     )
     ap.add_argument(

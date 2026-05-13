@@ -2,12 +2,12 @@
 #
 # SPDX-License-Identifier: CC0-1.0
 
-version: 0509.1H.1
+version: 0512.1H.1
 logging_level: INFO
 foresight: "myopic"
 
 # Single-node mode – if true, keep only one target province in the network
-using_single_node: False
+using_single_node: True
 single_node_province: "Shandong"  # Target province when single-node mode is enabled
 
 results_dir: 'results/'
@@ -39,13 +39,13 @@ scenario:
   topology: "current+FCG" # "current" or "FCG" or "current+FCG" or "current+Neighbor"
   planning_horizons:
     - 2025
-    - 2030
-    - 2035
-    - 2040
-    - 2045
-    - 2050
-    - 2055
-    - 2060
+    # - 2030
+    # - 2035
+    # - 2040
+    # - 2045
+    # - 2050
+    # - 2055
+    # - 2060
   co2_reduction:
     # linear2060:
     #   '2025': -1.
@@ -91,20 +91,29 @@ solar_capacity_guard:
 # For CSV from this stage use marginal LMPs (`export_reconstructed_prices --price-mode marginal`).
 dispatch_segmented_prices:
   enabled: true
+  # Fuel-only EUR/MWh_el from costs CSV; first block = 1× fuel, or every block = fuel × mult if list matches segments.
+  first_segment_from_fuel_cost: true
+  # Dispatch SRMC tiers vs fuel-only baseline: 40% / 30% / 15% / 10% / 5% nameplate shares.
+  segment_mc_fuel_mult: [1.0, 1.2, 1.5, 4.0, 4.0]
   # If true, zero `* gas fuel` generator marginal_cost while segmented OCGT uses full SRMC per block.
   zero_gas_fuel_marginal_cost: true
   export_prices: true
   price_export:
-    # Legacy CLI flag only; mapped thermal load ratio normalizes by each calendar year's peak (not week/month).
+    # Legacy CLI flag only; mapped thermal load ratio normalizes by each calendar month's peak (not week/year).
     week_freq: "W-SUN"
     import_agg: "min_offer"
     line_cong_eps_mw: 1.e-3
     min_inflow_mw: 1.e-3
     currency: "CNY"
     fx_cny_per_eur: 7.8
-  # Per-segment marginal_cost (EUR/MWh, electricity): full bid stack when fuel gens are zeroed
-  # (`zero_gas_fuel_marginal_cost: true`) — each block is absolute SRMC+fuel+carbon+VOM as configured.
-  # Five segments; shares align with typical must-run → scarcity partition (see README_cursor.md).
+    # Mapped sidecar price = mult(normalized_LR) × province ref fuel (EUR/MWh from __seg0 capacity-weighted MC).
+    # Normalized LR = (P/Cap)/(monthly max of P/Cap). See export_reconstructed_prices._mapped_multiplier_from_lr_normalized.
+    mapped_supply_curve:
+      lr_threshold_first: 0.4
+      mult_at_bandwidth_start: 1.0
+      lr_knots: [0.7, 0.85, 0.95, 1.0]
+      mult_at_knots: [1.2, 1.5, 4.0, 4.0]
+  # Per-segment shares of p_nom; marginal_cost placeholders are overwritten when segment_mc_fuel_mult matches length.
   carriers:
     Generator:
       # Electricity-side (AC bus) thermal generators:
@@ -112,14 +121,15 @@ dispatch_segmented_prices:
       # - Do NOT include fuel-bus generators like `coal`/`gas` here; they do not directly set power LMPs.
       coal power plant:
         shares: [0.40, 0.30, 0.15, 0.10, 0.05]
-        marginal_cost: [5.0, 45.0, 55.0, 75.0, 192.0]
+        marginal_cost: [1.0, 1.0, 1.0, 1.0, 1.0]
       coal cc:
         shares: [0.40, 0.30, 0.15, 0.10, 0.05]
-        marginal_cost: [10.0, 70.0, 90.0, 110.0, 300.0]
+        marginal_cost: [1.0, 1.0, 1.0, 1.0, 1.0]
     Link:
+      # Gas: first bucket 10% nameplate @ fuel SRMC (vs 40% for coal); tail keeps 30:15:10:5 shape on the other 90%.
       OCGT gas:
-        shares: [0.30, 0.40, 0.15, 0.10, 0.05]
-        marginal_cost: [10.0, 85.0, 100.0, 120.0, 192.0]
+        shares: [0.10, 0.45, 0.225, 0.15, 0.075]
+        marginal_cost: [1.0, 1.0, 1.0, 1.0, 1.0]
         # OCGT injects to AC; keep only AC-output links if any variants exist.
         only_bus1_carrier: "AC"
   # Optional carrier filter used ONLY by export_reconstructed_prices.py mapped sidecar.
