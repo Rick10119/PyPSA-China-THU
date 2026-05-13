@@ -12,10 +12,11 @@ Second-stage economic dispatch on a solved postnetwork.
 Price export: use `export_reconstructed_prices.py --price-mode marginal` on this
 `.nc` output. Do not use `--price-mode mapped` on top of segmented dispatch (double bid).
 
-Configurable defaults live in ``config.yaml`` under ``dispatch_segmented_prices`` (authoritative). As of repo
-baseline: five identical ``shares`` for coal/gas blocks ``[0.50, 0.20, 0.15, 0.10, 0.05]``, with
-EUR/MWh full-stack bids (when ``zero_gas_fuel_marginal_cost`` is True) documented in README_cursor.md
-(coal ``[0, 45, 55, 75, 192]``, gas ``[0, 85, 100, 120, 192]``).
+Configurable defaults live in ``config.yaml`` under ``dispatch_segmented_prices`` (authoritative).
+When ``first_segment_from_fuel_cost`` is true (default), the first block uses **fuel-only**
+EUR/MWh_el from ``data/costs/costs_{planning_year}.csv`` (same convention as ``add_electricity``:
+``fuel / efficiency`` on the electricity output; coal CC uses ``coal`` efficiency × 0.9). Remaining
+segments still follow ``marginal_cost`` in config. See README_cursor.md for the full-stack template.
 
 Snakemake rule: `run_dispatch_segmented`.
 """
@@ -33,10 +34,72 @@ _THIS_DIR = Path(__file__).resolve().parent
 if str(_THIS_DIR) not in sys.path:
     sys.path.insert(0, str(_THIS_DIR))
 
+from add_electricity import apply_market_scenario_costs, load_costs  # noqa: E402
 from _helpers import configure_logging, override_component_attrs  # noqa: E402
 from solve_network_myopic import add_chp_constraints, add_transimission_constraints, prepare_network  # noqa: E402
 
+_REPO_ROOT = _THIS_DIR.parent
+
 logger = logging.getLogger(__name__)
+
+
+def _snapshot_n_years(n: pypsa.Network) -> float:
+    return float(n.snapshot_weightings.objective.sum()) / 8760.0
+
+
+def _fuel_only_electricity_eur_per_mwh_el(
+    costs: pd.DataFrame,
+    component: str,
+    carrier: str,
+) -> float | None:
+    """Fuel-only SRMC for electricity (EUR/MWh_el): MWh_th fuel price / net electrical efficiency.
+
+    Aligns with the fuel term in ``add_electricity.load_costs``: ``fuel / efficiency`` per technology.
+    Coal CC uses the same net efficiency as ``prepare_base_network`` (coal η × 0.9).
+    OCGT uses gas bus fuel and OCGT electric efficiency (fuel is copied onto OCGT row in ``load_costs``).
+    """
+    if component == "Generator":
+        if carrier == "coal power plant":
+            return float(costs.at["coal", "fuel"]) / float(costs.at["coal", "efficiency"])
+        if carrier == "coal cc":
+            eta = float(costs.at["coal", "efficiency"]) * 0.9
+            return float(costs.at["coal", "fuel"]) / eta
+    if component == "Link" and carrier == "OCGT gas":
+        return float(costs.at["gas", "fuel"]) / float(costs.at["OCGT", "efficiency"])
+    return None
+
+
+def patch_first_segment_marginal_from_fuel_cost(
+    carriers_cfg: dict,
+    costs: pd.DataFrame,
+    *,
+    dispatch_cfg: dict,
+) -> None:
+    """Replace ``marginal_cost[0]`` from techno-economic fuel / efficiency (first block = fuel-only)."""
+    if not dispatch_cfg.get("first_segment_from_fuel_cost", True):
+        return
+    for comp_name in ("Generator", "Link"):
+        cmap = carriers_cfg.get(comp_name) or {}
+        if not isinstance(cmap, dict):
+            continue
+        for carrier, spec in cmap.items():
+            if not isinstance(spec, dict):
+                continue
+            mc = spec.get("marginal_cost")
+            if not isinstance(mc, (list, tuple)) or len(mc) < 1:
+                continue
+            v = _fuel_only_electricity_eur_per_mwh_el(costs, comp_name, str(carrier))
+            if v is None:
+                continue
+            mc_list = [float(x) for x in mc]
+            mc_list[0] = float(v)
+            spec["marginal_cost"] = mc_list
+            logger.info(
+                "First segment marginal_cost from fuel (EUR/MWh_el): %s / %s = %.4f",
+                comp_name,
+                carrier,
+                v,
+            )
 
 
 def extra_functionality_dispatch(n, snapshots):
@@ -345,6 +408,7 @@ def run(
     single_node_province: str,
     overrides_path: str | None,
     dispatch_cfg: dict,
+    planning_year: str | int | None = None,
 ) -> None:
     if overrides_path:
         overrides = override_component_attrs(overrides_path)
@@ -379,6 +443,32 @@ def run(
             pass
     freeze_capacities_and_zero_capex(n, zero_capital_cost=True)
     carriers_cfg = dispatch_cfg.get("carriers") or {}
+    if dispatch_cfg.get("first_segment_from_fuel_cost", True):
+        yref = planning_year if planning_year is not None else config.get("costs", {}).get("year")
+        if yref is None:
+            logger.warning("first_segment_from_fuel_cost: no planning_year and no costs.year; skip fuel patch.")
+        else:
+            cost_fn = _REPO_ROOT / "data" / "costs" / f"costs_{int(yref)}.csv"
+            if not cost_fn.is_file():
+                logger.warning("Cost file not found (%s); keeping config first-segment marginal_cost.", cost_fn)
+            else:
+                try:
+                    nyears = _snapshot_n_years(n)
+                    costs_tbl = load_costs(
+                        str(cost_fn),
+                        config["costs"],
+                        config["electricity"],
+                        float(int(yref)),
+                        nyears,
+                    )
+                    costs_tbl = apply_market_scenario_costs(costs_tbl, config)
+                    patch_first_segment_marginal_from_fuel_cost(
+                        carriers_cfg,
+                        costs_tbl,
+                        dispatch_cfg=dispatch_cfg,
+                    )
+                except Exception as e:
+                    logger.warning("first_segment_from_fuel_cost failed (%s); using config marginal_cost.", e)
     apply_segmented_carriers(n, carriers_cfg)
     if dispatch_cfg.get("zero_gas_fuel_marginal_cost", True) and "OCGT gas" in (carriers_cfg.get("Link") or {}):
         zero_gas_fuel_marginal_cost(n)
@@ -420,6 +510,7 @@ if __name__ == "__main__":
     dseg = cfg_root.get("dispatch_segmented_prices") or {}
     solve_opts = cfg_root.get("solving", {}).get("options", {})
     overrides = getattr(snakemake.input, "overrides", None)
+    py = getattr(snakemake.wildcards, "planning_horizons", None)
     run(
         network_in=snakemake.input.network,
         network_out=snakemake.output.network,
@@ -431,4 +522,5 @@ if __name__ == "__main__":
         single_node_province=snakemake.params.single_node_province,
         overrides_path=str(overrides) if overrides else None,
         dispatch_cfg=dseg,
+        planning_year=py,
     )

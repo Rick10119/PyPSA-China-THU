@@ -8,6 +8,10 @@ Output CSVs (same snapshot index, selected provinces unless --province is omitte
 - Sidecar: mapped reconstruction from segmented thermal bids (+ export adjustments)
 - Sidecar: **nodal** marginal prices — full `buses_t.marginal_price` (all buses with duals),
   or the same column subset as `--province` when provinces are restricted
+
+When plotting is enabled and Shandong is among exported provinces, PNGs include full-year scatter
+/ time series (existing) plus a 2×2 grid of **one random day per meteorological season** for
+mapped price vs thermal dispatch (`*.seasonal_random_days.png`).
 """
 
 from __future__ import annotations
@@ -32,7 +36,10 @@ from reconstruct_market_prices import (  # noqa: E402
     ReconstructPriceConfig,
     marginal_retail_prices,
 )
-from plot_shandong_price_vs_thermal import export_price_vs_thermal_plots  # noqa: E402
+from plot_shandong_price_vs_thermal import (  # noqa: E402
+    export_price_vs_thermal_plots,
+    export_seasonal_random_day_profiles,
+)
 
 
 def _default_config_path() -> Path:
@@ -619,6 +626,7 @@ def export_prices(
     plot_shandong_price_thermal: bool = True,
     shandong_plot_prefix: str | None = None,
     shandong_plot_sample: int = 0,
+    shandong_seasonal_random_day_seed: int | None = 42,
     config_path: str | None = None,
 ) -> None:
     n = pypsa.Network(network_path)
@@ -698,6 +706,17 @@ def export_prices(
             price_series=shandong_mapped_price,
             price_label="Mapped price",
         )
+        if shandong_mapped_price is not None:
+            export_seasonal_random_day_profiles(
+                n=n,
+                out_prefix=plot_prefix,
+                province="Shandong",
+                currency=str(currency),
+                config_path=(Path(config_path) if config_path else None),
+                price_series=shandong_mapped_price,
+                price_label="Mapped price",
+                random_state=shandong_seasonal_random_day_seed,
+            )
 
 
 def main() -> None:
@@ -781,6 +800,15 @@ def main() -> None:
         default=0,
         help="Optional scatter downsample N points for Shandong plot (0=all).",
     )
+    ap.add_argument(
+        "--shandong-seasonal-day-seed",
+        type=int,
+        default=42,
+        help=(
+            "RNG seed for picking one random day per season for Shandong mapped price / thermal subplot; "
+            "use a negative value for nondeterministic choice."
+        ),
+    )
     args = ap.parse_args()
 
     export_prices(
@@ -799,6 +827,11 @@ def main() -> None:
         plot_shandong_price_thermal=(not bool(args.skip_shandong_plot)),
         shandong_plot_prefix=(str(args.shandong_plot_prefix) if args.shandong_plot_prefix else None),
         shandong_plot_sample=int(args.shandong_plot_sample),
+        shandong_seasonal_random_day_seed=(
+            int(args.shandong_seasonal_day_seed)
+            if int(args.shandong_seasonal_day_seed) >= 0
+            else None
+        ),
         config_path=(str(args.config) if args.config else None),
     )
 

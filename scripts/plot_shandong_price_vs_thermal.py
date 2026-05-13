@@ -248,6 +248,121 @@ def export_price_vs_thermal_plots(
     df.to_csv(out_prefix.with_suffix(".csv"), index_label="snapshot")
 
 
+def export_seasonal_random_day_profiles(
+    *,
+    n: pypsa.Network,
+    out_prefix: str | Path,
+    province: str = "Shandong",
+    currency: str = "CNY",
+    config_path: str | Path | None = None,
+    price_series: pd.Series | None = None,
+    price_label: str | None = None,
+    random_state: int | None = 42,
+) -> None:
+    """
+    For each meteorological season, pick one random calendar day present in snapshots
+    and plot that day's mapped price vs thermal dispatch (dual axis).
+
+    Seasons (Northern Hemisphere): Spring MAM, Summer JJA, Autumn SON, Winter DJF.
+    """
+    if price_series is None:
+        raise ValueError("price_series is required for seasonal random-day plots.")
+    province = str(province)
+    price = pd.to_numeric(price_series, errors="coerce").astype(float)
+    price.index = pd.to_datetime(price.index)
+    y_label = str(price_label) if price_label else "Mapped price"
+    cur = str(currency).upper()
+    if cur in {"CNY", "RMB"}:
+        y_unit = "CNY/MWh"
+    elif cur in {"EUR"}:
+        y_unit = "EUR/MWh"
+    else:
+        raise ValueError("currency must be EUR or CNY (RMB accepted as alias)")
+
+    generator_carriers, link_carrier_to_bus1_carrier = _load_mapped_carrier_config(config_path=config_path)
+    th = _shandong_thermal_dispatch(
+        n,
+        price.index,
+        province,
+        generator_carriers=generator_carriers,
+        link_carrier_to_bus1_carrier=link_carrier_to_bus1_carrier,
+    )
+    th.index = pd.to_datetime(th.index)
+    df = pd.concat([price.rename("price"), th.rename("thermal_dispatch_MW")], axis=1).dropna()
+    if df.empty:
+        raise ValueError("No overlapping mapped price / thermal snapshots for seasonal plots.")
+
+    out_prefix = Path(out_prefix)
+    out_prefix.parent.mkdir(parents=True, exist_ok=True)
+
+    rng = np.random.default_rng(random_state)
+
+    season_defs: tuple[tuple[str, list[int]], ...] = (
+        ("Spring (MAM)", [3, 4, 5]),
+        ("Summer (JJA)", [6, 7, 8]),
+        ("Autumn (SON)", [9, 10, 11]),
+        ("Winter (DJF)", [12, 1, 2]),
+    )
+
+    ready_by_season: dict[str, tuple[pd.DatetimeIndex, pd.Series, pd.Series]] = {}
+    for season_name, months in season_defs:
+        day_candidates = sorted(
+            {ts.normalize().to_pydatetime() for ts in df.index if int(ts.month) in months}
+        )
+        if not day_candidates:
+            continue
+        pick = pd.Timestamp(day_candidates[int(rng.integers(len(day_candidates)))])
+        rows = df[df.index.normalize() == pick]
+        if rows.empty:
+            continue
+        ready_by_season[season_name] = (
+            rows.index,
+            rows["price"],
+            rows["thermal_dispatch_MW"],
+        )
+
+    if not ready_by_season:
+        raise ValueError("No snapshots fall into any meteorological season; cannot build seasonal plots.")
+
+    fig, axs = plt.subplots(2, 2, figsize=(11, 8.0))
+    flat_axes = axs.flatten()
+    order = [sd[0] for sd in season_defs]
+
+    for i, sea in enumerate(order):
+        ax = flat_axes[i]
+        if sea not in ready_by_season:
+            ax.axis("off")
+            continue
+        ix, pr, thd = ready_by_season[sea]
+        hours = ix.hour + ix.minute / 60.0 + ix.second / 3600.0
+        (ln1,) = ax.plot(hours, pr.to_numpy(), color="#d62728", linewidth=1.4, label="mapped price")
+        ax.set_ylabel(f"{y_label} [{y_unit}]", color="#d62728")
+        ax.tick_params(axis="y", labelcolor="#d62728")
+        ax.set_xlabel("Hour of day")
+        ax.grid(True, alpha=0.25)
+        ax_top = ix[0].strftime("%Y-%m-%d")
+        ax.set_title(f"{province} · {sea}\nrandom day: {ax_top}")
+
+        ax2 = ax.twinx()
+        (ln2,) = ax2.plot(
+            hours,
+            thd.to_numpy(),
+            color="#1f77b4",
+            linewidth=1.2,
+            alpha=0.9,
+            label="thermal",
+        )
+        ax2.set_ylabel("Thermal dispatch (coal+gas) [MW]", color="#1f77b4")
+        ax2.tick_params(axis="y", labelcolor="#1f77b4")
+        ax.legend([ln1, ln2], ["mapped price", "thermal MW"], loc="upper right", fontsize=8)
+
+    plt.suptitle(f"{province}: one random day per season — mapped price and thermal dispatch", y=1.02, fontsize=12)
+    plt.tight_layout()
+    seasonal_path = Path(str(out_prefix) + ".seasonal_random_days.png")
+    plt.savefig(seasonal_path, dpi=180, bbox_inches="tight")
+    plt.close(fig)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--network", required=True, help="Path to solved network .nc")
