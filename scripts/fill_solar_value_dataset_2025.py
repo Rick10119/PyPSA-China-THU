@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """
-Fill solar value dataset rows for planning years 2025-2060.
+Fill solar value dataset rows for planning years from `config.yaml` (`scenario.planning_horizons`).
+
+Paths and the network filename stem match Snakemake wildcards:
+`{results_dir}/version-{version}/.../{opts}-{topology}-{pathway}-{year}` (first element of list-valued
+`scenario.opts`, `pathway`, `heating_demand` when multiple are configured).
 
 Inputs per year:
 - dispatch segmented network (.nc): solar generation/demand/capacity side metrics
@@ -16,13 +20,16 @@ Capacity adjustment rule:
 from __future__ import annotations
 
 import argparse
+from dataclasses import dataclass
 from pathlib import Path
 from shutil import copy2
 
 import sys
+from typing import Any
 
 import pandas as pd
 import pypsa
+import yaml
 from openpyxl import load_workbook
 
 _SCRIPTS = Path(__file__).resolve().parent
@@ -32,17 +39,89 @@ if str(_SCRIPTS) not in sys.path:
 from reconstruct_market_prices import ReconstructPriceConfig, marginal_retail_prices  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION_DIR = ROOT / "results" / "version-0509.1H.1"
-HEATING_DEMAND = "positive"
-SCENARIO_STEM = "ll-current+FCG-linear2050"
-TARGET_YEARS = list(range(2025, 2065, 5))
-XLSX_PATH = VERSION_DIR / "solar_value_dataset.xlsx"
-BACKUP_PATH = VERSION_DIR / "solar_value_dataset.multi-year-backup.xlsx"
-REAL_SOLAR_CAP_PATH = ROOT / "data" / "existing_infrastructure" / "solar capacity.csv"
-CAP_COMPARE_PATH = VERSION_DIR / "solar_capacity_compare_by_year.csv"
+_DEFAULT_CONFIG_PATH = ROOT / "config.yaml"
+_CSV_ENCODING = "utf-8"
 
-# Default: LMPs from capacity-planning solve (EUR/MWh in typical PyPSA cost tables).
-PLANNING_LMP_FX_CNY_PER_EUR = 7.8
+
+def _first_scenario_value(value: Any, default: str) -> str:
+    """Snakemake `expand` uses list-valued scenario keys; standalone scripts pick the first."""
+    if value is None:
+        return default
+    if isinstance(value, list):
+        return str(value[0]) if value else default
+    return str(value)
+
+
+@dataclass(frozen=True)
+class SolarValueFillConfig:
+    """Paths and scenario stem derived from repo `config.yaml` (same wildcards as Snakefile)."""
+
+    root: Path
+    version_dir: Path
+    heating_demand: str
+    scenario_stem: str
+    target_years: tuple[int, ...]
+    fx_cny_per_eur: float
+    xlsx_path: Path
+    backup_path: Path
+    cap_compare_path: Path
+    real_solar_cap_path: Path
+    real_solar_year_columns: tuple[str, ...]
+
+
+def load_solar_value_fill_config(config_path: Path) -> SolarValueFillConfig:
+    if not config_path.is_file():
+        raise FileNotFoundError(f"Config not found: {config_path}")
+    with config_path.open("r", encoding=_CSV_ENCODING) as f:
+        cfg = yaml.safe_load(f) or {}
+
+    root = config_path.parent.resolve()
+    results_rel = str(cfg.get("results_dir") or "results/")
+    version = cfg.get("version")
+    if version is None:
+        raise KeyError("config.yaml must define 'version'")
+    version_dir = (root / Path(results_rel) / f"version-{version}").resolve()
+
+    scen = cfg.get("scenario") or {}
+    opts = _first_scenario_value(scen.get("opts"), "ll")
+    pathway = _first_scenario_value(scen.get("pathway"), "linear2050")
+    topology = str(scen.get("topology") or "current+FCG")
+    heating = _first_scenario_value(scen.get("heating_demand"), "positive")
+    scenario_stem = f"{opts}-{topology}-{pathway}"
+
+    horizons = scen.get("planning_horizons")
+    if horizons is None:
+        target_years = tuple(range(2025, 2065, 5))
+    else:
+        target_years = tuple(int(y) for y in horizons)
+
+    dsp = cfg.get("dispatch_segmented_prices") or {}
+    pe = dsp.get("price_export") or {}
+    fx = float(pe.get("fx_cny_per_eur", 7.8))
+
+    sch = cfg.get("solar_capacity_guard") or {}
+    hist_csv = str(
+        sch.get("historical_capacity_csv") or "data/existing_infrastructure/solar capacity.csv"
+    )
+    year_cols = sch.get("historical_year_columns") or ["2010", "2015", "2020", "2025"]
+    if not isinstance(year_cols, list):
+        raise TypeError("solar_capacity_guard.historical_year_columns must be a list of strings")
+    real_solar_year_columns = tuple(str(c) for c in year_cols)
+    real_solar_cap_path = (root / hist_csv).resolve()
+
+    return SolarValueFillConfig(
+        root=root,
+        version_dir=version_dir,
+        heating_demand=heating,
+        scenario_stem=scenario_stem,
+        target_years=target_years,
+        fx_cny_per_eur=fx,
+        xlsx_path=version_dir / "solar_value_dataset.xlsx",
+        backup_path=version_dir / "solar_value_dataset.multi-year-backup.xlsx",
+        cap_compare_path=version_dir / "solar_capacity_compare_by_year.csv",
+        real_solar_cap_path=real_solar_cap_path,
+        real_solar_year_columns=real_solar_year_columns,
+    )
 
 # Workbook province -> source province names
 PROVINCE_MAP = {
@@ -70,21 +149,21 @@ def _group_sum_by_bus(frame: pd.DataFrame, bus_of_component: pd.Series) -> pd.Da
     return frame.T.groupby(bus_of_component).sum().T
 
 
-def _network_path(year: int) -> Path:
+def _network_path(year: int, cfg: SolarValueFillConfig) -> Path:
     return (
-        VERSION_DIR
+        cfg.version_dir
         / "dispatch_segmented"
-        / HEATING_DEMAND
-        / f"postnetwork-dispatch-seg-{SCENARIO_STEM}-{year}.nc"
+        / cfg.heating_demand
+        / f"postnetwork-dispatch-seg-{cfg.scenario_stem}-{year}.nc"
     )
 
 
-def _planning_network_path(year: int) -> Path:
+def _planning_network_path(year: int, cfg: SolarValueFillConfig) -> Path:
     return (
-        VERSION_DIR
+        cfg.version_dir
         / "postnetworks"
-        / HEATING_DEMAND
-        / f"postnetwork-{SCENARIO_STEM}-{year}.nc"
+        / cfg.heating_demand
+        / f"postnetwork-{cfg.scenario_stem}-{year}.nc"
     )
 
 
@@ -98,13 +177,13 @@ def _price_column_for_bus(bus: str, price_cols: set[str]) -> str | None:
     return None
 
 
-def _price_csv_path(year: int) -> Path:
+def _price_csv_path(year: int, cfg: SolarValueFillConfig) -> Path:
     return (
-        VERSION_DIR
+        cfg.version_dir
         / "prices"
         / "dispatch_segmented"
-        / HEATING_DEMAND
-        / f"dispatch_segmented_prices-{SCENARIO_STEM}-{year}_mapped.csv"
+        / cfg.heating_demand
+        / f"dispatch_segmented_prices-{cfg.scenario_stem}-{year}_mapped.csv"
     )
 
 
@@ -114,24 +193,26 @@ def _block_starts(ws) -> list[int]:
     return [i + 2 for i, z in enumerate(zones) if z == first_zone]
 
 
-def _load_real_solar_capacity_2025() -> pd.Series:
-    cap = pd.read_csv(REAL_SOLAR_CAP_PATH)
-    required_cols = ["Region", "2010", "2015", "2020", "2025"]
+def _load_real_solar_capacity_2025(cfg: SolarValueFillConfig) -> pd.Series:
+    cap = pd.read_csv(cfg.real_solar_cap_path, encoding=_CSV_ENCODING)
+    required_cols = ["Region", *cfg.real_solar_year_columns]
     if any(c not in cap.columns for c in required_cols):
         raise ValueError(
-            "Expected columns 'Region', '2010', '2015', '2020', '2025' in solar capacity.csv"
+            f"Expected columns {required_cols!r} in historical solar capacity CSV "
+            f"({cfg.real_solar_cap_path})"
         )
-    real_cap = cap.set_index("Region")[["2010", "2015", "2020", "2025"]].astype(float).sum(axis=1)
+    real_cap = cap.set_index("Region")[list(cfg.real_solar_year_columns)].astype(float).sum(axis=1)
     return real_cap
 
 
 def _compute_metrics_for_year(
     year: int,
     adjust_capacity: bool,
+    cfg: SolarValueFillConfig,
     *,
     price_source: str,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    network_path = _network_path(year)
+    network_path = _network_path(year, cfg)
     if not network_path.exists():
         raise FileNotFoundError(f"Dispatch network not found for {year}: {network_path}")
 
@@ -139,22 +220,22 @@ def _compute_metrics_for_year(
     snapshots = pd.DatetimeIndex(n.snapshots)
 
     if price_source == "planning_marginal":
-        planning_path = _planning_network_path(year)
+        planning_path = _planning_network_path(year, cfg)
         if not planning_path.exists():
             raise FileNotFoundError(f"Planning network not found for {year}: {planning_path}")
         n_plan = pypsa.Network(planning_path)
         prices = marginal_retail_prices(n_plan, config=ReconstructPriceConfig()).astype(float)
-        prices = prices * float(PLANNING_LMP_FX_CNY_PER_EUR)
+        prices = prices * float(cfg.fx_cny_per_eur)
         prices = prices.reindex(snapshots)
         if prices.isna().any().any():
             raise ValueError(
                 f"Planning LMPs for {year} do not cover all dispatch snapshots (check {planning_path})."
             )
     elif price_source == "mapped_csv":
-        price_csv_path = _price_csv_path(year)
+        price_csv_path = _price_csv_path(year, cfg)
         if not price_csv_path.exists():
             raise FileNotFoundError(f"Mapped price CSV not found for {year}: {price_csv_path}")
-        prices = pd.read_csv(price_csv_path)
+        prices = pd.read_csv(price_csv_path, encoding=_CSV_ENCODING)
         prices = prices.rename(columns={"snapshot": "time"})
         prices["time"] = pd.to_datetime(prices["time"])
         prices = prices.set_index("time").sort_index()
@@ -183,7 +264,7 @@ def _compute_metrics_for_year(
     solar_available_bus = _group_sum_by_bus(avail, solar_bus)
 
     solar_capacity_bus = n.generators.loc[solar_gens].groupby("bus")["p_nom_opt"].sum()
-    real_solar_capacity_bus = _load_real_solar_capacity_2025() if adjust_capacity else pd.Series(dtype=float)
+    real_solar_capacity_bus = _load_real_solar_capacity_2025(cfg) if adjust_capacity else pd.Series(dtype=float)
 
     ac_buses = n.buses.index[n.buses.carrier.astype(str) == "AC"]
 
@@ -281,18 +362,26 @@ def _compute_metrics_for_year(
     return pd.DataFrame(rows).set_index("province"), cap_compare_df
 
 
-def _write_workbook(metrics_by_year: dict[int, pd.DataFrame]) -> None:
-    copy2(XLSX_PATH, BACKUP_PATH)
+def _write_workbook(metrics_by_year: dict[int, pd.DataFrame], cfg: SolarValueFillConfig) -> None:
+    copy2(cfg.xlsx_path, cfg.backup_path)
 
-    wb = load_workbook(XLSX_PATH)
+    wb = load_workbook(cfg.xlsx_path)
     ws = wb["Sheet1"]
 
     starts = _block_starts(ws)
-    years_by_block = [2025 + 5 * i for i in range(len(starts))]
+    horizons = list(cfg.target_years)
+    years_by_block: list[int] = []
+    for i in range(len(starts)):
+        if i < len(horizons):
+            years_by_block.append(horizons[i])
+        elif years_by_block:
+            years_by_block.append(years_by_block[-1] + 5)
+        else:
+            years_by_block.append(2025 + 5 * i)
     block_size = (starts[1] - starts[0]) if len(starts) > 1 else 32
 
     for start, year in zip(starts, years_by_block):
-        if year not in TARGET_YEARS or year not in metrics_by_year:
+        if year not in cfg.target_years or year not in metrics_by_year:
             continue
         metrics = metrics_by_year[year]
         for row in range(start, min(start + block_size, ws.max_row + 1)):
@@ -317,26 +406,34 @@ def _write_workbook(metrics_by_year: dict[int, pd.DataFrame]) -> None:
             ws.cell(row=row, column=8, value=float(m["solar_curtailment_rate"]))
             ws.cell(row=row, column=9, value=float(m["solar_capacity_factor"]))
 
-    wb.save(XLSX_PATH)
+    wb.save(cfg.xlsx_path)
 
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="Fill solar_value_dataset.xlsx from dispatch + price series.")
+    ap.add_argument(
+        "--config",
+        type=Path,
+        default=_DEFAULT_CONFIG_PATH,
+        help="Path to config.yaml (default: repo root config.yaml).",
+    )
     ap.add_argument(
         "--mapped-csv",
         action="store_true",
         help="Use dispatch_segmented *_mapped.csv prices instead of planning postnetwork LMPs (legacy).",
     )
     args = ap.parse_args()
+    cfg = load_solar_value_fill_config(args.config.resolve())
     price_source = "mapped_csv" if args.mapped_csv else "planning_marginal"
 
     metrics_by_year: dict[int, pd.DataFrame] = {}
     cap_compare_all: list[pd.DataFrame] = []
-    for year in TARGET_YEARS:
+    for year in cfg.target_years:
         try:
             metrics, cap_compare = _compute_metrics_for_year(
                 year,
-                adjust_capacity=(year == 2025),
+                (year == 2025),
+                cfg,
                 price_source=price_source,
             )
         except FileNotFoundError as e:
@@ -352,13 +449,17 @@ def main() -> None:
         )
 
     if cap_compare_all:
-        pd.concat(cap_compare_all, ignore_index=True).to_csv(CAP_COMPARE_PATH, index=False)
+        pd.concat(cap_compare_all, ignore_index=True).to_csv(
+            cfg.cap_compare_path, index=False, encoding=_CSV_ENCODING
+        )
 
-    _write_workbook(metrics_by_year)
+    _write_workbook(metrics_by_year, cfg)
+    print(f"Config: {args.config.resolve()}")
+    print(f"Results tree: {cfg.version_dir} (stem {cfg.scenario_stem!r}, heating {cfg.heating_demand!r})")
     print(f"Price source: {price_source}")
     print(f"Filled years: {sorted(metrics_by_year.keys())}")
-    print(f"Target years: {TARGET_YEARS}")
-    print(f"Backup created: {BACKUP_PATH}")
+    print(f"Target years: {list(cfg.target_years)}")
+    print(f"Backup created: {cfg.backup_path}")
 
 
 if __name__ == "__main__":
