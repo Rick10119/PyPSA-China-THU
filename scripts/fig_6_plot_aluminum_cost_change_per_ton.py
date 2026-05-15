@@ -30,7 +30,8 @@ def _mm_to_inches(mm: float) -> float:
 plt.rcParams.update(
     {
         "font.family": "sans-serif",
-        "font.sans-serif": ["Helvetica", "Arial", "Helvetica Neue", "DejaVu Sans"],
+        # Prefer TrueType fonts first to avoid Type 3 text in exported PDFs.
+        "font.sans-serif": ["Arial", "DejaVu Sans", "Helvetica", "Helvetica Neue"],
         "font.size": TEXT_PT,
         "axes.labelsize": TEXT_PT,
         "axes.titlesize": TEXT_PT,
@@ -38,6 +39,10 @@ plt.rcParams.update(
         "ytick.labelsize": TEXT_PT,
         "legend.fontsize": TEXT_PT,
         "axes.unicode_minus": False,
+        # Keep vector text editable in PDF/EPS outputs for journal production.
+        "pdf.fonttype": 42,
+        "ps.fonttype": 42,
+        "svg.fonttype": "none",
     }
 )
 
