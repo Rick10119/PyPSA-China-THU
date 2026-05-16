@@ -229,7 +229,7 @@ def _load_mapped_supply_curve_settings(
     Optional piecewise linear mapping: mapped_price = mult(lr) * province_ref_fuel_eur_mwh_el.
 
     Config: ``dispatch_segmented_prices.price_export.mapped_supply_curve`` with:
-    - lr_threshold_first: load ratio (after monthly norm) up to this value → price mult 0
+    - lr_threshold_first: load ratio (after weekly norm) up to this value → price mult 0
     - mult_at_bandwidth_start: mult just above lr_threshold_first (typically 1.0 = 100% fuel)
     - lr_knots: upper bounds of linear pieces (ascending, last should be 1.0)
     - mult_at_knots: multiplier at each knot (same length as lr_knots)
@@ -529,6 +529,126 @@ def _province_offer_blocks(
     return blocks
 
 
+def _carriers_without_chp(
+    generator_carriers: set[str],
+    link_carrier_to_bus1_carrier: dict[str, str],
+) -> tuple[set[str], dict[str, str]]:
+    """Drop carriers whose names contain ``chp`` (case-insensitive) from mapped-price stacks."""
+    gen = {c for c in generator_carriers if "chp" not in str(c).lower()}
+    link = {k: v for k, v in link_carrier_to_bus1_carrier.items() if "chp" not in str(k).lower()}
+    return gen, link
+
+
+def _load_heating_season_chp_exclusion_config(
+    config_path: str | Path | None = None,
+) -> tuple[bool, int, int, int, int]:
+    """
+    Heating season when CHP is excluded from mapped load-ratio (coal/gas stack without CHP).
+
+    Returns (enabled, start_month, start_day, end_month, end_day). Default: Nov 15–Mar 15 inclusive, enabled.
+
+    YAML (optional):
+      dispatch_segmented_prices.price_export.heating_season_chp_excluded_from_mapped_lr:
+        enabled: true
+        start: [11, 15]
+        end: [3, 15]
+    """
+    default = (True, 11, 15, 3, 15)
+    cfg_path = Path(config_path) if config_path is not None else _default_config_path()
+    if not cfg_path.exists():
+        return default
+    with cfg_path.open("r", encoding="utf-8") as f:
+        cfg = yaml.safe_load(f) or {}
+    dsp = cfg.get("dispatch_segmented_prices", {}) or {}
+    pe = dsp.get("price_export", {}) or {}
+    h = (
+        pe.get("heating_season_chp_excluded_from_mapped_lr")
+        or pe.get("heating_season_mapped_lr_exclude_chp")
+    )
+    if not isinstance(h, dict):
+        return default
+    if h.get("enabled") is False:
+        return (False, 11, 15, 3, 15)
+    s = h.get("start", [11, 15])
+    e = h.get("end", [3, 15])
+    if (
+        not isinstance(s, (list, tuple))
+        or not isinstance(e, (list, tuple))
+        or len(s) != 2
+        or len(e) != 2
+    ):
+        return default
+    sm, sd = int(s[0]), int(s[1])
+    em, ed = int(e[0]), int(e[1])
+    return (True, sm, sd, em, ed)
+
+
+def _heating_season_mask(idx: pd.DatetimeIndex, sm: int, sd: int, em: int, ed: int) -> pd.Series:
+    """Boolean Series aligned to idx: inclusive date range spanning year boundary if sm > em."""
+
+    def _one(ts: pd.Timestamp) -> bool:
+        m, d = int(ts.month), int(ts.day)
+        after_start = (m, d) >= (sm, sd)
+        before_end = (m, d) <= (em, ed)
+        if sm > em:
+            return bool(after_start or before_end)
+        return bool((sm, sd) <= (m, d) <= (em, ed))
+
+    return pd.Series([_one(pd.Timestamp(x)) for x in idx], index=idx, dtype=bool)
+
+
+def _weekly_normalized_lr(
+    thermal: pd.DataFrame,
+    blocks: dict[str, list[tuple[float, float]]],
+    province_cols: list[str],
+    week_freq: str,
+) -> pd.DataFrame:
+    cap_by_province = pd.Series(
+        {p: float(sum(cap for cap, _ in blocks.get(p, []))) for p in province_cols},
+        dtype=float,
+    )
+    cap_by_province = cap_by_province.where(cap_by_province > 0.0, np.nan)
+    lr_base = thermal.reindex(columns=province_cols).divide(cap_by_province, axis=1).clip(
+        lower=0.0, upper=1.0
+    )
+    idx = lr_base.index
+    if not isinstance(idx, pd.DatetimeIndex):
+        raise TypeError(
+            "mapped load-ratio weekly normalization requires a DatetimeIndex on network snapshots; "
+            f"got {type(idx).__name__}"
+        )
+    lr_week_max = lr_base.groupby(pd.Grouper(freq=week_freq)).transform("max")
+    lr_week_max = lr_week_max.where(lr_week_max > 0.0, np.nan)
+    return lr_base.divide(lr_week_max).clip(lower=0.0, upper=1.0).fillna(0.0)
+
+
+def _weekly_lr_and_blocks(
+    n: pypsa.Network,
+    provinces: pd.Index,
+    snapshots: pd.Index,
+    week_freq: str,
+    *,
+    generator_carriers: set[str],
+    link_carrier_to_bus1_carrier: dict[str, str],
+) -> tuple[pd.DataFrame, dict[str, list[tuple[float, float]]]]:
+    thermal = _infer_local_thermal_dispatch(
+        n,
+        provinces,
+        snapshots,
+        generator_carriers=generator_carriers,
+        link_carrier_to_bus1_carrier=link_carrier_to_bus1_carrier,
+    )
+    blocks = _province_offer_blocks(
+        n,
+        provinces,
+        generator_carriers=generator_carriers,
+        link_carrier_to_bus1_carrier=link_carrier_to_bus1_carrier,
+    )
+    cols = list(map(str, provinces))
+    lr = _weekly_normalized_lr(thermal, blocks, cols, week_freq)
+    return lr, blocks
+
+
 def _build_interp_curve(blocks: list[tuple[float, float]]) -> tuple[np.ndarray, np.ndarray]:
     """
     Piecewise-linear mapped price vs. thermal load ratio.
@@ -578,66 +698,99 @@ def _local_mapped_prices(
 ) -> pd.DataFrame:
     provinces = _province_elec_buses(n)
     snapshots = pd.Index(n.snapshots)
-    thermal = _infer_local_thermal_dispatch(
-        n,
-        provinces,
-        snapshots,
-        generator_carriers=generator_carriers,
-        link_carrier_to_bus1_carrier=link_carrier_to_bus1_carrier,
-    )
-    blocks = _province_offer_blocks(
-        n,
-        provinces,
-        generator_carriers=generator_carriers,
-        link_carrier_to_bus1_carrier=link_carrier_to_bus1_carrier,
-    )
     supply_settings = _load_mapped_supply_curve_settings(config_path=config_path)
     cfg_curve = _load_mapped_price_control_points(config_path=config_path) if supply_settings is None else None
     out = pd.DataFrame(index=snapshots, columns=list(map(str, provinces)), dtype=float)
 
-    # Two-step load-ratio construction:
-    # 1) Base load ratio = actual output / total installed capacity.
-    # 2) Monthly-max adjustment = divide by peak load ratio within each calendar month
-    #    (per province, using the same snapshot month on the index).
-    # This preserves intra-month shape while anchoring the bid curve to that month’s peak utilisation.
-    cap_by_province = pd.Series(
-        {p: float(sum(cap for cap, _ in blocks.get(p, []))) for p in out.columns},
-        dtype=float,
+    hs_on, hs_sm, hs_sd, hs_em, hs_ed = _load_heating_season_chp_exclusion_config(config_path=config_path)
+    gen_nc, link_nc = _carriers_without_chp(generator_carriers, link_carrier_to_bus1_carrier)
+
+    lr_full, blocks_full = _weekly_lr_and_blocks(
+        n,
+        provinces,
+        snapshots,
+        week_freq,
+        generator_carriers=generator_carriers,
+        link_carrier_to_bus1_carrier=link_carrier_to_bus1_carrier,
     )
-    cap_by_province = cap_by_province.where(cap_by_province > 0.0, np.nan)
-    lr_base = thermal.divide(cap_by_province, axis=1).clip(lower=0.0, upper=1.0)
-    # Keep `week_freq` for backward-compatible interfaces; normalization uses monthly peaks only.
-    _ = week_freq
-    idx = lr_base.index
-    if not isinstance(idx, pd.DatetimeIndex):
-        raise TypeError(
-            "mapped load-ratio monthly normalization requires a DatetimeIndex on network snapshots; "
-            f"got {type(idx).__name__}"
+
+    if hs_on and (gen_nc != generator_carriers or link_nc != link_carrier_to_bus1_carrier):
+        lr_nc, blocks_nc = _weekly_lr_and_blocks(
+            n,
+            provinces,
+            snapshots,
+            week_freq,
+            generator_carriers=gen_nc,
+            link_carrier_to_bus1_carrier=link_nc,
         )
-    month_key = idx.to_period("M")
-    lr_month_max = lr_base.groupby(month_key).transform("max")
-    lr_month_max = lr_month_max.where(lr_month_max > 0.0, np.nan)
-    lr = lr_base.divide(lr_month_max).clip(lower=0.0, upper=1.0).fillna(0.0)
+        heating = _heating_season_mask(pd.DatetimeIndex(lr_full.index), hs_sm, hs_sd, hs_em, hs_ed)
+        heating = heating.reindex(lr_full.index).fillna(False)
+        heating_b = heating.to_numpy(dtype=bool)
+        use_split = True
+    else:
+        lr_nc, blocks_nc = lr_full, blocks_full
+        heating_b = np.zeros(len(lr_full.index), dtype=bool)
+        use_split = False
 
     for p in out.columns:
         if supply_settings is not None:
-            fuel_ref = _province_ref_fuel_eur_from_seg0_network(
+            fuel_f = _province_ref_fuel_eur_from_seg0_network(
                 n,
                 p,
                 generator_carriers=generator_carriers,
                 link_carrier_to_bus1_carrier=link_carrier_to_bus1_carrier,
             )
-            if fuel_ref is None or fuel_ref <= 0.0:
-                fuel_ref = _province_ref_fuel_eur_from_blocks(blocks.get(p, []) or [])
-            if fuel_ref is not None and float(fuel_ref) > 0.0:
-                mult = _mapped_multiplier_from_lr_normalized(lr[p].to_numpy(dtype=float), supply_settings)
-                out[p] = (mult * float(fuel_ref)).astype(float)
+            if fuel_f is None or fuel_f <= 0.0:
+                fuel_f = _province_ref_fuel_eur_from_blocks(blocks_full.get(p, []) or [])
+
+            if use_split:
+                fuel_h = _province_ref_fuel_eur_from_seg0_network(
+                    n,
+                    p,
+                    generator_carriers=gen_nc,
+                    link_carrier_to_bus1_carrier=link_nc,
+                )
+                if fuel_h is None or fuel_h <= 0.0:
+                    fuel_h = _province_ref_fuel_eur_from_blocks(blocks_nc.get(p, []) or [])
+
+            if fuel_f is not None and float(fuel_f) > 0.0:
+                mult_f = _mapped_multiplier_from_lr_normalized(
+                    lr_full[p].to_numpy(dtype=float), supply_settings
+                )
+                if use_split:
+                    f_h = (
+                        float(fuel_h)
+                        if fuel_h is not None and float(fuel_h) > 0.0
+                        else float(fuel_f)
+                    )
+                    mult_h = _mapped_multiplier_from_lr_normalized(
+                        lr_nc[p].to_numpy(dtype=float), supply_settings
+                    )
+                    pf = mult_f * float(fuel_f)
+                    ph = mult_h * f_h
+                    out[p] = np.where(heating_b, ph, pf).astype(float)
+                else:
+                    out[p] = (mult_f * float(fuel_f)).astype(float)
                 continue
+
         if cfg_curve is not None:
             x, y = cfg_curve
+            v_f = np.interp(lr_full[p].to_numpy(dtype=float), x, y).astype(float)
+            if use_split:
+                v_h = np.interp(lr_nc[p].to_numpy(dtype=float), x, y).astype(float)
+                out[p] = np.where(heating_b, v_h, v_f)
+            else:
+                out[p] = v_f
+            continue
+
+        xf, yf = _build_interp_curve(blocks_full.get(p, []))
+        v_f = np.interp(lr_full[p].to_numpy(dtype=float), xf, yf).astype(float)
+        if use_split:
+            xh, yh = _build_interp_curve(blocks_nc.get(p, []))
+            v_h = np.interp(lr_nc[p].to_numpy(dtype=float), xh, yh).astype(float)
+            out[p] = np.where(heating_b, v_h, v_f)
         else:
-            x, y = _build_interp_curve(blocks.get(p, []))
-        out[p] = np.interp(lr[p].to_numpy(dtype=float), x, y).astype(float)
+            out[p] = v_f
 
     return out.fillna(0.0).clip(lower=0.0)
 
@@ -894,10 +1047,11 @@ def main() -> None:
     ap.add_argument("--province", action="append", default=None, help="Province to include (repeatable). If omitted, export all.")
     ap.add_argument(
         "--week-freq",
-        default="SM",
+        default="W-SUN",
         help=(
-            "Deprecated compatibility argument. "
-            "Mapped load-ratio denominator uses each calendar month's maximum thermal load ratio."
+            "Pandas offset alias for weekly buckets used when normalizing thermal load ratio: "
+            "each snapshot is divided by the maximum (thermal/cap) in its week "
+            "(default W-SUN; match config dispatch_segmented_prices.price_export.week_freq)."
         ),
     )
     ap.add_argument(
