@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: CC0-1.0
 
-version: 0513.1H.1
+version: 0516.1H.1
 logging_level: INFO
 foresight: "myopic"
 
@@ -20,8 +20,7 @@ tmax: '-12-31 23:00'
 freq: '1h'
 # Uniform electric-load multiplier (applied to all snapshots/provinces).
 # This scales level only and preserves the hourly shape.
-# 2025 national calibration target (103682e8 kWh) / current input (8589.8044 TWh) = 1.20704
-load_scale: 1.20704
+load_scale: 1.0
 
 add_aluminum: False
 only_other_load: False
@@ -86,6 +85,21 @@ solar_capacity_guard:
   # Kept for backward compatibility when one-sided bound is disabled.
   tolerance: 0.2
 
+nuclear_capacity_guard:
+  enabled: true
+  # National target by year for the mid scenario.
+  national_capacity_csv: data/p_nom/national_nuclear_capacity_mid_scenario.csv
+  # Provincial allocation share uses 2025 cumulative nuclear capacity ratio.
+  historical_capacity_csv: data/existing_infrastructure/nuclear capacity.csv
+  historical_year_columns: ["2020", "2025"]
+  # Apply this cap for 2030-2060.
+  apply_start_year: 2030
+  apply_end_year: 2060
+  # One-sided bound: allow underbuild, forbid overbuild.
+  allow_underbuild_only: true
+  # Kept for backward compatibility when one-sided bound is disabled.
+  tolerance: 0.2
+
 # Second-stage dispatch-only: capacities fixed from solved postnetwork; coal/gas
 # main plant as piecewise bids (parallel capacity blocks). CHP remains scalar MC.
 # For CSV from this stage use marginal LMPs (`export_reconstructed_prices --price-mode marginal`).
@@ -99,15 +113,20 @@ dispatch_segmented_prices:
   zero_gas_fuel_marginal_cost: true
   export_prices: true
   price_export:
-    # Legacy CLI flag only; mapped thermal load ratio normalizes by each calendar month's peak (not week/year).
-    week_freq: "W-SUN"
+    # Mapped thermal load ratio: (P/Cap) divided by biweekly max within each 2W-SUN bucket per province.
+    week_freq: "2W-SUN"
+    # Nov 15–Mar 15 (inclusive): CHP excluded from P/Cap for mapped LR only; rest of year full stack.
+    heating_season_chp_excluded_from_mapped_lr:
+      enabled: true
+      start: [11, 15]
+      end: [3, 15]
     import_agg: "min_offer"
     line_cong_eps_mw: 1.e-3
     min_inflow_mw: 1.e-3
     currency: "CNY"
     fx_cny_per_eur: 7.8
     # Mapped sidecar price = mult(normalized_LR) × province ref fuel (EUR/MWh from __seg0 capacity-weighted MC).
-    # Normalized LR = (P/Cap)/(monthly max of P/Cap). See export_reconstructed_prices._mapped_multiplier_from_lr_normalized.
+    # Normalized LR from _local_mapped_prices (max within price_export.week_freq; heating season without CHP in stack).
     mapped_supply_curve:
       lr_threshold_first: 0.4
       mult_at_bandwidth_start: 1.0
