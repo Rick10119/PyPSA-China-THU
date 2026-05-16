@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Plot provincial-mean solar value_factor over planning years from solar_value_dataset.xlsx."""
+"""Plot provincial-mean solar value_factor over planning years from solar_value_dataset.xlsx.
+
+Default paths use ``version`` and ``results_dir`` from the repo ``config.yaml`` (same layout as
+``fill_solar_value_dataset_2025.py``).
+"""
 
 from __future__ import annotations
 
@@ -10,8 +14,28 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
+_DEFAULT_CONFIG = ROOT / "config.yaml"
+
+
+def _version_dir_from_config(config_path: Path, version_override: str | None) -> tuple[Path, str]:
+    if not config_path.is_file():
+        raise FileNotFoundError(f"Config not found: {config_path}")
+    with config_path.open(encoding="utf-8") as f:
+        cfg = yaml.safe_load(f) or {}
+    root = config_path.parent.resolve()
+    results_rel = str(cfg.get("results_dir") or "results/")
+    if version_override is not None and str(version_override).strip():
+        version = str(version_override).strip()
+    else:
+        v = cfg.get("version")
+        if v is None:
+            raise KeyError("config.yaml must define 'version', or pass --version")
+        version = str(v).strip()
+    version_dir = (root / Path(results_rel) / f"version-{version}").resolve()
+    return version_dir, version
 
 
 def _configure_cjk_font() -> None:
@@ -38,21 +62,27 @@ def main() -> None:
     _configure_cjk_font()
     ap = argparse.ArgumentParser()
     ap.add_argument(
+        "--config",
+        type=Path,
+        default=_DEFAULT_CONFIG,
+        help=f"config.yaml with version and results_dir (default: {_DEFAULT_CONFIG})",
+    )
+    ap.add_argument(
         "--version",
-        default="0509.1H.1",
-        help="Version id matching results/version-{id}/solar_value_dataset.xlsx",
+        default=None,
+        help="Override config version id (default: read config 'version')",
     )
     ap.add_argument(
         "--output-dir",
         type=Path,
         default=None,
-        help="Directory for PNG/PDF (default: results/version-{version}/figures)",
+        help="Directory for PNG/PDF (default: <version_dir>/figures)",
     )
     args = ap.parse_args()
 
-    version = args.version
-    xlsx = ROOT / "results" / f"version-{version}" / "solar_value_dataset.xlsx"
-    out_dir = args.output_dir or (ROOT / "results" / f"version-{version}" / "figures")
+    version_dir, version = _version_dir_from_config(args.config.resolve(), args.version)
+    xlsx = version_dir / "solar_value_dataset.xlsx"
+    out_dir = args.output_dir or (version_dir / "figures")
     out_dir.mkdir(parents=True, exist_ok=True)
 
     df = pd.read_excel(xlsx, sheet_name="Sheet1", header=0)

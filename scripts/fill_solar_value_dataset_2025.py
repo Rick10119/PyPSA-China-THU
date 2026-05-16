@@ -380,6 +380,7 @@ def _write_workbook(metrics_by_year: dict[int, pd.DataFrame], cfg: SolarValueFil
             years_by_block.append(2025 + 5 * i)
     block_size = (starts[1] - starts[0]) if len(starts) > 1 else 32
 
+    missing_provinces_by_year: dict[int, set[str]] = {}
     for start, year in zip(starts, years_by_block):
         if year not in cfg.target_years or year not in metrics_by_year:
             continue
@@ -391,22 +392,34 @@ def _write_workbook(metrics_by_year: dict[int, pd.DataFrame], cfg: SolarValueFil
             zone = str(zone)
             source_zone = _mapped_name(zone)
             if source_zone not in metrics.index:
-                raise KeyError(f"Province not found in computed metrics: {zone} -> {source_zone}")
+                missing_provinces_by_year.setdefault(year, set()).add(f"{zone} -> {source_zone}")
+                continue
 
             m = metrics.loc[source_zone]
             solar_ele_gwh = float(m["solar_ele_GWh"])
             if source_zone == "InnerMongolia" and zone in INNER_MONGOLIA_SPLIT_2025:
                 solar_ele_gwh *= INNER_MONGOLIA_SPLIT_2025[zone]
-            ws.cell(row=row, column=2, value=year)
-            ws.cell(row=row, column=3, value=solar_ele_gwh)
-            ws.cell(row=row, column=4, value=float(m["value_factor_numerator"]))
-            ws.cell(row=row, column=5, value=float(m["value_factor_denominator"]))
-            ws.cell(row=row, column=6, value=float(m["value_factor"]))
-            ws.cell(row=row, column=7, value=float(m["solar_penetration"]))
-            ws.cell(row=row, column=8, value=float(m["solar_curtailment_rate"]))
-            ws.cell(row=row, column=9, value=float(m["solar_capacity_factor"]))
+            # Overwrite legacy workbook values whenever a new metric is available
+            # for this row (including valid zeros). Keep old value only for missing/NaN.
+            values_to_write = {
+                2: year,
+                3: solar_ele_gwh,
+                4: float(m["value_factor_numerator"]),
+                5: float(m["value_factor_denominator"]),
+                6: float(m["value_factor"]),
+                7: float(m["solar_penetration"]),
+                8: float(m["solar_curtailment_rate"]),
+                9: float(m["solar_capacity_factor"]),
+            }
+            for col, new_value in values_to_write.items():
+                if pd.notna(new_value):
+                    ws.cell(row=row, column=col, value=float(new_value) if col >= 3 else int(new_value))
 
     wb.save(cfg.xlsx_path)
+
+    for year in sorted(missing_provinces_by_year):
+        missing = ", ".join(sorted(missing_provinces_by_year[year]))
+        print(f"Skip missing provinces in {year}: {missing}")
 
 
 def main() -> None:
