@@ -145,6 +145,148 @@ def _shandong_thermal_dispatch(
     return out
 
 
+def _province_generation_stack_and_load(
+    n: pypsa.Network,
+    snapshots: pd.Index,
+    province: str,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.Series]:
+    """Build AC-only province supply/charge stacks and AC load (MW)."""
+    province = str(province)
+    idx = pd.DatetimeIndex(snapshots)
+
+    supply_series: dict[str, pd.Series] = {}
+    charge_series: dict[str, pd.Series] = {}
+
+    def _is_ac_province_bus(bus_name: str) -> bool:
+        b = str(bus_name)
+        if _resolve_bus_province(b) != province:
+            return False
+        if not hasattr(n, "buses") or b not in n.buses.index:
+            return False
+        return str(n.buses.at[b, "carrier"]) == "AC"
+
+    def _add_to(store: dict[str, pd.Series], label: str, s: pd.Series) -> None:
+        clean = pd.to_numeric(s, errors="coerce").reindex(idx).fillna(0.0).clip(lower=0.0)
+        if label in store:
+            store[label] = store[label].add(clean, fill_value=0.0)
+        else:
+            store[label] = clean
+
+    if (
+        hasattr(n, "generators")
+        and not n.generators.empty
+        and hasattr(n, "generators_t")
+        and hasattr(n.generators_t, "p")
+    ):
+        gen = n.generators
+        gp = n.generators_t.p.reindex(index=idx, columns=gen.index).fillna(0.0)
+        for g in gen.index:
+            if not _is_ac_province_bus(str(gen.at[g, "bus"])):
+                continue
+            label = str(gen.at[g, "carrier"] or "generator")
+            _add_to(supply_series, label, gp[g])
+
+    if (
+        hasattr(n, "storage_units")
+        and not n.storage_units.empty
+        and hasattr(n, "storage_units_t")
+        and hasattr(n.storage_units_t, "p")
+    ):
+        su = n.storage_units
+        sup = n.storage_units_t.p.reindex(index=idx, columns=su.index).fillna(0.0)
+        for u in su.index:
+            if not _is_ac_province_bus(str(su.at[u, "bus"])):
+                continue
+            base = str(su.at[u, "carrier"] or "storage_unit")
+            p = pd.to_numeric(sup[u], errors="coerce").fillna(0.0)
+            _add_to(supply_series, f"{base}_discharge", p.clip(lower=0.0))
+            _add_to(charge_series, f"{base}_charge", (-p).clip(lower=0.0))
+
+    if (
+        hasattr(n, "links")
+        and not n.links.empty
+        and hasattr(n, "links_t")
+        and hasattr(n.links_t, "p0")
+        and hasattr(n.links_t, "p1")
+    ):
+        links = n.links
+        p0 = n.links_t.p0.reindex(index=idx, columns=links.index).fillna(0.0)
+        p1 = n.links_t.p1.reindex(index=idx, columns=links.index).fillna(0.0)
+        for l in links.index:
+            b0 = str(links.at[l, "bus0"])
+            b1 = str(links.at[l, "bus1"])
+            is_ac_b0 = _is_ac_province_bus(b0)
+            is_ac_b1 = _is_ac_province_bus(b1)
+            if not is_ac_b0 and not is_ac_b1:
+                continue
+            # Net AC injection from this link into province AC bus(es).
+            inj = pd.Series(0.0, index=idx, dtype=float)
+            if is_ac_b0:
+                inj = inj.add((-pd.to_numeric(p0[l], errors="coerce").fillna(0.0)), fill_value=0.0)
+            if is_ac_b1:
+                inj = inj.add((-pd.to_numeric(p1[l], errors="coerce").fillna(0.0)), fill_value=0.0)
+            base = str(links.at[l, "carrier"] or "link")
+            _add_to(supply_series, f"{base}_discharge", inj.clip(lower=0.0))
+            _add_to(charge_series, f"{base}_charge", (-inj).clip(lower=0.0))
+
+    supply_stack = pd.DataFrame(supply_series, index=idx).fillna(0.0)
+    charge_stack = pd.DataFrame(charge_series, index=idx).fillna(0.0)
+
+    if not supply_stack.empty:
+        supply_stack = supply_stack.loc[:, supply_stack.sum(axis=0) > 1e-6]
+    if not charge_stack.empty:
+        charge_stack = charge_stack.loc[:, charge_stack.sum(axis=0) > 1e-6]
+
+    merged = pd.concat([supply_stack, charge_stack], axis=1)
+    if not merged.empty:
+        energy_rank = merged.sum(axis=0).sort_values(ascending=False)
+        if len(energy_rank) > 10:
+            keep = list(energy_rank.index[:10])
+            keep_supply = [c for c in keep if c in supply_stack.columns]
+            keep_charge = [c for c in keep if c in charge_stack.columns]
+            if not supply_stack.empty:
+                supply_other = supply_stack.drop(columns=keep_supply, errors="ignore").sum(axis=1)
+                supply_stack = supply_stack[keep_supply] if keep_supply else pd.DataFrame(index=idx)
+                if (supply_other > 1e-6).any():
+                    supply_stack["other_discharge"] = supply_other
+            if not charge_stack.empty:
+                charge_other = charge_stack.drop(columns=keep_charge, errors="ignore").sum(axis=1)
+                charge_stack = charge_stack[keep_charge] if keep_charge else pd.DataFrame(index=idx)
+                if (charge_other > 1e-6).any():
+                    charge_stack["other_charge"] = charge_other
+
+    if not supply_stack.empty:
+        energy_rank = supply_stack.sum(axis=0).sort_values(ascending=False)
+        if len(energy_rank) > 8:
+            keep = list(energy_rank.index[:8])
+            other = supply_stack.drop(columns=keep).sum(axis=1)
+            supply_stack = supply_stack[keep]
+            if (other > 1e-6).any():
+                supply_stack["other_discharge"] = other
+    if not charge_stack.empty:
+        energy_rank = charge_stack.sum(axis=0).sort_values(ascending=False)
+        if len(energy_rank) > 4:
+            keep = list(energy_rank.index[:4])
+            other = charge_stack.drop(columns=keep).sum(axis=1)
+            charge_stack = charge_stack[keep]
+            if (other > 1e-6).any():
+                charge_stack["other_charge"] = other
+
+    load = pd.Series(0.0, index=idx, name="load_MW", dtype=float)
+    if hasattr(n, "loads") and not n.loads.empty and hasattr(n, "loads_t"):
+        load_values = n.loads_t.p_set if hasattr(n.loads_t, "p_set") else n.loads_t.p
+        load_values = load_values.reindex(index=idx, columns=n.loads.index).fillna(0.0)
+        for ld in n.loads.index:
+            if not _is_ac_province_bus(str(n.loads.at[ld, "bus"])):
+                continue
+            load = load.add(
+                pd.to_numeric(load_values[ld], errors="coerce").fillna(0.0).clip(lower=0.0),
+                fill_value=0.0,
+            )
+
+    return supply_stack, charge_stack, load
+
+
 def export_price_vs_thermal_plots(
     *,
     n: pypsa.Network,
@@ -261,7 +403,7 @@ def export_seasonal_random_day_profiles(
 ) -> None:
     """
     For each meteorological season, pick one random calendar day present in snapshots
-    and plot that day's mapped price vs thermal dispatch (dual axis).
+    and plot that day's mapped price with province generation stack and load.
 
     Seasons (Northern Hemisphere): Spring MAM, Summer JJA, Autumn SON, Winter DJF.
     """
@@ -291,6 +433,13 @@ def export_seasonal_random_day_profiles(
     df = pd.concat([price.rename("price"), th.rename("thermal_dispatch_MW")], axis=1).dropna()
     if df.empty:
         raise ValueError("No overlapping mapped price / thermal snapshots for seasonal plots.")
+    gen_stack_all, charge_stack_all, load_all = _province_generation_stack_and_load(n, df.index, province)
+    if gen_stack_all.empty and charge_stack_all.empty:
+        raise ValueError(f"No AC generation/charge series found for province '{province}'.")
+    gen_cols = list(gen_stack_all.columns)
+    charge_cols = list(charge_stack_all.columns)
+    cmap = plt.get_cmap("tab20")
+    color_map = {c: cmap(i % 20) for i, c in enumerate(gen_cols + charge_cols)}
 
     out_prefix = Path(out_prefix)
     out_prefix.parent.mkdir(parents=True, exist_ok=True)
@@ -304,7 +453,7 @@ def export_seasonal_random_day_profiles(
         ("Winter (DJF)", [12, 1, 2]),
     )
 
-    ready_by_season: dict[str, tuple[pd.DatetimeIndex, pd.Series, pd.Series]] = {}
+    ready_by_season: dict[str, tuple[pd.DatetimeIndex, pd.Series, pd.DataFrame, pd.DataFrame, pd.Series]] = {}
     for season_name, months in season_defs:
         day_candidates = sorted(
             {ts.normalize().to_pydatetime() for ts in df.index if int(ts.month) in months}
@@ -315,49 +464,89 @@ def export_seasonal_random_day_profiles(
         rows = df[df.index.normalize() == pick]
         if rows.empty:
             continue
-        ready_by_season[season_name] = (
-            rows.index,
-            rows["price"],
-            rows["thermal_dispatch_MW"],
-        )
+        day_ix = rows.index
+        day_gen = gen_stack_all.reindex(day_ix).fillna(0.0)
+        day_charge = charge_stack_all.reindex(day_ix).fillna(0.0)
+        day_load = load_all.reindex(day_ix).fillna(0.0)
+        ready_by_season[season_name] = (day_ix, rows["price"], day_gen, day_charge, day_load)
 
     if not ready_by_season:
         raise ValueError("No snapshots fall into any meteorological season; cannot build seasonal plots.")
 
-    fig, axs = plt.subplots(2, 2, figsize=(11, 8.0))
+    fig, axs = plt.subplots(2, 2, figsize=(13.2, 8.0))
     flat_axes = axs.flatten()
     order = [sd[0] for sd in season_defs]
+    legend_entries: dict[str, object] = {}
 
     for i, sea in enumerate(order):
         ax = flat_axes[i]
         if sea not in ready_by_season:
             ax.axis("off")
             continue
-        ix, pr, thd = ready_by_season[sea]
+        ix, pr, day_gen, day_charge, day_load = ready_by_season[sea]
         hours = ix.hour + ix.minute / 60.0 + ix.second / 3600.0
-        (ln1,) = ax.plot(hours, pr.to_numpy(), color="#d62728", linewidth=1.4, label="mapped price")
-        ax.set_ylabel(f"{y_label} [{y_unit}]", color="#d62728")
-        ax.tick_params(axis="y", labelcolor="#d62728")
+        polys = []
+        if gen_cols:
+            day_vals = [day_gen[c].to_numpy() for c in gen_cols]
+            polys = list(
+                ax.stackplot(
+                    hours,
+                    *day_vals,
+                    labels=gen_cols,
+                    colors=[color_map[c] for c in gen_cols],
+                    alpha=0.85,
+                )
+            )
+        charge_polys = []
+        if charge_cols:
+            charge_vals = [(-day_charge[c]).to_numpy() for c in charge_cols]
+            charge_polys = list(
+                ax.stackplot(
+                    hours,
+                    *charge_vals,
+                    labels=charge_cols,
+                    colors=[color_map[c] for c in charge_cols],
+                    alpha=0.55,
+                )
+            )
+        (ln_load,) = ax.plot(hours, day_load.to_numpy(), color="black", linewidth=1.6, label="load")
+        ax.axhline(0.0, color="#666666", linewidth=0.8, alpha=0.8)
+        ax.set_ylabel("AC generation(+)/charge(-)/load [MW]")
+        ax.tick_params(axis="y")
         ax.set_xlabel("Hour of day")
         ax.grid(True, alpha=0.25)
         ax_top = ix[0].strftime("%Y-%m-%d")
         ax.set_title(f"{province} · {sea}\nrandom day: {ax_top}")
 
         ax2 = ax.twinx()
-        (ln2,) = ax2.plot(
+        (ln_price,) = ax2.plot(
             hours,
-            thd.to_numpy(),
-            color="#1f77b4",
+            pr.to_numpy(),
+            color="#d62728",
             linewidth=1.2,
             alpha=0.9,
-            label="thermal",
+            label="mapped price",
         )
-        ax2.set_ylabel("Thermal dispatch (coal+gas) [MW]", color="#1f77b4")
-        ax2.tick_params(axis="y", labelcolor="#1f77b4")
-        ax.legend([ln1, ln2], ["mapped price", "thermal MW"], loc="upper right", fontsize=8)
+        ax2.set_ylabel(f"{y_label} [{y_unit}]", color="#d62728")
+        ax2.tick_params(axis="y", labelcolor="#d62728")
+        legend_handles = polys + charge_polys + [ln_load, ln_price]
+        legend_labels = gen_cols + charge_cols + ["load (AC)", "mapped price"]
+        for h, lbl in zip(legend_handles, legend_labels):
+            if lbl not in legend_entries:
+                legend_entries[lbl] = h
 
-    plt.suptitle(f"{province}: one random day per season — mapped price and thermal dispatch", y=1.02, fontsize=12)
-    plt.tight_layout()
+    plt.suptitle(f"{province}: one random day per season — generation stack, load and mapped price", y=1.02, fontsize=12)
+    if legend_entries:
+        fig.legend(
+            list(legend_entries.values()),
+            list(legend_entries.keys()),
+            loc="center left",
+            bbox_to_anchor=(1.005, 0.5),
+            frameon=True,
+            fontsize=8,
+            ncol=1,
+        )
+    plt.tight_layout(rect=(0.0, 0.0, 0.84, 0.98))
     seasonal_path = Path(str(out_prefix) + ".seasonal_random_days.png")
     plt.savefig(seasonal_path, dpi=180, bbox_inches="tight")
     plt.close(fig)

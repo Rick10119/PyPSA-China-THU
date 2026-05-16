@@ -52,6 +52,7 @@ linopy_model_logger = logging.getLogger('linopy.model')
 linopy_model_logger.setLevel(logging.WARNING)
 
 from pypsa.descriptors import get_switchable_as_dense as get_as_dense
+from baseyear_capacity_lock import apply_baseyear_capacity_locks
 from solar_capacity_guard import apply_solar_capacity_guard
 
 def prepare_network(
@@ -161,6 +162,8 @@ def prepare_network(
             "heating_demand": getattr(snakemake.wildcards, "heating_demand", None),
         }
     apply_solar_capacity_guard(n, cfg_for_guard, scenario_context=scenario_context)
+    planning_horizon = getattr(getattr(globals().get("snakemake", None), "wildcards", None), "planning_horizons", None)
+    apply_baseyear_capacity_locks(n, planning_horizon, config=cfg_for_guard)
 
     return n
 
