@@ -8,9 +8,9 @@ Paths and the network filename stem match Snakemake wildcards:
 
 Inputs per year:
 - dispatch segmented network (.nc): solar generation/demand/capacity side metrics
-- provincial LMP time series for value-factor metrics (default: planning postnetwork
-  `buses_t.marginal_price`, EUR/MWh converted with FX to match legacy CSV convention)
-- optional: mapped dispatch prices CSV (pass --mapped-csv)
+- provincial LMP time series for value-factor metrics (default: mapped dispatch prices CSV)
+- optional: planning postnetwork `buses_t.marginal_price` (pass --planning-marginal;
+  EUR/MWh converted with FX to match legacy CSV convention)
 
 Capacity adjustment rule:
 - 2025: apply real-capacity correction from `solar capacity.csv`
@@ -430,14 +430,25 @@ def main() -> None:
         default=_DEFAULT_CONFIG_PATH,
         help="Path to config.yaml (default: repo root config.yaml).",
     )
-    ap.add_argument(
+    price_group = ap.add_mutually_exclusive_group()
+    price_group.add_argument(
         "--mapped-csv",
-        action="store_true",
-        help="Use dispatch_segmented *_mapped.csv prices instead of planning postnetwork LMPs (legacy).",
+        dest="price_source",
+        action="store_const",
+        const="mapped_csv",
+        help="Use dispatch_segmented *_mapped.csv prices (default).",
     )
+    price_group.add_argument(
+        "--planning-marginal",
+        dest="price_source",
+        action="store_const",
+        const="planning_marginal",
+        help="Use planning postnetwork LMPs instead of mapped CSV prices.",
+    )
+    ap.set_defaults(price_source="mapped_csv")
     args = ap.parse_args()
     cfg = load_solar_value_fill_config(args.config.resolve())
-    price_source = "mapped_csv" if args.mapped_csv else "planning_marginal"
+    price_source = str(args.price_source)
 
     metrics_by_year: dict[int, pd.DataFrame] = {}
     cap_compare_all: list[pd.DataFrame] = []
@@ -457,8 +468,9 @@ def main() -> None:
 
     if not metrics_by_year:
         raise RuntimeError(
-            "No years were processed. Check dispatch_segmented .nc files and, when using default pricing, "
-            "matching planning postnetworks under postnetworks/ (or pass --mapped-csv with CSV exports)."
+            "No years were processed. Check dispatch_segmented .nc files and mapped CSV exports under "
+            "prices/dispatch_segmented/ (or pass --planning-marginal and ensure matching planning "
+            "postnetworks under postnetworks/)."
         )
 
     if cap_compare_all:

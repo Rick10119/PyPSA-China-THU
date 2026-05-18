@@ -300,14 +300,17 @@ def export_price_vs_thermal_plots(
     config_path: str | Path | None = None,
     price_series: pd.Series | None = None,
     price_label: str | None = None,
+    extra_price_series: dict[str, pd.Series] | None = None,
 ) -> None:
+    prices_plot: dict[str, pd.Series] = {}
     if price_series is None:
         cfg = ReconstructPriceConfig(week_freq=str(week_freq))
         prices = marginal_retail_prices(n, config=cfg)
         if province not in prices.columns:
             raise ValueError(f"Province '{province}' not found in reconstructed prices columns.")
-        price = prices[province].copy()
-        y_label = str(price_label) if price_label else "Marginal price"
+        price = prices[province].copy().astype(float)
+        y_label = "Price"
+        default_label = str(price_label) if price_label else "Marginal price (dispatch)"
         cur = str(currency).upper()
         if cur in {"CNY", "RMB"}:
             price = price.astype(float) * float(fx_cny_per_eur)
@@ -315,9 +318,11 @@ def export_price_vs_thermal_plots(
         else:
             price = price.astype(float)
             y_unit = "EUR/MWh"
+        prices_plot[default_label] = price
     else:
         price = pd.to_numeric(price_series, errors="coerce").astype(float)
-        y_label = str(price_label) if price_label else "Mapped price"
+        y_label = "Price"
+        default_label = str(price_label) if price_label else "Mapped price"
         cur = str(currency).upper()
         if cur in {"CNY", "RMB"}:
             y_unit = "CNY/MWh"
@@ -325,13 +330,27 @@ def export_price_vs_thermal_plots(
             y_unit = "EUR/MWh"
         else:
             raise ValueError("currency must be EUR or CNY (RMB accepted as alias)")
+        prices_plot[default_label] = price
 
-    price.index = pd.to_datetime(price.index)
+    if extra_price_series:
+        for lbl, s in extra_price_series.items():
+            if s is None:
+                continue
+            prices_plot[str(lbl)] = pd.to_numeric(s, errors="coerce").astype(float)
+
+    if not prices_plot:
+        raise ValueError("No price series provided for plotting.")
+
+    for lbl in list(prices_plot.keys()):
+        s = prices_plot[lbl]
+        s.index = pd.to_datetime(s.index)
+        prices_plot[lbl] = s
 
     generator_carriers, link_carrier_to_bus1_carrier = _load_mapped_carrier_config(config_path=config_path)
+    base_index = next(iter(prices_plot.values())).index
     th = _shandong_thermal_dispatch(
         n,
-        price.index,
+        base_index,
         province,
         generator_carriers=generator_carriers,
         link_carrier_to_bus1_carrier=link_carrier_to_bus1_carrier,
@@ -339,7 +358,12 @@ def export_price_vs_thermal_plots(
     th = th.rename("thermal_dispatch_MW")
     th.index = pd.to_datetime(th.index)
 
-    df = pd.concat([price.rename("price"), th], axis=1).dropna()
+    price_df = pd.concat(
+        [s.rename(f"price__{i}") for i, s in enumerate(prices_plot.values())],
+        axis=1,
+    )
+    price_df.columns = list(prices_plot.keys())
+    df = pd.concat([price_df, th], axis=1).dropna()
 
     out_prefix = Path(out_prefix)
     out_prefix.parent.mkdir(parents=True, exist_ok=True)
@@ -352,13 +376,19 @@ def export_price_vs_thermal_plots(
 
     # 1) Scatter
     plt.figure(figsize=(7.2, 5.2))
-    plt.scatter(
-        df_sc["thermal_dispatch_MW"].to_numpy(),
-        df_sc["price"].to_numpy(),
-        s=6,
-        alpha=0.25,
-        linewidths=0,
-    )
+    color_cycle = plt.rcParams["axes.prop_cycle"].by_key().get("color", [])
+    if not color_cycle:
+        color_cycle = ["#d62728", "#1f77b4", "#2ca02c", "#9467bd"]
+    for i, lbl in enumerate(prices_plot.keys()):
+        plt.scatter(
+            df_sc["thermal_dispatch_MW"].to_numpy(),
+            df_sc[lbl].to_numpy(),
+            s=6,
+            alpha=0.20,
+            linewidths=0,
+            color=color_cycle[i % len(color_cycle)],
+            label=lbl,
+        )
     plt.xlabel("Thermal dispatch (coal+gas) [MW]")
     plt.ylabel(f"{y_label} [{y_unit}]")
     title_mode = str(price_mode)
@@ -366,23 +396,46 @@ def export_price_vs_thermal_plots(
         title_mode = str(price_label).lower().replace(" ", "_")
     plt.title(f"{province}: full-year {title_mode} price vs thermal dispatch")
     plt.grid(True, alpha=0.25)
+    if len(prices_plot) > 1:
+        plt.legend(loc="best", frameon=True, fontsize=8)
     plt.tight_layout()
     plt.savefig(out_prefix.with_suffix(".scatter.png"), dpi=180)
 
     # 2) Time series (dual axis)
     plt.figure(figsize=(11, 4.8))
     ax1 = plt.gca()
-    ax1.plot(df.index, df["price"], color="#d62728", linewidth=1.0, label="price")
-    ax1.set_ylabel(f"{y_label} [{y_unit}]", color="#d62728")
-    ax1.tick_params(axis="y", labelcolor="#d62728")
+    lines = []
+    labels = []
+    for i, lbl in enumerate(prices_plot.keys()):
+        (ln,) = ax1.plot(
+            df.index,
+            df[lbl],
+            linewidth=1.0,
+            color=color_cycle[i % len(color_cycle)],
+            label=lbl,
+        )
+        lines.append(ln)
+        labels.append(lbl)
+    ax1.set_ylabel(f"{y_label} [{y_unit}]")
+    ax1.tick_params(axis="y")
     ax1.grid(True, alpha=0.25)
 
     ax2 = ax1.twinx()
-    ax2.plot(df.index, df["thermal_dispatch_MW"], color="#1f77b4", linewidth=0.8, alpha=0.85, label="thermal")
+    (ln_th,) = ax2.plot(
+        df.index,
+        df["thermal_dispatch_MW"],
+        color="#111111",
+        linewidth=0.8,
+        alpha=0.85,
+        label="thermal dispatch",
+    )
     ax2.set_ylabel("Thermal dispatch (coal+gas) [MW]", color="#1f77b4")
     ax2.tick_params(axis="y", labelcolor="#1f77b4")
+    lines.append(ln_th)
+    labels.append("thermal dispatch")
 
     plt.title(f"{province}: full-year {title_mode} price and thermal dispatch")
+    ax1.legend(lines, labels, loc="upper right", frameon=True, fontsize=8)
     plt.tight_layout()
     plt.savefig(out_prefix.with_suffix(".timeseries.png"), dpi=180)
 
@@ -573,8 +626,55 @@ def main() -> None:
     )
     ap.add_argument("--fx-cny-per-eur", type=float, default=7.8, help="FX used when currency=CNY/RMB.")
     ap.add_argument("--config", default=None, help="Optional config.yaml path used for mapped carrier selection.")
+    ap.add_argument(
+        "--planning-network",
+        default=None,
+        help="Optional planning/baseline network .nc; if set, overlays planning marginal price.",
+    )
+    ap.add_argument(
+        "--plot-mapped-price",
+        action="store_true",
+        help="Overlay mapped price reconstructed from dispatch segmented config.",
+    )
     args = ap.parse_args()
     n = pypsa.Network(args.network)
+    cfg = ReconstructPriceConfig(week_freq=str(args.week_freq))
+    dispatch_price_all = marginal_retail_prices(n, config=cfg)
+    if args.province not in dispatch_price_all.columns:
+        raise ValueError(f"Province '{args.province}' not found in dispatch marginal prices.")
+    dispatch_price = dispatch_price_all[args.province].copy()
+    if str(args.currency).upper() in {"CNY", "RMB"}:
+        dispatch_price = dispatch_price.astype(float) * float(args.fx_cny_per_eur)
+
+    extra: dict[str, pd.Series] = {}
+    if args.planning_network:
+        n_plan = pypsa.Network(str(args.planning_network))
+        planning_price_all = marginal_retail_prices(n_plan, config=cfg)
+        if args.province not in planning_price_all.columns:
+            raise ValueError(f"Province '{args.province}' not found in planning marginal prices.")
+        planning_price = planning_price_all[args.province].copy()
+        if str(args.currency).upper() in {"CNY", "RMB"}:
+            planning_price = planning_price.astype(float) * float(args.fx_cny_per_eur)
+        extra["Marginal price (planning)"] = planning_price
+
+    if bool(args.plot_mapped_price):
+        # Lazy import to avoid a hard module cycle at import time.
+        from export_reconstructed_prices import mapped_retail_prices  # noqa: WPS433
+
+        mapped_all = mapped_retail_prices(
+            n,
+            week_freq=str(args.week_freq),
+            import_agg="min_offer",
+            line_cong_eps_mw=1e-3,
+            min_inflow_mw=1e-3,
+            config_path=(str(args.config) if args.config else None),
+        )
+        if args.province in mapped_all.columns:
+            mapped_price = mapped_all[args.province].copy()
+            if str(args.currency).upper() in {"CNY", "RMB"}:
+                mapped_price = mapped_price.astype(float) * float(args.fx_cny_per_eur)
+            extra["Mapped price"] = mapped_price
+
     export_price_vs_thermal_plots(
         n=n,
         out_prefix=args.out_prefix,
@@ -585,6 +685,9 @@ def main() -> None:
         currency=str(args.currency),
         fx_cny_per_eur=float(args.fx_cny_per_eur),
         config_path=(str(args.config) if args.config else None),
+        price_series=dispatch_price,
+        price_label="Marginal price (dispatch)",
+        extra_price_series=extra,
     )
 
 
