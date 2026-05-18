@@ -149,6 +149,37 @@ def _group_sum_by_bus(frame: pd.DataFrame, bus_of_component: pd.Series) -> pd.Da
     return frame.T.groupby(bus_of_component).sum().T
 
 
+def _thermal_floor_candidate_mask(carrier: pd.Series) -> pd.Series:
+    """Carriers constrained by daily minimum loading (CHP/coal/coal-CC-like labels)."""
+    c = carrier.astype(str).str.lower()
+    return (
+        c.str.contains("chp", regex=False)
+        | c.str.contains("coal power plant", regex=False)
+        | c.str.contains("coal cc", regex=False)
+        | c.str.contains("coal_cc", regex=False)
+    )
+
+
+def _solar_dispatch_after_thermal_floor(
+    solar_dispatch: pd.Series, thermal_dispatch: pd.Series, min_ratio: float = 0.4
+) -> tuple[pd.Series, pd.Series]:
+    """
+    Apply daily thermal minimum-loading rule and return:
+    - corrected solar dispatch series
+    - extra curtailed solar due to thermal floor
+    """
+    if solar_dispatch.empty:
+        return solar_dispatch.copy(), solar_dispatch.copy()
+
+    daily_max = thermal_dispatch.resample("D").transform("max").reindex(solar_dispatch.index)
+    thermal_floor = daily_max * float(min_ratio)
+    replacement = (thermal_floor - thermal_dispatch).clip(lower=0.0)
+    # Replacement cannot exceed simultaneous solar generation.
+    extra_curtail = replacement.clip(upper=solar_dispatch).fillna(0.0)
+    corrected = (solar_dispatch - extra_curtail).clip(lower=0.0)
+    return corrected, extra_curtail
+
+
 def _network_path(year: int, cfg: SolarValueFillConfig) -> Path:
     return (
         cfg.version_dir
@@ -276,6 +307,13 @@ def _compute_metrics_for_year(
     all_gen_bus = n.generators.loc[all_ac_gens, "bus"]
     total_gen_bus = _group_sum_by_bus(all_gen_dispatch, all_gen_bus)
 
+    # Thermal units constrained by daily minimum loading.
+    thermal_mask = all_ac_gen_mask & _thermal_floor_candidate_mask(n.generators.carrier)
+    thermal_gens = n.generators.index[thermal_mask]
+    thermal_dispatch = n.generators_t.p[thermal_gens].clip(lower=0.0)
+    thermal_bus = n.generators.loc[thermal_gens, "bus"]
+    thermal_dispatch_bus = _group_sum_by_bus(thermal_dispatch, thermal_bus)
+
     # Standard value-factor denominator:
     # system weighted-average market value = sum(total_gen * nodal_price) / sum(total_gen)
     system_value_num = 0.0
@@ -304,18 +342,23 @@ def _compute_metrics_for_year(
     cap_compare_rows: list[dict[str, float | str]] = []
     rows: list[dict[str, float | str]] = []
     for province in provinces:
-        dispatch_s = solar_dispatch_bus.get(province, pd.Series(0.0, index=snapshots))
+        dispatch_s_raw = solar_dispatch_bus.get(province, pd.Series(0.0, index=snapshots))
         available_s = solar_available_bus.get(province, pd.Series(0.0, index=snapshots))
         total_gen_s = total_gen_bus.get(province, pd.Series(0.0, index=snapshots))
+        thermal_s = thermal_dispatch_bus.get(province, pd.Series(0.0, index=snapshots))
         load_s = load_bus_ts.get(province, pd.Series(0.0, index=snapshots))
         pc = _price_column_for_bus(str(province), price_col_set)
         price_s = prices[pc].astype(float) if pc is not None else pd.Series(0.0, index=snapshots)
 
+        dispatch_s, extra_curtail_s = _solar_dispatch_after_thermal_floor(
+            dispatch_s_raw.astype(float), thermal_s.astype(float), min_ratio=0.4
+        )
         solar_mwh = float(dispatch_s.sum())
         solar_gwh = solar_mwh / 1000.0
         demand_mwh = float(load_s.sum())
         total_gen_mwh = float(total_gen_s.sum())
         available_mwh = float(available_s.sum())
+        extra_curtail_mwh = float(extra_curtail_s.sum())
         nc_cap_mw = float(solar_capacity_bus.get(province, 0.0))
         real_cap_mw = float(real_solar_capacity_bus.get(province, nc_cap_mw)) if adjust_capacity else nc_cap_mw
         cap_ratio = (real_cap_mw / nc_cap_mw) if nc_cap_mw > 0 else 1.0
@@ -355,6 +398,7 @@ def _compute_metrics_for_year(
                 "solar_penetration": penetration,
                 "solar_curtailment_rate": curtailment,
                 "solar_capacity_factor": cap_factor,
+                "solar_extra_curtailment_mwh_from_thermal_floor": extra_curtail_mwh,
             }
         )
 
