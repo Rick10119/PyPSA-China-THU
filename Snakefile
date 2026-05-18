@@ -18,6 +18,7 @@ Run:
 
 from os.path import normpath
 from shutil import move
+from snakemake.io import ancient
 
 # from snakemake.remote.HTTP import RemoteProvider as HTTPRemoteProvider
 # HTTP = HTTPRemoteProvider()
@@ -143,7 +144,9 @@ if config["foresight"] == "myopic":
     # Historically hardcoded to 2020; generalized to the configured baseyear.
     rule prepare_base_networks_2020:
         input:
-            config="config.yaml",
+            # Treat config as non-updating input to avoid reruns on config edits.
+            # The rule will still run when its output file is missing.
+            config=ancient("config.yaml"),
             overrides="data/override_component_attrs",
             edges="data/grids/edges.txt",
             edges_ext="data/grids/edges_current.csv",

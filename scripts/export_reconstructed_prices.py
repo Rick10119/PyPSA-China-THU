@@ -229,8 +229,8 @@ def _load_mapped_supply_curve_settings(
     Optional piecewise linear mapping: mapped_price = mult(lr) * province_ref_fuel_eur_mwh_el.
 
     Config: ``dispatch_segmented_prices.price_export.mapped_supply_curve`` with:
-    - lr_threshold_first: load ratio (after weekly norm) up to this value → price mult 0
-    - mult_at_bandwidth_start: mult just above lr_threshold_first (typically 1.0 = 100% fuel)
+    - lr_threshold_first: load ratio (after weekly norm) used as first piece boundary
+    - mult_at_bandwidth_start: mult at and below lr_threshold_first (typically 1.0 = 100% fuel)
     - lr_knots: upper bounds of linear pieces (ascending, last should be 1.0)
     - mult_at_knots: multiplier at each knot (same length as lr_knots)
 
@@ -286,7 +286,7 @@ def _mapped_multiplier_from_lr_normalized(lr: np.ndarray, s: dict) -> np.ndarray
     lr_clip = np.clip(np.asarray(lr, dtype=float), 0.0, 1.0 + 1e-12)
     out = np.zeros_like(lr_clip, dtype=float)
     mask_le = lr_clip <= t0
-    out[mask_le] = 0.0
+    out[mask_le] = m_start
     active = lr_clip > t0
     lo = t0
     m_lo = m_start
@@ -630,7 +630,7 @@ def _weekly_lr_and_blocks(
     *,
     generator_carriers: set[str],
     link_carrier_to_bus1_carrier: dict[str, str],
-) -> tuple[pd.DataFrame, dict[str, list[tuple[float, float]]]]:
+) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, list[tuple[float, float]]]]:
     thermal = _infer_local_thermal_dispatch(
         n,
         provinces,
@@ -646,7 +646,20 @@ def _weekly_lr_and_blocks(
     )
     cols = list(map(str, provinces))
     lr = _weekly_normalized_lr(thermal, blocks, cols, week_freq)
-    return lr, blocks
+    return thermal, lr, blocks
+
+
+def _daily_low_output_zero_mask(thermal_series: pd.Series, threshold: float = 0.4) -> pd.Series:
+    """Mask snapshots below threshold * daily thermal maximum for one province."""
+    if not isinstance(thermal_series.index, pd.DatetimeIndex):
+        raise TypeError(
+            "daily low-output zeroing requires DatetimeIndex snapshots; "
+            f"got {type(thermal_series.index).__name__}"
+        )
+    th = pd.to_numeric(thermal_series, errors="coerce").fillna(0.0).astype(float)
+    day_max = th.groupby(pd.Grouper(freq="D")).transform("max")
+    cutoff = day_max * float(threshold)
+    return (th < cutoff) | (day_max <= 0.0)
 
 
 def _build_interp_curve(blocks: list[tuple[float, float]]) -> tuple[np.ndarray, np.ndarray]:
@@ -705,7 +718,7 @@ def _local_mapped_prices(
     hs_on, hs_sm, hs_sd, hs_em, hs_ed = _load_heating_season_chp_exclusion_config(config_path=config_path)
     gen_nc, link_nc = _carriers_without_chp(generator_carriers, link_carrier_to_bus1_carrier)
 
-    lr_full, blocks_full = _weekly_lr_and_blocks(
+    thermal_full, lr_full, blocks_full = _weekly_lr_and_blocks(
         n,
         provinces,
         snapshots,
@@ -715,7 +728,7 @@ def _local_mapped_prices(
     )
 
     if hs_on and (gen_nc != generator_carriers or link_nc != link_carrier_to_bus1_carrier):
-        lr_nc, blocks_nc = _weekly_lr_and_blocks(
+        thermal_nc, lr_nc, blocks_nc = _weekly_lr_and_blocks(
             n,
             provinces,
             snapshots,
@@ -728,11 +741,23 @@ def _local_mapped_prices(
         heating_b = heating.to_numpy(dtype=bool)
         use_split = True
     else:
-        lr_nc, blocks_nc = lr_full, blocks_full
+        thermal_nc, lr_nc, blocks_nc = thermal_full, lr_full, blocks_full
         heating_b = np.zeros(len(lr_full.index), dtype=bool)
         use_split = False
 
     for p in out.columns:
+        th_f = pd.to_numeric(thermal_full[p], errors="coerce").fillna(0.0).astype(float)
+        if use_split:
+            th_h = pd.to_numeric(thermal_nc[p], errors="coerce").fillna(0.0).astype(float)
+            th_active = pd.Series(
+                np.where(heating_b, th_h.to_numpy(dtype=float), th_f.to_numpy(dtype=float)),
+                index=out.index,
+                dtype=float,
+            )
+        else:
+            th_active = th_f
+        zero_mask = _daily_low_output_zero_mask(th_active, threshold=0.4).to_numpy(dtype=bool)
+
         if supply_settings is not None:
             fuel_f = _province_ref_fuel_eur_from_seg0_network(
                 n,
@@ -768,9 +793,11 @@ def _local_mapped_prices(
                     )
                     pf = mult_f * float(fuel_f)
                     ph = mult_h * f_h
-                    out[p] = np.where(heating_b, ph, pf).astype(float)
+                    vals = np.where(heating_b, ph, pf).astype(float)
                 else:
-                    out[p] = (mult_f * float(fuel_f)).astype(float)
+                    vals = (mult_f * float(fuel_f)).astype(float)
+                vals[zero_mask] = 0.0
+                out[p] = vals
                 continue
 
         if cfg_curve is not None:
@@ -778,9 +805,11 @@ def _local_mapped_prices(
             v_f = np.interp(lr_full[p].to_numpy(dtype=float), x, y).astype(float)
             if use_split:
                 v_h = np.interp(lr_nc[p].to_numpy(dtype=float), x, y).astype(float)
-                out[p] = np.where(heating_b, v_h, v_f)
+                vals = np.where(heating_b, v_h, v_f).astype(float)
             else:
-                out[p] = v_f
+                vals = v_f
+            vals[zero_mask] = 0.0
+            out[p] = vals
             continue
 
         xf, yf = _build_interp_curve(blocks_full.get(p, []))
@@ -788,9 +817,11 @@ def _local_mapped_prices(
         if use_split:
             xh, yh = _build_interp_curve(blocks_nc.get(p, []))
             v_h = np.interp(lr_nc[p].to_numpy(dtype=float), xh, yh).astype(float)
-            out[p] = np.where(heating_b, v_h, v_f)
+            vals = np.where(heating_b, v_h, v_f).astype(float)
         else:
-            out[p] = v_f
+            vals = v_f
+        vals[zero_mask] = 0.0
+        out[p] = vals
 
     return out.fillna(0.0).clip(lower=0.0)
 

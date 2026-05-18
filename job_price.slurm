@@ -189,10 +189,26 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
+echo
+echo "开始填充 solar value 数据集..."
+python scripts/fill_solar_value_dataset_2025.py --config "$CONFIG_PATH"
+if [ $? -ne 0 ]; then
+    echo "✗ fill_solar_value_dataset_2025.py 执行失败"
+    exit 1
+fi
+
+echo
+echo "开始绘制 solar value factor 年度图..."
+python scripts/plot_solar_value_factor_yearly.py --config "$CONFIG_PATH" --version "$VERSION"
+if [ $? -ne 0 ]; then
+    echo "✗ plot_solar_value_factor_yearly.py 执行失败"
+    exit 1
+fi
+
 END_TIME=$(date +%s)
 DURATION=$((END_TIME - START_TIME))
 echo
-echo "✓ ${VERSION} 电价导出完成"
+echo "✓ ${VERSION} 电价导出、solar value 数据填充与绘图完成"
 echo "运行时间: $((DURATION / 3600))小时 $((DURATION % 3600 / 60))分钟 $((DURATION % 60))秒"
 echo "=== 作业完成 ==="
 echo "完成时间: $(date)"
