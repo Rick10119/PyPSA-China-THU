@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: CC0-1.0
 
-version: 0516.1H.1
+version: 0520.1H.1
 logging_level: INFO
 foresight: "myopic"
 
@@ -100,6 +100,19 @@ nuclear_capacity_guard:
   # Kept for backward compatibility when one-sided bound is disabled.
   tolerance: 0.2
 
+storage_capacity_guard:
+  enabled: true
+  # Provincial 2025 baseline power [MW] — NEA end-2025 new-type storage stock.
+  historical_capacity_csv: data/existing_infrastructure/battery capacity.csv
+  baseline_year_column: "2025"
+  # National cumulative trajectory (NEA / 储能产业研究白皮书2026); logged for reference.
+  national_capacity_csv: data/p_nom/national_battery_capacity_from_planning.csv
+  # Each myopic step: max NEW battery power <= provincial 2025 stock × multiplier.
+  new_build_cap_multiplier: 1.0
+  apply_start_year: 2030
+  apply_end_year: 2060
+  allow_underbuild_only: true
+
 # Second-stage dispatch-only: capacities fixed from solved postnetwork; coal/gas
 # main plant as piecewise bids (parallel capacity blocks). CHP remains scalar MC.
 # For CSV from this stage use marginal LMPs (`export_reconstructed_prices --price-mode marginal`).
@@ -108,7 +121,7 @@ dispatch_segmented_prices:
   # Fuel-only EUR/MWh_el from costs CSV; first block = 1× fuel, or every block = fuel × mult if list matches segments.
   first_segment_from_fuel_cost: true
   # Dispatch SRMC tiers vs fuel-only baseline: 40% / 30% / 15% / 10% / 5% nameplate shares.
-  segment_mc_fuel_mult: [1.0, 1.2, 1.5, 4.0, 4.0]
+  segment_mc_fuel_mult: [1.0, 1.3, 1.5, 2.0, 3.0]
   # If true, zero `* gas fuel` generator marginal_cost while segmented OCGT uses full SRMC per block.
   zero_gas_fuel_marginal_cost: true
   export_prices: true
