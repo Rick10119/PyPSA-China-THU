@@ -244,6 +244,28 @@ dispatch-only 阶段会保留网络中的 `GlobalConstraint`（例如 `co2_limit
 
 你给出的低/中/高情景及证据分级（CNEA 蓝皮书、国家能源局、国网能研院、清华等）可作为该表后续扩展到多情景文件的依据；当前仓库先落地了中情景一套可运行配置。
 
+## 3.6）新型储能扩建上限（`storage_capacity_guard`）
+
+为控制 myopic 优化中电化学储能过度扩建，模型对**每个规划年、每个省的新建电池**施加上限：
+
+\[
+\Delta P^{\mathrm{new}}_{p,Y} \le P^{\mathrm{stock}}_{p,2025} \times \mu
+\]
+
+- \(P^{\mathrm{stock}}_{p,2025}\)：`data/existing_infrastructure/battery capacity.csv` 的 `2025` 列（MW，NEA 2025 年底分省新型储能功率）；
+- 默认 \(\mu=1\)，即**每步新建不超过该省 2025 已有储能装机**；
+- 2025 规划年由 `baseyear_capacity_lock` 锁定不扩建；guard 默认从 **2030** 起生效；
+- 单边约束：允许少建、不允许超建。
+
+实现与配置：
+
+- 约束代码：`scripts/storage_capacity_guard.py`
+- 求解接入：`scripts/solve_network_myopic.py`
+- 配置开关：`config.yaml` → `storage_capacity_guard`
+- 分省上限表：`python scripts/export_storage_capacity_guard_upper_limits.py` → `data/p_nom/storage_capacity_guard_upper_limits.csv`
+
+全国累计轨迹（NEA /《储能产业研究白皮书2026》）见 `data/p_nom/national_battery_capacity_from_planning.csv`，**仅作日志参考，不直接绑定分省上限**。详细说明、山东示例及与 solar/nuclear guard 对比见 **`readme_cn.md` §9**。
+
 ## 4）输出在哪里？
 
 以 `version-<version>` 为例：

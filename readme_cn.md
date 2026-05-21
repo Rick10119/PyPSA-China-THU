@@ -215,3 +215,112 @@ I^{new}_{t,y} = I^{old}_{t,y} \cdot \\frac{I^{new}_{t,2025}}{I^{old}_{t,2025}}
 - \(1\,EUR \approx 7.8\,CNY\)
 
 该换算仅用于把“人民币锚点”映射到成本表内部单位，便于建模；不用于金融分析或汇率预测。
+
+## 9. 新型储能扩建上限（`storage_capacity_guard`）
+
+为抑制 myopic 优化中新型储能（电化学电池）过度扩建，模型在求解前对**每个规划年、每个省**的新建储能装机施加上限，逻辑与 `solar_capacity_guard` / `nuclear_capacity_guard` 类似，但约束对象与分配规则不同。
+
+### 9.1 约束规则
+
+对每个 myopic 规划年 \(Y\)（默认 2030–2060）和每个省 \(p\)：
+
+\[
+\Delta P^{\mathrm{new}}_{p,Y} \le P^{\mathrm{stock}}_{p,2025} \times \mu
+\]
+
+其中：
+
+- \(\Delta P^{\mathrm{new}}_{p,Y}\) 为该步优化中**新建**电池功率（MW），不含 2025 基准年已锁定的 brownfield 存量；
+- \(P^{\mathrm{stock}}_{p,2025}\) 来自 `data/existing_infrastructure/battery capacity.csv` 的 `2025` 列（功率 MW，对齐国家能源局 2025 年底新型储能分省口径）；
+- \(\mu\) 为 `new_build_cap_multiplier`（默认 **1.0**）。
+
+新建电池能量上限与功率一致，按模型新建时长参数换算：
+
+\[
+\Delta E^{\mathrm{new}}_{p,Y} \le \Delta P^{\mathrm{new}}_{p,Y} \times h_{\mathrm{battery}}
+\]
+
+其中 \(h_{\mathrm{battery}}\) 取 `config.yaml` 中 `electricity.max_hours.battery`（默认 **6 h**）。  
+**存量**电池仍按 §5 的 2.58 h 换算能量，与新建上限无关。
+
+约束为**单边上限**：允许少建、不允许超建（`allow_underbuild_only: true`）。  
+2025 规划年本身由 `baseyear_capacity_lock` 锁定电池不扩建，guard 从 **2030** 起生效。
+
+### 9.2 模型中的施加对象
+
+PyPSA 中电池表示为：
+
+- `Store`（`carrier=battery`）：能量端 `e_nom` [MWh]，如 `Shandong battery-2030`；
+- `Link` 充/放电器（`carrier=battery`）：功率端 `p_nom` [MW]，如 `Shandong battery charger-2030`。
+
+Guard 仅作用于 **`build_year = Y` 或名称后缀 `-Y` 的可扩建组件**；已固定的 brownfield 组件（如 `Shandong battery`、`Shandong battery charger`）不受影响。
+
+### 9.3 代码与配置
+
+| 项目 | 路径 |
+| :-- | :-- |
+| 约束实现 | `scripts/storage_capacity_guard.py` |
+| 求解接入 | `scripts/solve_network_myopic.py`（与 solar / nuclear guard 同位置） |
+| 配置开关 | `config.yaml` → `storage_capacity_guard` |
+| 分省上限导出 | `scripts/export_storage_capacity_guard_upper_limits.py` |
+| 导出结果 | `data/p_nom/storage_capacity_guard_upper_limits.csv` |
+
+`config.yaml` 默认配置：
+
+```yaml
+storage_capacity_guard:
+  enabled: true
+  historical_capacity_csv: data/existing_infrastructure/battery capacity.csv
+  baseline_year_column: "2025"
+  national_capacity_csv: data/p_nom/national_battery_capacity_from_planning.csv
+  new_build_cap_multiplier: 1.0
+  apply_start_year: 2030
+  apply_end_year: 2060
+  allow_underbuild_only: true
+```
+
+导出分省上限表：
+
+```bash
+python scripts/export_storage_capacity_guard_upper_limits.py
+```
+
+### 9.4 全国轨迹文件（参考，非绑定约束）
+
+`data/p_nom/national_battery_capacity_from_planning.csv` 记录国家能源局 /《储能产业研究白皮书2026》的**全国累计装机轨迹**，用于日志对照，**不直接作为分省绑定上限**：
+
+| 年份 | 全国新型储能累计（GW） | 来源摘要 |
+| :-- | --: | :-- |
+| 2025 | 136 | NEA 2025 年底已建成投运 1.36 亿千瓦 |
+| 2027 | 180 | 《新型储能规模化建设专项行动方案（2025—2027年）》 |
+| 2030 | 370 | 白皮书 2026 / NEA「2030 年超 3.7 亿千瓦」 |
+| 2035–2060 | 480–1050 | 趋势外推（供参考） |
+
+绑定约束始终来自 **各省 2025 存量**；全国各省 2025 存量求和为 **136 GW**，与上表 2025 行一致。
+
+### 9.5 示例（山东，2030 规划年）
+
+| 项目 | 数值 |
+| :-- | --: |
+| 2025 存量功率 \(P^{\mathrm{stock}}_{\mathrm{Shandong,2025}}\) | 11.21 GW（11210 MW） |
+| 2030 步新建功率上限 | 11.21 GW |
+| 2030 步新建能量上限（× 6 h） | 67.3 GWh |
+| 2030 步合计功率上限（存量 + 新建） | ≤ 22.42 GW |
+
+启用 guard 前，单节点山东 2030 情景曾优化出约 **60 GW** 合计电池功率；启用后新建部分被压至 **≤ 11.21 GW**。
+
+### 9.6 与光伏 / 核电 guard 的对比
+
+| Guard | 约束对象 | 上限来源 |
+| :-- | :-- | :-- |
+| `solar_capacity_guard` | 光伏 `Generator` | 全国目标 × 历史光伏装机比例 → **累计**上限 |
+| `nuclear_capacity_guard` | 核电 `Generator` | 全国目标 × 历史核电装机比例 → **累计**上限 |
+| `storage_capacity_guard` | 电池 `Store` / `Link` | **各省 2025 储能存量** → **每步新建**上限 |
+
+### 9.7 外部参考链接
+
+- **2025 年新型储能累计 1.36 亿千瓦、平均时长 2.58 h**：`https://www.nea.gov.cn/20260130/50f657ce87f848e1a9a1861d1fd9aa23/c.html`
+- **2030 年全国新型储能累计超 3.7 亿千瓦（白皮书 2026）**：`https://www.nea.gov.cn/20260410/fe421f319b644ac8aaad55422907bf6a/c.html`
+- **2027 年底 1.8 亿千瓦以上（专项行动方案解读）**：`http://www.news.cn/energy/20250929/d610948738cc4a579ac3ea31c3fe85df/c.html`
+
+说明：本 guard **不约束抽水蓄能（PHS）**；PHS 仍由 `PHS capacity.csv` 存量与模型内 `StorageUnit` 逻辑处理。
