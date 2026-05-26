@@ -649,7 +649,10 @@ def _weekly_lr_and_blocks(
     return thermal, lr, blocks
 
 
-def _daily_low_output_zero_mask(thermal_series: pd.Series, threshold: float = 0.4) -> pd.Series:
+def _daily_low_output_zero_mask(
+    thermal_series: pd.Series,
+    threshold: float | pd.Series = 0.4,
+) -> pd.Series:
     """Mask snapshots below threshold * daily thermal maximum for one province."""
     if not isinstance(thermal_series.index, pd.DatetimeIndex):
         raise TypeError(
@@ -658,8 +661,54 @@ def _daily_low_output_zero_mask(thermal_series: pd.Series, threshold: float = 0.
         )
     th = pd.to_numeric(thermal_series, errors="coerce").fillna(0.0).astype(float)
     day_max = th.groupby(pd.Grouper(freq="D")).transform("max")
-    cutoff = day_max * float(threshold)
+    if isinstance(threshold, pd.Series):
+        thr = pd.to_numeric(threshold, errors="coerce").reindex(th.index).fillna(0.4).astype(float)
+    else:
+        thr = pd.Series(float(threshold), index=th.index, dtype=float)
+    cutoff = day_max * thr
     return (th < cutoff) | (day_max <= 0.0)
+
+
+def _daily_low_output_zero_threshold(snapshots: pd.Index, config_path: str | Path | None = None) -> pd.Series:
+    """
+    Daily low-output zeroing threshold.
+
+    Config:
+      dispatch_segmented_prices.price_export.daily_low_output_zero_threshold
+      dispatch_segmented_prices.price_export.daily_low_output_zero_threshold_by_year
+
+    Returns a per-snapshot threshold series so each year can be configured
+    independently in a multi-year run.
+    """
+    idx = pd.DatetimeIndex(snapshots)
+    default_threshold = 0.4
+    by_year: dict[int, float] = {}
+
+    cfg_path = Path(config_path) if config_path is not None else _default_config_path()
+    if cfg_path.exists():
+        with cfg_path.open("r", encoding="utf-8") as f:
+            cfg = yaml.safe_load(f) or {}
+        dsp = cfg.get("dispatch_segmented_prices", {}) or {}
+        pe = dsp.get("price_export", {}) or {}
+
+        if "daily_low_output_zero_threshold" in pe:
+            default_threshold = float(pe.get("daily_low_output_zero_threshold", 0.4))
+
+        by_year_raw = pe.get("daily_low_output_zero_threshold_by_year", {}) or {}
+        if isinstance(by_year_raw, dict):
+            for y_raw, v_raw in by_year_raw.items():
+                try:
+                    y = int(y_raw)
+                    by_year[y] = float(v_raw)
+                except (TypeError, ValueError):
+                    continue
+
+    out = pd.Series(default_threshold, index=idx, dtype=float)
+    if by_year:
+        years = pd.Series(idx.year, index=idx, dtype=int)
+        for y, thr in by_year.items():
+            out.loc[years == int(y)] = float(thr)
+    return out.clip(lower=0.0, upper=1.0)
 
 
 def _build_interp_curve(blocks: list[tuple[float, float]]) -> tuple[np.ndarray, np.ndarray]:
@@ -745,6 +794,8 @@ def _local_mapped_prices(
         heating_b = np.zeros(len(lr_full.index), dtype=bool)
         use_split = False
 
+    zero_threshold = _daily_low_output_zero_threshold(out.index, config_path=config_path)
+
     for p in out.columns:
         th_f = pd.to_numeric(thermal_full[p], errors="coerce").fillna(0.0).astype(float)
         if use_split:
@@ -756,7 +807,7 @@ def _local_mapped_prices(
             )
         else:
             th_active = th_f
-        zero_mask = _daily_low_output_zero_mask(th_active, threshold=0.4).to_numpy(dtype=bool)
+        zero_mask = _daily_low_output_zero_mask(th_active, threshold=zero_threshold).to_numpy(dtype=bool)
 
         if supply_settings is not None:
             fuel_f = _province_ref_fuel_eur_from_seg0_network(
