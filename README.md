@@ -181,6 +181,28 @@ aluminum_convergence_tolerance: 0.01
 aluminum_capacity_ratio: 1.0             # scale smelter capacity
 ```
 
+### Wind/Solar Capacity Guards (current default)
+
+To prevent unrealistic VRE expansion in myopic planning, the model applies pre-solve national-to-provincial guards for wind and solar:
+
+- **Wind guard**: `wind_capacity_guard` in `config.yaml`, implemented in `scripts/wind_capacity_guard.py`
+- **Solar guard**: `solar_capacity_guard` in `config.yaml`, implemented in `scripts/solar_capacity_guard.py`
+- **Applied years**: `2025` to `2060`
+- **Band constraints**: lower = `0.8 × target`, upper = `1.3 × target` (`allow_underbuild_only: false`)
+
+Target files:
+
+- Wind (`onwind`/`offwind`): `data/p_nom/national_wind_capacity_from_planning.csv`
+- Solar: `data/p_nom/national_solar_capacity_from_external_targets.csv`
+
+Solar target trajectory currently follows the CPIA 2026 outlook baseline path:
+
+- 2026 additions range: 180–240 GW (baseline uses +180 GW)
+- 2026–2030 average additions range: 238–287 GW/yr (baseline uses +238 GW/yr)
+- Post-2030 planning years continue with +238 GW/yr unless replaced by newer official assumptions
+
+These guards do **not** override physical provincial potential ceilings: `p_nom_max` potential limits from `prepare_base_network` remain active and still cap the final feasible upper bound.
+
 ### Scenario Dimensions
 
 ```yaml

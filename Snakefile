@@ -28,41 +28,36 @@ configfile: "config.yaml"
 ATLITE_NPROCESSES = config['atlite'].get('nprocesses', 4)
 
 
-def dispatch_segmented_dependencies(wildcards):
-    """Optional second-stage dispatch outputs when `dispatch_segmented_prices.enabled` is true."""
+def all_rule_inputs(wildcards):
+    """Targets for `rule all`: reconstructed price CSVs when dispatch export is enabled."""
     dseg = config.get("dispatch_segmented_prices") or {}
-    if not bool(dseg.get("enabled", False)):
-        return []
-    out = expand(
-        config["results_dir"]
-        + "version-"
-        + str(config["version"])
-        + "/dispatch_segmented/{heating_demand}/postnetwork-dispatch-seg-{opts}-{topology}-{pathway}-{planning_horizons}.nc",
-        **config["scenario"],
+    results = (
+        config["results_dir"] + "version-" + str(config["version"]) + "/"
     )
-    if bool(dseg.get("export_prices", True)):
-        out = out + expand(
-            config["results_dir"]
-            + "version-"
-            + str(config["version"])
-            + "/prices/dispatch_segmented/{heating_demand}/dispatch_segmented_prices-{opts}-{topology}-{pathway}-{planning_horizons}.csv",
+    if not bool(dseg.get("enabled", False)):
+        return expand(
+            results
+            + "postnetworks/{heating_demand}/postnetwork-{opts}-{topology}-{pathway}-{planning_horizons}.nc",
             **config["scenario"],
         )
-    return out
+    if bool(dseg.get("export_prices", True)):
+        return expand(
+            results
+            + "prices/dispatch_segmented/{heating_demand}/dispatch_segmented_prices-{opts}-{topology}-{pathway}-{planning_horizons}.csv",
+            **config["scenario"],
+        )
+    return expand(
+        results
+        + "dispatch_segmented/{heating_demand}/postnetwork-dispatch-seg-{opts}-{topology}-{pathway}-{planning_horizons}.nc",
+        **config["scenario"],
+    )
 
 
 if config["foresight"] == "myopic":
 
     rule all:
         input:
-            expand(
-                config["results_dir"]
-                + "version-"
-                + str(config["version"])
-                + "/dispatch_segmented/{heating_demand}/postnetwork-dispatch-seg-{opts}-{topology}-{pathway}-{planning_horizons}.nc",
-                **config["scenario"],
-            ),
-            dispatch_segmented=dispatch_segmented_dependencies,
+            all_rule_inputs,
 
     # rule prepare_all_networks:
     #     input:

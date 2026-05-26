@@ -1,0 +1,9 @@
+year,national_onwind_capacity_mw,national_onwind_capacity_gw,national_offwind_capacity_mw,national_offwind_capacity_gw,assumption_note
+2025,590000,590.0,47000,47.0,NEA_2025_renewable_grid_connected_statistics
+2030,1178000,1178.0,122000,122.0,Wind_Beijing_Declaration_2_0_total_1300GW_plus_offshore_15GW_per_year_2026_2030
+2035,1800000,1800.0,200000,200.0,Declaration_total_2000GW_split_assumption
+2040,2340000,2340.0,260000,260.0,Linear_interpolation_2035_2060
+2045,2880000,2880.0,320000,320.0,Linear_interpolation_2035_2060
+2050,3420000,3420.0,380000,380.0,Linear_interpolation_2035_2060
+2055,3960000,3960.0,440000,440.0,Linear_interpolation_2035_2060
+2060,4500000,4500.0,500000,500.0,Wind_Beijing_Declaration_2_0_total_5000GW_split_assumption

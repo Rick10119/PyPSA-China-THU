@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: CC0-1.0
 
-version: 0520.1H.1
+version: 0526.1H.1
 logging_level: INFO
 foresight: "myopic"
 
@@ -39,12 +39,12 @@ scenario:
   planning_horizons:
     - 2025
     - 2030
-    - 2035
-    - 2040
-    - 2045
-    - 2050
-    - 2055
-    - 2060
+    # - 2035
+    # - 2040
+    # - 2045
+    # - 2050
+    # - 2055
+    # - 2060
   co2_reduction:
     # linear2060:
     #   '2025': -1.
@@ -70,19 +70,40 @@ scenario:
 
 solar_capacity_guard:
   enabled: true
-  # National target by year (used directly for cap, no NC-based share extraction).
-  national_capacity_csv: data/p_nom/national_solar_capacity_from_planning_nc.csv
+  # National target by year from CPIA 2026 forecast and extended trajectory assumptions.
+  national_capacity_csv: data/p_nom/national_solar_capacity_from_external_targets.csv
   # Provincial allocation share uses historical cumulative capacity ratio.
   historical_capacity_csv: data/existing_infrastructure/solar capacity.csv
   historical_year_columns: ["2010", "2015", "2020", "2025"]
-  # 2025 also applies, using historical cumulative national total as baseline.
-  use_historical_2025_baseline: true
+  # Use explicit external target for 2025 as well.
+  use_historical_2025_baseline: false
   # Apply this cap for 2025-2060.
   apply_start_year: 2025
   apply_end_year: 2060
-  # One-sided bound: allow underbuild, forbid overbuild.
-  allow_underbuild_only: true
-  # Kept for backward compatibility when one-sided bound is disabled.
+  # Target band: lower=80% of target, upper=130% of target.
+  allow_underbuild_only: false
+  target_lower_multiplier: 0.8
+  target_upper_multiplier: 1.3
+  # Kept for backward compatibility when custom multipliers are not set.
+  tolerance: 0.2
+
+wind_capacity_guard:
+  enabled: true
+  # National targets for onshore/offshore wind by year.
+  national_capacity_csv: data/p_nom/national_wind_capacity_from_planning.csv
+  # Provincial allocation shares use historical cumulative capacity ratio.
+  onwind_historical_capacity_csv: data/existing_infrastructure/onwind capacity.csv
+  offwind_historical_capacity_csv: data/existing_infrastructure/offwind capacity.csv
+  onwind_historical_year_columns: ["2010", "2015", "2020", "2025"]
+  offwind_historical_year_columns: ["2010", "2015", "2020", "2025"]
+  # Apply this cap for 2025-2060.
+  apply_start_year: 2025
+  apply_end_year: 2060
+  # Target band: lower=80% of target, upper=130% of target.
+  allow_underbuild_only: false
+  target_lower_multiplier: 0.8
+  target_upper_multiplier: 1.3
+  # Kept for backward compatibility when custom multipliers are not set.
   tolerance: 0.2
 
 nuclear_capacity_guard:
@@ -408,7 +429,9 @@ renewable:
 electricity:
   voltages: [220., 300., 380.]
   co2limit: 7.75e+7 # 0.05 * 3.1e9*0.5
-  co2base: 1.487e+9
+  # 2025 solved emissions from version-0520.1H.1 postnetwork (tCO2),
+  # used as reduction baseline when computing `co2_limit`.
+  co2base: 5.0336468e+9
   agg_p_nom_limits: data/agg_p_nom_minmax.csv
 
   extendable_carriers:

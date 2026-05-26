@@ -264,7 +264,61 @@ dispatch-only 阶段会保留网络中的 `GlobalConstraint`（例如 `co2_limit
 - 配置开关：`config.yaml` → `storage_capacity_guard`
 - 分省上限表：`python scripts/export_storage_capacity_guard_upper_limits.py` → `data/p_nom/storage_capacity_guard_upper_limits.csv`
 
-全国累计轨迹（NEA /《储能产业研究白皮书2026》）见 `data/p_nom/national_battery_capacity_from_planning.csv`，**仅作日志参考，不直接绑定分省上限**。详细说明、山东示例及与 solar/nuclear guard 对比见 **`readme_cn.md` §9**。
+全国累计轨迹（NEA /《储能产业研究白皮书2026》）见 `data/p_nom/national_battery_capacity_from_planning.csv`，**仅作日志参考，不直接绑定分省上限**。详细说明与示例见本文件当前章节。
+
+## 3.7）陆风/海风 national guard（`wind_capacity_guard`）
+
+为避免 `onwind/offwind` 在 2030+ 年份出现超出规划路径的扩建，模型新增风电 national guard：
+
+- 约束代码：`scripts/wind_capacity_guard.py`
+- 求解接入：`scripts/solve_network_myopic.py`
+- 配置开关：`config.yaml` → `wind_capacity_guard`
+- 全国目标：`data/p_nom/national_wind_capacity_from_planning.csv`
+- 当前配置（`config.yaml`）：
+  - `apply_start_year: 2025`
+  - `apply_end_year: 2060`
+  - `allow_underbuild_only: false`
+  - `target_lower_multiplier: 0.8`
+  - `target_upper_multiplier: 1.3`
+
+约束逻辑：
+
+- 按年份读取全国 `onwind/offwind` 目标（MW）；
+- 分别按历史累计装机占比做省级分配：
+  - `onwind` 使用 `data/existing_infrastructure/onwind capacity.csv`
+  - `offwind` 使用 `data/existing_infrastructure/offwind capacity.csv`
+- 对各省 `p_nom_max` 施加目标带状约束：**下限=目标×0.8，上限=目标×1.3**。
+
+当前 national target 数据口径：
+
+- 2025：采用国家能源局“2025年可再生能源并网运行情况”（风电累计并网 6.4 亿千瓦，其中陆上 5.9 亿、海上 0.47 亿）；
+- 2030/2035/2060：采用《风能北京宣言2.0》口径（总风电 13/20/50 亿千瓦）；
+- 陆上/海上拆分：2030 使用“海上年新增不低于 1500 万千瓦（2026–2030）”约束得到海上 1.22 亿千瓦，其余年份按文档内假设插值。
+
+## 3.8）光伏 external target guard（`solar_capacity_guard`）
+
+光伏 guard 现改为外部目标带状约束（与风电一致）：
+
+- 全国目标文件：`data/p_nom/national_solar_capacity_from_external_targets.csv`
+- 约束带：下限 `0.8 × target`，上限 `1.3 × target`
+- 关键配置：`config.yaml` → `solar_capacity_guard`
+  - `apply_start_year: 2025`
+  - `apply_end_year: 2060`
+  - `allow_underbuild_only: false`
+  - `target_lower_multiplier: 0.8`
+  - `target_upper_multiplier: 1.3`
+
+目标口径说明（基于中国光伏行业协会 2026 年预测）：
+
+- 2025：国家能源局口径（光伏累计约 12 亿千瓦）；
+- 2026：协会给出新增 180–240GW 区间，当前“基准/一般情景”采用新增 180GW（累计 13.8 亿千瓦）；
+- “十五五”（2026–2030）：协会给出年均新增 238–287GW 区间，当前“基准/一般情景”采用年均新增 238GW（2030 累计 23.9 亿千瓦）；
+- 2030 以后：按“每年新增 238GW”延续到后续求解年份（2035/2040/.../2060），后续可切换到乐观情景（287GW/年）或官方新规划口径。
+
+与光伏潜力约束（`p_nom_max`）关系：
+
+- `solar_capacity_guard` 在求解前会重写各省光伏的 `p_nom_min/p_nom_max`，但上限仍受原始资源潜力约束限制；
+- 实现上对每个省先读取潜力上限（`scripts/prepare_base_network.py` 中 `solar_p_nom_max`），再将 guard 上限与潜力上限取不超过潜力的值，因此不会突破潜力天花板。
 
 ## 4）输出在哪里？
 

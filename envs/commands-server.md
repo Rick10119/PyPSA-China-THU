@@ -32,7 +32,7 @@ git pull
 snakemake --unlock
 snakemake -np
 sbatch job.slurm
-sbatch job_price.slurm
+sbatch job_fill_solar.slurm
 sbatch job_capacity.slurm
 sbatch job_capacity_price.slurm
 

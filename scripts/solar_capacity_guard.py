@@ -125,16 +125,23 @@ def apply_solar_capacity_guard(n, config, scenario_context: dict | None = None):
         logger.warning("Solar capacity guard: failed to get historical provincial shares: %s", e)
         return
 
-    tol = float(guard_cfg.get("tolerance", 0.2))
-    # If enabled, apply one-sided cap only:
-    # can underbuild, cannot overbuild allocated target.
     allow_underbuild_only = bool(guard_cfg.get("allow_underbuild_only", True))
-    if allow_underbuild_only:
-        lower_mult = 0.0
-        upper_mult = 1.0
+    tol = float(guard_cfg.get("tolerance", 0.2))
+    lower_mult_cfg = guard_cfg.get("target_lower_multiplier")
+    upper_mult_cfg = guard_cfg.get("target_upper_multiplier")
+    if lower_mult_cfg is not None and upper_mult_cfg is not None:
+        lower_mult = max(0.0, float(lower_mult_cfg))
+        upper_mult = max(lower_mult, float(upper_mult_cfg))
     else:
-        lower_mult = max(0.0, 1.0 - tol)
-        upper_mult = 1.0 + tol
+        # Default behavior:
+        # - one-sided cap if allow_underbuild_only=true
+        # - otherwise symmetric tolerance band
+        if allow_underbuild_only:
+            lower_mult = 0.0
+            upper_mult = 1.0
+        else:
+            lower_mult = max(0.0, 1.0 - tol)
+            upper_mult = 1.0 + tol
 
     solar = n.generators[n.generators.carrier == "solar"]
     ext = solar[solar.p_nom_extendable]
@@ -185,9 +192,12 @@ def apply_solar_capacity_guard(n, config, scenario_context: dict | None = None):
         updated += len(ext_i)
 
     logger.info(
-        "Solar capacity guard applied for %s: national_target=%.2f MW, updated_generators=%s, relaxed_min_buses=%s",
+        "Solar capacity guard applied for %s: national_target=%.2f MW, updated_generators=%s, "
+        "relaxed_min_buses=%s, lower_mult=%s, upper_mult=%s",
         planning_year,
         national_target_mw,
         updated,
         relaxed_min_count,
+        lower_mult,
+        upper_mult,
     )
