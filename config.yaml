@@ -12,8 +12,8 @@ single_node_province: "Shandong"  # Target province when single-node mode is ena
 
 results_dir: 'results/'
 summary_dir: 'summary/'
-threads: 50
-mem_per_thread: 2500
+threads: 12
+mem_per_thread: 9000
 
 tmin: '-01-01 00:00'
 tmax: '-12-31 23:00'
@@ -214,7 +214,8 @@ solving:
     options: default
   solver_options:
     default:
-      Threads: 192
+      Threads: 12
+      SoftMemLimit: 105
       Crossover: 0
       Method: 2 # barrier
       BarConvTol: 1.e-5
@@ -227,7 +228,8 @@ solving:
       LogToConsole: 1  # 关闭控制台日志
       LogFile: ''  # 关闭日志文件
     MILP:
-      Threads: 90
+      Threads: 12
+      SoftMemLimit: 105
       Method: -1 # 自动选择，通常是对偶单纯形法，更适合分支定界
       MIPGap: 1.e-2
       TimeLimit: 7200
