@@ -353,7 +353,7 @@ if config["foresight"] == "myopic":
         resources:
             mem_mb=4000
         run:
-            import shlex
+            import subprocess
             import sys
 
             cmd = [
@@ -382,7 +382,7 @@ if config["foresight"] == "myopic":
                 for p in params.provinces:
                     cmd += ["--province", str(p)]
 
-            shell(" ".join(shlex.quote(str(x)) for x in cmd))
+            subprocess.run(cmd, check=True)
 
 # rule build_population:
 #     input:
