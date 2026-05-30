@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: : 2026 Ruike Lyu
 # SPDX-License-Identifier: MIT
-"""Overwrite solar capacity.csv '2025' column from NEA bulletin cumulative totals.
+"""Overwrite solar_capacity.csv '2025' column from NEA bulletin cumulative totals.
 
  bulletin: https://www.nea.gov.cn/20251112/35126d06a151461882b61d0a2e5706a6/c.html
  Uses 截至2025年9月底累计并网容量 (合计, 万千瓦) per province.
@@ -17,7 +17,7 @@ import pathlib
 import pandas as pd
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-CSV = ROOT / "data/existing_infrastructure/solar capacity.csv"
+CSV = ROOT / "data/existing_infrastructure/solar_capacity.csv"
 
 # province -> 截至2025年9月底累计并网 (万千瓦), 合计
 NEA_万kW = {

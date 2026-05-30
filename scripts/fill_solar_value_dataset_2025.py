@@ -13,7 +13,7 @@ Inputs per year:
   EUR/MWh converted with FX to match legacy CSV convention)
 
 Capacity adjustment rule:
-- 2025: apply real-capacity correction from `solar capacity.csv`
+- 2025: apply real-capacity correction from `solar_capacity.csv`
 - 2030 and later: no capacity correction (use model capacity directly)
 """
 
@@ -101,7 +101,7 @@ def load_solar_value_fill_config(config_path: Path) -> SolarValueFillConfig:
 
     sch = cfg.get("solar_capacity_guard") or {}
     hist_csv = str(
-        sch.get("historical_capacity_csv") or "data/existing_infrastructure/solar capacity.csv"
+        sch.get("historical_capacity_csv") or "data/existing_infrastructure/solar_capacity.csv"
     )
     year_cols = sch.get("historical_year_columns") or ["2010", "2015", "2020", "2025"]
     if not isinstance(year_cols, list):

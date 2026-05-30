@@ -13,7 +13,7 @@ def _get_historical_nuclear_shares(guard_cfg: dict) -> pd.Series:
     Shares are based on sum(historical_year_columns) by province.
     """
     hist_path = Path(
-        str(guard_cfg.get("historical_capacity_csv", "data/existing_infrastructure/nuclear capacity.csv"))
+        str(guard_cfg.get("historical_capacity_csv", "data/existing_infrastructure/nuclear_capacity.csv"))
     )
     if not hist_path.is_absolute():
         hist_path = Path(__file__).resolve().parents[1] / hist_path

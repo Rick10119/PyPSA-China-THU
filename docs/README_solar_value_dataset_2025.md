@@ -15,7 +15,7 @@ The implementation script is:
 - Nodal price (mapped):
   - `results/version-0505.1H.2/prices/dispatch_segmented/positive/dispatch_segmented_prices-ll-current+FCG-linear2050-2025_mapped.csv`
 - Real solar capacity input:
-  - `data/existing_infrastructure/solar capacity.csv`
+  - `data/existing_infrastructure/solar_capacity.csv`
 
 ## 2) Province Name Mapping
 
@@ -47,7 +47,7 @@ The real solar capacity used for scaling is computed as:
 
 Note:
 
-- The `2025` column in `solar capacity.csv` has been adjusted to represent incremental 2025 addition (`2025_cumulative - previous_existing`).
+- The `2025` column in `solar_capacity.csv` has been adjusted to represent incremental 2025 addition (`2025_cumulative - previous_existing`).
 - Therefore the sum above gives the intended cumulative 2025 real capacity.
 
 For each province:

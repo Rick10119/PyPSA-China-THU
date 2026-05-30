@@ -22,19 +22,19 @@ It has been removed to avoid duplicated/ambiguous cost inputs. The workflow read
 Data on existing power generation infrastructure in China.
 - **`China_current_capacity.*`**: Shapefile and CSV files containing current installed capacity by province
 - **`*_capacity.csv`**: Capacity data for specific technologies:
-  - `coal capacity.csv`: Coal power plants
-  - `CHP coal capacity.csv`: Combined Heat and Power (coal)
-  - `CHP gas capacity.csv`: Combined Heat and Power (gas)
-  - `coal boiler capacity.csv`: Coal boilers
-  - `nuclear capacity.csv`: Nuclear power plants
-  - `hydroelectricity capacity.csv`: Hydroelectric power
-  - `onwind capacity.csv`: Onshore wind
-  - `offwind capacity.csv`: Offshore wind
-  - `solar capacity.csv`: Solar PV
-  - `solar thermal capacity.csv`: Solar thermal
-  - `ground heat pump capacity.csv`: Ground source heat pumps
-  - `OCGT capacity.csv`: Open Cycle Gas Turbines
-  - `decentral coal boiler percentrage.csv`: Decentralized coal boiler percentages
+  - `coal_capacity.csv`: Coal power plants
+  - `chp_coal_capacity.csv`: Combined Heat and Power (coal)
+  - `chp_gas_capacity.csv`: Combined Heat and Power (gas)
+  - `coal_boiler_capacity.csv`: Coal boilers
+  - `nuclear_capacity.csv`: Nuclear power plants
+  - `hydroelectricity_capacity.csv`: Hydroelectric power
+  - `onwind_capacity.csv`: Onshore wind
+  - `offwind_capacity.csv`: Offshore wind
+  - `solar_capacity.csv`: Solar PV
+  - `solar_thermal_capacity.csv`: Solar thermal
+  - `ground_heat_pump_capacity.csv`: Ground source heat pumps
+  - `ocgt_capacity.csv`: Open Cycle Gas Turbines
+  - `decentral_coal_boiler_percentage.csv`: Decentralized coal boiler percentages
 - **`Global-*-Tracker-*.xlsx`**: Excel files from Global Energy Monitor tracking global power plant data
 
 ### `grids/`
@@ -69,7 +69,7 @@ Land use constraints and availability for renewable energy deployment.
 ### `load/`
 Electricity demand (load) profiles by province and year.
 - **`load_{year}_weatheryears_1979_2016_TWh.h5`**: Hourly load profiles for years 2020-2060, covering weather years 1979-2016
-- **`Hourly_demand_of_31_province_China_modified - V2.1.csv`**: Hourly demand data for 31 provinces
+- **`hourly_demand_31_province_china_modified_v2_1.csv`**: Hourly demand data for 31 provinces
 - **`Province_Load_2020_2060.csv`**: Province-level load projections 2020-2060
 
 ### `override_component_attrs/`

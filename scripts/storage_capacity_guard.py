@@ -24,7 +24,7 @@ def _get_provincial_2025_baseline_mw(guard_cfg: dict) -> pd.Series:
     hist_path = _resolve_repo_path(
         guard_cfg.get(
             "historical_capacity_csv",
-            "data/existing_infrastructure/battery capacity.csv",
+            "data/existing_infrastructure/battery_capacity.csv",
         )
     )
     if not hist_path.exists():

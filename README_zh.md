@@ -232,7 +232,7 @@ dispatch-only 阶段会保留网络中的 `GlobalConstraint`（例如 `co2_limit
 
 省级分配规则（当前实现）：
 
-1. 先读取历史核电装机文件 `data/existing_infrastructure/nuclear capacity.csv`。  
+1. 先读取历史核电装机文件 `data/existing_infrastructure/nuclear_capacity.csv`。  
 2. 用 `2020+2025` 累计值计算各省分配权重。  
 3. 将全国上限按该权重分配到省级核电节点（bus）。  
 4. 对核电采用**单边上限**：允许低于目标，不允许超过目标（`allow_underbuild_only: true`）。
@@ -252,7 +252,7 @@ dispatch-only 阶段会保留网络中的 `GlobalConstraint`（例如 `co2_limit
 \Delta P^{\mathrm{new}}_{p,Y} \le P^{\mathrm{stock}}_{p,2025} \times \mu
 \]
 
-- \(P^{\mathrm{stock}}_{p,2025}\)：`data/existing_infrastructure/battery capacity.csv` 的 `2025` 列（MW，NEA 2025 年底分省新型储能功率）；
+- \(P^{\mathrm{stock}}_{p,2025}\)：`data/existing_infrastructure/battery_capacity.csv` 的 `2025` 列（MW，NEA 2025 年底分省新型储能功率）；
 - 默认 \(\mu=1\)，即**每步新建不超过该省 2025 已有储能装机**；
 - 2025 规划年由 `baseyear_capacity_lock` 锁定不扩建；guard 默认从 **2030** 起生效；
 - 单边约束：允许少建、不允许超建。
@@ -285,8 +285,8 @@ dispatch-only 阶段会保留网络中的 `GlobalConstraint`（例如 `co2_limit
 
 - 按年份读取全国 `onwind/offwind` 目标（MW）；
 - 分别按历史累计装机占比做省级分配：
-  - `onwind` 使用 `data/existing_infrastructure/onwind capacity.csv`
-  - `offwind` 使用 `data/existing_infrastructure/offwind capacity.csv`
+  - `onwind` 使用 `data/existing_infrastructure/onwind_capacity.csv`
+  - `offwind` 使用 `data/existing_infrastructure/offwind_capacity.csv`
 - 对各省 `p_nom_max` 施加目标带状约束：**下限=目标×0.8，上限=目标×1.3**。
 
 当前 national target 数据口径：

@@ -7,7 +7,7 @@ logging_level: INFO
 foresight: "myopic"
 
 # Single-node mode – if true, keep only one target province in the network
-using_single_node: False
+using_single_node: True
 single_node_province: "Shandong"  # Target province when single-node mode is enabled
 
 results_dir: 'results/'
@@ -73,7 +73,7 @@ solar_capacity_guard:
   # National target by year from CPIA 2026 forecast and extended trajectory assumptions.
   national_capacity_csv: data/p_nom/national_solar_capacity_from_external_targets.csv
   # Provincial allocation share uses historical cumulative capacity ratio.
-  historical_capacity_csv: data/existing_infrastructure/solar capacity.csv
+  historical_capacity_csv: data/existing_infrastructure/solar_capacity.csv
   historical_year_columns: ["2010", "2015", "2020", "2025"]
   # Use explicit external target for 2025 as well.
   use_historical_2025_baseline: false
@@ -92,8 +92,8 @@ wind_capacity_guard:
   # National targets for onshore/offshore wind by year.
   national_capacity_csv: data/p_nom/national_wind_capacity_from_planning.csv
   # Provincial allocation shares use historical cumulative capacity ratio.
-  onwind_historical_capacity_csv: data/existing_infrastructure/onwind capacity.csv
-  offwind_historical_capacity_csv: data/existing_infrastructure/offwind capacity.csv
+  onwind_historical_capacity_csv: data/existing_infrastructure/onwind_capacity.csv
+  offwind_historical_capacity_csv: data/existing_infrastructure/offwind_capacity.csv
   onwind_historical_year_columns: ["2010", "2015", "2020", "2025"]
   offwind_historical_year_columns: ["2010", "2015", "2020", "2025"]
   # Apply this cap for 2025-2060.
@@ -111,7 +111,7 @@ nuclear_capacity_guard:
   # National target by year for the mid scenario.
   national_capacity_csv: data/p_nom/national_nuclear_capacity_mid_scenario.csv
   # Provincial allocation share uses 2025 cumulative nuclear capacity ratio.
-  historical_capacity_csv: data/existing_infrastructure/nuclear capacity.csv
+  historical_capacity_csv: data/existing_infrastructure/nuclear_capacity.csv
   historical_year_columns: ["2020", "2025"]
   # Apply this cap for 2030-2060.
   apply_start_year: 2030
@@ -124,7 +124,7 @@ nuclear_capacity_guard:
 storage_capacity_guard:
   enabled: true
   # Provincial 2025 baseline power [MW] — NEA end-2025 new-type storage stock.
-  historical_capacity_csv: data/existing_infrastructure/battery capacity.csv
+  historical_capacity_csv: data/existing_infrastructure/battery_capacity.csv
   baseline_year_column: "2025"
   # National cumulative trajectory (NEA / 储能产业研究白皮书2026); logged for reference.
   national_capacity_csv: data/p_nom/national_battery_capacity_from_planning.csv
@@ -149,6 +149,13 @@ dispatch_segmented_prices:
   price_export:
     # Mapped thermal load ratio: (P/Cap) divided by biweekly max within each 2W-SUN bucket per province.
     week_freq: "2W-SUN"
+      # Daily low-output snapshots are set to mapped price 0 when thermal output is
+    # below (daily max thermal * threshold). Can be set globally and by year.
+    daily_low_output_zero_threshold: 0.4
+    daily_low_output_zero_threshold_by_year:
+      "2025": 0.40
+      "2030": 0.40
+      "2035": 0.40
     # Nov 15–Mar 15 (inclusive): CHP excluded from P/Cap for mapped LR only; rest of year full stack.
     heating_season_chp_excluded_from_mapped_lr:
       enabled: true

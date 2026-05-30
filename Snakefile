@@ -195,6 +195,9 @@ if config["foresight"] == "myopic":
 
     ruleorder: prepare_base_networks_2020 > prepare_base_networks
 
+    def existing_infrastructure_csv(tech):
+        return f"data/existing_infrastructure/{tech.lower().replace(' ', '_')}_capacity.csv"
+
     rule add_existing_baseyear:
         input:
             overrides="data/override_component_attrs",
@@ -204,7 +207,7 @@ if config["foresight"] == "myopic":
             + "/prenetworks/{heating_demand}/prenetwork-{opts}-{topology}-{pathway}-{planning_horizons}.nc",
             tech_costs="data/costs/costs_{planning_horizons}.csv",
             cop_name="data/heating/cop.h5",
-            **{f"existing_{tech}": f"data/existing_infrastructure/{tech} capacity.csv" for tech in config["existing_infrastructure"]},
+            **{f"existing_{tech}": existing_infrastructure_csv(tech) for tech in config["existing_infrastructure"]},
         output:
             config["results_dir"]
             + "version-"
@@ -219,6 +222,8 @@ if config["foresight"] == "myopic":
     def solved_previous_horizon(wildcards):
         planning_horizons = config["scenario"]["planning_horizons"]
         i = planning_horizons.index(int(wildcards.planning_horizons))
+        if i == 0:
+            raise ValueError("add_brownfield cannot be used for the first planning horizon.")
         planning_horizon_p = str(planning_horizons[i - 1])
         return (
             config["results_dir"]
@@ -244,6 +249,8 @@ if config["foresight"] == "myopic":
             + "version-"
             + str(config["version"])
             + "/prenetworks-brownfield/{heating_demand}/prenetwork-{opts}-{topology}-{pathway}-{planning_horizons}.nc",
+        wildcard_constraints:
+            planning_horizons="|".join(map(str, config["scenario"]["planning_horizons"][1:])) or r"$^",
         threads: config["threads"]
         resources: mem_mb=config["mem_per_thread"] * config["threads"]
         script: "scripts/add_brownfield.py"
@@ -513,4 +520,3 @@ if config["foresight"] == "myopic":
 
 if config.get("plot", True):
     include: "rules/plot.smk"
-

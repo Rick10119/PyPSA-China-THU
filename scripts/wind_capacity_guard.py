@@ -160,10 +160,10 @@ def apply_wind_capacity_guard(n, config):
         return
 
     onwind_hist_path = _resolve_path(
-        guard_cfg.get("onwind_historical_capacity_csv", "data/existing_infrastructure/onwind capacity.csv")
+        guard_cfg.get("onwind_historical_capacity_csv", "data/existing_infrastructure/onwind_capacity.csv")
     )
     offwind_hist_path = _resolve_path(
-        guard_cfg.get("offwind_historical_capacity_csv", "data/existing_infrastructure/offwind capacity.csv")
+        guard_cfg.get("offwind_historical_capacity_csv", "data/existing_infrastructure/offwind_capacity.csv")
     )
     onwind_year_cols = guard_cfg.get("onwind_historical_year_columns", ["2010", "2015", "2020", "2025"])
     offwind_year_cols = guard_cfg.get("offwind_historical_year_columns", ["2010", "2015", "2020", "2025"])

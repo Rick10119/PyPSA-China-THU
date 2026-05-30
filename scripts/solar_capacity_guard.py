@@ -12,11 +12,11 @@ def _get_historical_2025_baseline_mw(config, guard_cfg: dict) -> float:
     Compute national 2025 baseline from historical installed-capacity table.
 
     Default behavior:
-    - read `data/existing_infrastructure/solar capacity.csv`
+    - read `data/existing_infrastructure/solar_capacity.csv`
     - sum columns 2010/2015/2020/2025 across provinces
     """
     hist_path = Path(
-        str(guard_cfg.get("historical_capacity_csv", "data/existing_infrastructure/solar capacity.csv"))
+        str(guard_cfg.get("historical_capacity_csv", "data/existing_infrastructure/solar_capacity.csv"))
     )
     if not hist_path.is_absolute():
         hist_path = Path(__file__).resolve().parents[1] / hist_path
@@ -42,7 +42,7 @@ def _get_historical_solar_shares(config, guard_cfg: dict) -> pd.Series:
     Shares are based on sum(historical_year_columns) by province.
     """
     hist_path = Path(
-        str(guard_cfg.get("historical_capacity_csv", "data/existing_infrastructure/solar capacity.csv"))
+        str(guard_cfg.get("historical_capacity_csv", "data/existing_infrastructure/solar_capacity.csv"))
     )
     if not hist_path.is_absolute():
         hist_path = Path(__file__).resolve().parents[1] / hist_path
