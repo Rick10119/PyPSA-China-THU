@@ -103,6 +103,10 @@ def add_power_capacities_installed_before_baseyear(n, grouping_years, costs, bas
 
     # include renewables in df_agg
     add_existing_capacities(df_agg)
+    df_agg = df_agg[df_agg.DateIn <= int(baseyear)]
+    if df_agg.empty:
+        logger.warning("No existing capacities found up to baseyear %s.", baseyear)
+        return
 
     df_agg["grouping_year"] = np.take(
         grouping_years,
@@ -373,11 +377,12 @@ def add_power_capacities_installed_before_baseyear(n, grouping_years, costs, bas
                        )
 
         if generator == "ground heat pump":
-            date_range = pd.date_range('2025-01-01 00:00', '2025-12-31 23:00', freq=config['freq'])
-            date_range = date_range.map(lambda t: t.replace(year=2020))
+            date_range = pd.DatetimeIndex(n.snapshots).map(lambda t: t.replace(year=2020))
 
             with pd.HDFStore(snakemake.input.cop_name, mode='r') as store:
                 gshp_cop = store['gshp_cop_profiles']
+                if gshp_cop.index.tz is not None:
+                    gshp_cop.index = gshp_cop.index.tz_localize(None)
                 gshp_cop = gshp_cop.loc[date_range].set_index(n.snapshots)
 
             n.madd("Link",
@@ -414,7 +419,7 @@ if __name__ == "__main__":
     # sector_opts = '168H-T-H-B-I-solar+p3-dist1'
     # opts = sector_opts.split('-')
 
-    baseyear = snakemake.config['scenario']["planning_horizons"][0]
+    baseyear = int(snakemake.config.get("baseyear", 2025))
 
     overrides = override_component_attrs(snakemake.input.overrides)
     n = pypsa.Network(snakemake.input.network, override_component_attrs=overrides)

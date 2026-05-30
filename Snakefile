@@ -26,6 +26,7 @@ from snakemake.io import ancient
 configfile: "config.yaml"
 
 ATLITE_NPROCESSES = config['atlite'].get('nprocesses', 4)
+FIRST_PLANNING_HORIZON = str(config["scenario"]["planning_horizons"][0])
 
 
 def all_rule_inputs(wildcards):
@@ -135,8 +136,10 @@ if config["foresight"] == "myopic":
                 **config["scenario"]
             )
 
-    # Baseyear prenetwork (first planning horizon).
-    # Historically hardcoded to 2020; generalized to the configured baseyear.
+    # Prenetwork for the first configured planning horizon.
+    # The physical model baseyear is configured separately as `baseyear`
+    # (default 2025), so local tests can run only 2030 without treating
+    # 2030 as the no-expansion baseyear.
     rule prepare_base_networks_2020:
         input:
             # Treat config as non-updating input to avoid reruns on config edits.
@@ -163,7 +166,7 @@ if config["foresight"] == "myopic":
             + str(config["version"])
             + "/prenetworks/{heating_demand}/prenetwork-{opts}-{topology}-{pathway}-{planning_horizons}.nc",
         wildcard_constraints:
-            planning_horizons=config["scenario"]["planning_horizons"][0],  # only applies to baseyear
+            planning_horizons=FIRST_PLANNING_HORIZON,
         threads: config["threads"]
         resources: mem_mb=config["mem_per_thread"] * config["threads"]
         script: "scripts/prepare_base_network.py"
@@ -214,7 +217,7 @@ if config["foresight"] == "myopic":
             + str(config["version"])
             + "/prenetworks-brownfield/{heating_demand}/prenetwork-{opts}-{topology}-{pathway}-{planning_horizons}.nc"
         wildcard_constraints:
-            planning_horizons=config["scenario"]["planning_horizons"][0],  # only applies to baseyear
+            planning_horizons=FIRST_PLANNING_HORIZON,
         threads: config["threads"]
         resources: mem_mb=config["mem_per_thread"] * config["threads"]
         script: "scripts/add_existing_baseyear.py"
