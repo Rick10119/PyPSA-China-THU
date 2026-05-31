@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: CC0-1.0
 
-version: 0530.1H.3
+version: 0531.1H.1
 logging_level: INFO
 foresight: "myopic"
 baseyear: 2025
@@ -22,7 +22,7 @@ freq: '1h'
 # Optional representative-time sampling for local tests.
 # Keep disabled for full 8760-hour production runs.
 time_sampling:
-  enabled: true
+  enabled: false
   # full / sample_days / monthly_typical_days / manual
   mode: sample_days
   # Examples:
@@ -55,14 +55,14 @@ scenario:
   pathway: ['linear2050']
   topology: "current+FCG" # "current" or "FCG" or "current+FCG" or "current+Neighbor"
   planning_horizons:
-    # - 2025
-    # - 2030
+    - 2025
+    - 2030
     - 2035
-    # - 2040
-    # - 2045
-    # - 2050
-    # - 2055
-    # - 2060
+    - 2040
+    - 2045
+    - 2050
+    - 2055
+    - 2060
   co2_reduction:
     # linear2060:
     #   '2025': -1.

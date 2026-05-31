@@ -137,6 +137,71 @@ dispatch_segmented_prices:
 
 dispatch-only 阶段会保留网络中的 `GlobalConstraint`（例如 `co2_limit`），即运行阶段仍会受到碳排总量约束。
 
+### 同步机组最小出力约束
+
+规划求解（`scripts/solve_network_myopic.py`）和固定装机后的 dispatch 求解（`scripts/run_dispatch_segmented_prices.py`）均可加入省级同步机组最小出力约束。当前配置口径为：每个省、每个 snapshot，煤电/核电/气电/生物质等同步电源的电侧出力不低于当地 AC 电力负荷的一定比例，默认 `10 %`。
+
+```yaml
+synchronous_generation_floor:
+  enabled: true
+  ratio: 0.10
+  Generator:
+    - coal power plant
+    - coal cc
+    - nuclear
+  Link:
+    OCGT gas:
+      only_bus1_carrier: "AC"
+    CHP gas:
+      only_bus1_carrier: "AC"
+    CHP coal:
+      only_bus1_carrier: "AC"
+    biomass:
+      only_bus1_carrier: "AC"
+```
+
+其中 `Generator` 直接按 `generators_t.p` 计入省级同步出力；`Link` 按电侧输出计入，即 `links_t.p0 * efficiency`，并映射到 `bus1` 所在省级 AC bus。该约束是硬约束，因此如果某些省份缺少足够同步机组或负荷/装机数据不匹配，规划或 dispatch 可能 infeasible。
+
+### mapped sidecar 价格的 floor 与跨省传导顺序
+
+`export_dispatch_segmented_prices` 的主输出 CSV 仍是求解后的 marginal/LMP 价格；同时 `scripts/export_reconstructed_prices.py` 会额外导出 `*_mapped.csv`，用于光伏 value factor 等后处理。当前 mapped sidecar 的计算顺序是：
+
+1. **先算本省本地 mapped 价格**：基于本省同步/火电出力、燃料价和 mapped supply curve。
+2. **先在本省施加 floor 价格规则**：
+   - 当本省同步/火电出力 `<= 10 % × 本省 AC 负荷`（含 1 MW 数值容差）时，mapped 价格直接替换为本省 marginal 价格；
+   - 当本省同步/火电出力 `<= 1.5 × floor`，即默认 `15 % × 本省 AC 负荷` 时，如果 mapped 价格高于 `1.0 ×` 参考燃料价，则压到 `1.0 ×` 参考燃料价；
+   - 冬季若启用 CHP 排除口径，参考燃料价也使用相同的冬季/非冬季口径。
+3. **再考虑跨省外送价格传导**：只考虑 `bus0` 和 `bus1` 都是省级 AC bus 的省间 link。若 A 省向 B 省外送且线路未拥塞，则 A 省价格可参考 B 省 marginal 价格并按线路效率折算后上调；B 省作为受端，保持自己的本地/floor 修正后价格，不因进口电而被反向调低或调高。
+
+本地 mapped 价格中的归一化 thermal load ratio 使用双周窗口，但分母不是简单的“双周最大火电出力”。当前口径为：
+
+\[
+\mathrm{denominator} =
+\max(\mathrm{双周最大火电出力},\ \mathrm{双周最小火电出力} / \mathrm{lr\_threshold\_first})
+\]
+
+\[
+\mathrm{normalized\_LR} = \mathrm{当前火电出力} / \mathrm{denominator}
+\]
+
+默认 `lr_threshold_first = 0.4`。这样对于接近 must-run、出力很平的省份，归一化 LR 会落在约 `0.4` 附近，而不会因为“接近双周最大值”被误映射到高价段。
+
+相关配置位于：
+
+```yaml
+dispatch_segmented_prices:
+  price_export:
+    week_freq: "2W-SUN"
+    thermal_load_floor:
+      enabled: true
+      ratio: 0.10
+    mapped_supply_curve:
+      lr_threshold_first: 0.4
+      mult_at_bandwidth_start: 1.0
+      lr_knots: [0.7, 0.85, 0.95, 1.0]
+      mult_at_knots: [1.2, 1.5, 4.0, 4.0]
+```
+
 ## 3.3）主要数据来源（电价相关）
 
 电价本身来自 **PyPSA 求解的对偶（LMP）**，不是外部直接输入。影响电价水平的关键外生数据主要来自成本表：

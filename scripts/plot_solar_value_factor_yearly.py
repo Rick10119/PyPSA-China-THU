@@ -67,6 +67,15 @@ def _weighted_value_factor(group: pd.DataFrame) -> float:
     return float(np.average(values, weights=weights))
 
 
+def _weighted_column(group: pd.DataFrame, column: str) -> float:
+    weights = group["solar_ele_GWh"].astype(float).clip(lower=0.0)
+    values = group[column].astype(float)
+    weight_sum = float(weights.sum())
+    if weight_sum <= 0:
+        return float(values.mean())
+    return float(np.average(values, weights=weights))
+
+
 def _provincial_weighted_value_factors(df: pd.DataFrame) -> pd.DataFrame:
     rows = []
     for (year, province), group in df.groupby(["year", "province"], sort=True):
@@ -76,6 +85,8 @@ def _provincial_weighted_value_factors(df: pd.DataFrame) -> pd.DataFrame:
                 "year": year,
                 "province": province,
                 "value_factor": _weighted_value_factor(group),
+                "value_factor_numerator": _weighted_column(group, "value_factor_numerator"),
+                "value_factor_denominator": _weighted_column(group, "value_factor_denominator"),
                 "solar_ele_GWh": solar_ele_gwh,
             }
         )
@@ -89,6 +100,8 @@ def _national_weighted_value_factors(by_prov: pd.DataFrame) -> pd.DataFrame:
             {
                 "year": year,
                 "mean": _weighted_value_factor(group),
+                "pv_value": _weighted_column(group, "value_factor_numerator"),
+                "system_value": _weighted_column(group, "value_factor_denominator"),
                 "std": float(group["value_factor"].std()),
                 "min": float(group["value_factor"].min()),
                 "max": float(group["value_factor"].max()),
@@ -138,16 +151,34 @@ def main() -> None:
     years = national_weighted["year"].values
     m = national_weighted["mean"].values
     sd = national_weighted["std"].replace(np.nan, 0).values
-    ax0.plot(years, m, "o-", color="#2563eb", linewidth=2.2, markersize=7, label="按各省光伏发电量加权")
-    ax0.fill_between(years, m - sd, m + sd, color="#2563eb", alpha=0.18, label="±1σ（省间离散）")
+    pv_value = national_weighted["pv_value"].values
+    system_value = national_weighted["system_value"].values
+    l1 = ax0.plot(years, m, "o-", color="#2563eb", linewidth=2.2, markersize=7, label="VF（按各省光伏发电量加权）")
+    p1 = ax0.fill_between(years, m - sd, m + sd, color="#2563eb", alpha=0.18, label="VF ±1σ（省间离散）")
     ax0.axhline(1.0, color="#94a3b8", linestyle="--", linewidth=1, zorder=0)
     ax0.set_xlabel("年")
     ax0.set_ylabel("Value factor")
-    ax0.set_title(f"solar_value_dataset — 发电量加权 VF 逐年变化\nversion {version}")
+    ax0.set_title(f"solar_value_dataset — 发电量加权 VF 与市场价值逐年变化\nversion {version}")
     ax0.set_xticks(years)
-    ax0.legend(loc="upper right", framealpha=0.92)
     ax0.grid(True, alpha=0.35)
     ax0.set_ylim(bottom=min(0.82, float(m.min() - 0.04)), top=max(1.06, float(m.max() + 0.04)))
+
+    ax0b = ax0.twinx()
+    l2 = ax0b.plot(years, pv_value, "s-", color="#f97316", linewidth=2.0, markersize=6, label="光伏 value")
+    l3 = ax0b.plot(
+        years,
+        system_value,
+        "d--",
+        color="#475569",
+        linewidth=1.8,
+        markersize=5,
+        label="系统 value",
+    )
+    ax0b.set_ylabel("Market value（同电价单位）")
+
+    handles = l1 + [p1] + l2 + l3
+    labels = [h.get_label() for h in handles]
+    ax0.legend(handles, labels, loc="upper right", framealpha=0.92)
 
     ax1 = fig.add_subplot(gs[0, 1])
     im = ax1.imshow(

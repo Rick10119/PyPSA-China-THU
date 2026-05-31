@@ -1152,14 +1152,7 @@ def mapped_retail_prices(
         provinces=pd.Index(local.columns),
         snapshots=pd.Index(local.index),
     )
-    out = _apply_cross_border_exports(
-        n,
-        local,
-        marginal,
-        import_agg=str(import_agg),
-        line_cong_eps_mw=float(line_cong_eps_mw),
-        min_inflow_mw=float(min_inflow_mw),
-    )
+    local_for_exports = local.copy()
     floor_enabled, floor_ratio = _load_thermal_load_floor_config(config_path=config_path)
     if floor_enabled:
         thermal, _, _ = _weekly_lr_and_blocks(
@@ -1188,8 +1181,10 @@ def mapped_retail_prices(
             ratio=float(floor_ratio),
             multiplier=1.5,
         )
-        fuel_price = fuel_price.reindex(index=out.index, columns=out.columns).fillna(0.0)
-        out = out.mask(near_floor_mask & (out > fuel_price), fuel_price)
+        fuel_price = fuel_price.reindex(index=local_for_exports.index, columns=local_for_exports.columns).fillna(0.0)
+        local_for_exports = local_for_exports.mask(
+            near_floor_mask & (local_for_exports > fuel_price), fuel_price
+        )
         floor_mask = _thermal_load_floor_mask(
             thermal,
             n,
@@ -1197,7 +1192,15 @@ def mapped_retail_prices(
             snapshots=pd.Index(local.index),
             ratio=float(floor_ratio),
         )
-        out = out.mask(floor_mask, marginal)
+        local_for_exports = local_for_exports.mask(floor_mask, marginal)
+    out = _apply_cross_border_exports(
+        n,
+        local_for_exports,
+        marginal,
+        import_agg=str(import_agg),
+        line_cong_eps_mw=float(line_cong_eps_mw),
+        min_inflow_mw=float(min_inflow_mw),
+    )
     return out.fillna(0.0).clip(lower=0.0)
 
 

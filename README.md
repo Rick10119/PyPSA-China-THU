@@ -42,27 +42,51 @@ Each stage reads from `config.yaml` and data files under `data/`, and writes int
 
 Older versions of this repo included an experimental **heat-only** workflow that relied on **exogenous electricity prices**. That approach is deprecated in this repo; electricity price analysis should use post-processing based on solved networks (see `scripts/reconstruct_market_prices.py`).
 
-### Mapped-price cross-province transmission adjustment
+### Synchronous-generation floor and mapped-price sidecar
 
-For `scripts/export_reconstructed_prices.py` in mapped mode, cross-province transmission is explicitly considered:
+The planning solve (`scripts/solve_network_myopic.py`) and the fixed-capacity dispatch solve
+(`scripts/run_dispatch_segmented_prices.py`) can enforce a provincial synchronous-generation floor.
+With the current default configuration, coal, nuclear, gas, and biomass synchronous generators must
+produce at least `10 %` of the local AC electricity load in each province and snapshot:
 
-- Build a local mapped price `local_price(p, t)` for each province first (from weekly-normalized thermal load ratio).
-- Only province-to-province links are considered (`bus0` and `bus1` both in provincial AC buses).
-- A link is treated as uncongested when `|p0| <= p_nom - line_cong_eps_mw`.
-- Flow direction is inferred from `p0`:
-  - `p0 > min_inflow_mw`: `bus0 -> bus1`, so `bus1` receives an import offer from `bus0`.
-  - `p0 < -min_inflow_mw`: `bus1 -> bus0`, so `bus0` receives an import offer from `bus1`.
-- Import offer is loss-adjusted by link efficiency:
-  - forward uses `efficiency`, reverse uses `efficiency2` (fallback to `efficiency` if missing),
-  - offer formula is `offer = local_price(send) / efficiency`.
-- Final mapped price is the better of local and import offers:
-  - `import_agg=min_offer` (default): aggregate by minimum import offer, then `min(local, import_offer)`;
-  - `import_agg=max_offer`: aggregate by maximum import offer, then `min(local, import_offer)`.
+```yaml
+synchronous_generation_floor:
+  enabled: true
+  ratio: 0.10
+```
 
-Related CLI options:
-- `--import-agg`
-- `--line-cong-eps-mw`
-- `--min-inflow-mw`
+The dispatch price export still writes the primary CSV from solved marginal prices
+(`buses_t.marginal_price`). In addition, `scripts/export_reconstructed_prices.py` writes a
+`*_mapped.csv` sidecar used by solar value-factor analysis. The mapped sidecar is reconstructed in
+this order:
+
+1. Build a local mapped price from thermal/synchronous output and the fuel-based supply curve.
+   The biweekly normalization denominator is:
+   `max(biweekly_max_thermal_output, biweekly_min_thermal_output / lr_threshold_first)`.
+   With the default `lr_threshold_first: 0.4`, a stable must-run floor maps to the first supply
+   band instead of being normalized to the peak band.
+2. Apply the local must-run floor price rule before any cross-province transmission adjustment:
+   - at or below `10 %` of local AC load, use the province's marginal price;
+   - within `1.5 x` the floor (`15 %` of local AC load by default), cap mapped prices at the
+     `1.0 x` reference fuel price.
+3. Apply cross-province export adjustment. Only province-to-province links are considered
+   (`bus0` and `bus1` both provincial AC buses). If province A exports to province B on an
+   uncongested link, A's mapped price can be lifted to the receiving-side marginal price adjusted by
+   link efficiency. The receiving province keeps its own local/floor-adjusted price; import flows do
+   not lower or raise the receiving province's price.
+
+Related configuration lives under `dispatch_segmented_prices.price_export`:
+
+```yaml
+dispatch_segmented_prices:
+  price_export:
+    week_freq: "2W-SUN"
+    thermal_load_floor:
+      enabled: true
+      ratio: 0.10
+    mapped_supply_curve:
+      lr_threshold_first: 0.4
+```
 
 ## Installation
 

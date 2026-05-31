@@ -180,6 +180,40 @@ def _solar_dispatch_after_thermal_floor(
     return corrected, extra_curtail
 
 
+def _electric_supply_by_bus(n: pypsa.Network, ac_buses: pd.Index) -> pd.DataFrame:
+    """Electricity supplied to AC buses by generators, conversion links, and storage discharge."""
+    snapshots = n.snapshots
+    total = pd.DataFrame(0.0, index=snapshots, columns=ac_buses, dtype=float)
+
+    gen_mask = n.generators.bus.isin(ac_buses)
+    gen_cols = n.generators.index[gen_mask]
+    if len(gen_cols):
+        gen_dispatch = n.generators_t.p[gen_cols].clip(lower=0.0)
+        gen_bus = n.generators.loc[gen_cols, "bus"]
+        total = total.add(_group_sum_by_bus(gen_dispatch, gen_bus), fill_value=0.0)
+
+    if hasattr(n, "storage_units") and not n.storage_units.empty and hasattr(n, "storage_units_t"):
+        su_mask = n.storage_units.bus.isin(ac_buses)
+        su_cols = n.storage_units.index[su_mask]
+        if len(su_cols) and hasattr(n.storage_units_t, "p"):
+            su_dispatch = n.storage_units_t.p[su_cols].clip(lower=0.0)
+            su_bus = n.storage_units.loc[su_cols, "bus"]
+            total = total.add(_group_sum_by_bus(su_dispatch, su_bus), fill_value=0.0)
+
+    if hasattr(n, "links") and not n.links.empty and hasattr(n, "links_t") and hasattr(n.links_t, "p0"):
+        link_mask = n.links.bus1.isin(ac_buses) & ~(
+            n.links.bus0.isin(ac_buses) & n.links.bus1.isin(ac_buses)
+        )
+        link_cols = n.links.index[link_mask]
+        if len(link_cols):
+            eff = pd.to_numeric(n.links.loc[link_cols, "efficiency"], errors="coerce").fillna(1.0)
+            link_output = n.links_t.p0[link_cols].multiply(eff, axis=1).clip(lower=0.0)
+            link_bus = n.links.loc[link_cols, "bus1"]
+            total = total.add(_group_sum_by_bus(link_output, link_bus), fill_value=0.0)
+
+    return total.reindex(index=snapshots, columns=ac_buses).fillna(0.0)
+
+
 def _network_path(year: int, cfg: SolarValueFillConfig) -> Path:
     return (
         cfg.version_dir
@@ -299,15 +333,12 @@ def _compute_metrics_for_year(
 
     ac_buses = n.buses.index[n.buses.carrier.astype(str) == "AC"]
 
-    # System total generation by AC bus/hour:
-    # use all generators connected to AC buses, clipped at >=0 to represent generation output.
-    all_ac_gen_mask = n.generators.bus.isin(ac_buses)
-    all_ac_gens = n.generators.index[all_ac_gen_mask]
-    all_gen_dispatch = n.generators_t.p[all_ac_gens].clip(lower=0.0)
-    all_gen_bus = n.generators.loc[all_ac_gens, "bus"]
-    total_gen_bus = _group_sum_by_bus(all_gen_dispatch, all_gen_bus)
+    # System total electricity supply by AC bus/hour:
+    # generators, conversion-link outputs to AC buses, and storage-unit discharge.
+    total_gen_bus = _electric_supply_by_bus(n, ac_buses)
 
     # Thermal units constrained by daily minimum loading.
+    all_ac_gen_mask = n.generators.bus.isin(ac_buses)
     thermal_mask = all_ac_gen_mask & _thermal_floor_candidate_mask(n.generators.carrier)
     thermal_gens = n.generators.index[thermal_mask]
     thermal_dispatch = n.generators_t.p[thermal_gens].clip(lower=0.0)
@@ -413,16 +444,23 @@ def _write_workbook(metrics_by_year: dict[int, pd.DataFrame], cfg: SolarValueFil
     ws = wb["Sheet1"]
 
     starts = _block_starts(ws)
-    horizons = list(cfg.target_years)
+    block_size = (starts[1] - starts[0]) if len(starts) > 1 else 32
     years_by_block: list[int] = []
-    for i in range(len(starts)):
-        if i < len(horizons):
-            years_by_block.append(horizons[i])
+    for i, start in enumerate(starts):
+        existing_years: list[int] = []
+        for row in range(start, min(start + block_size, ws.max_row + 1)):
+            value = ws.cell(row=row, column=2).value
+            if pd.notna(value):
+                try:
+                    existing_years.append(int(value))
+                except (TypeError, ValueError):
+                    continue
+        if existing_years:
+            years_by_block.append(max(set(existing_years), key=existing_years.count))
         elif years_by_block:
             years_by_block.append(years_by_block[-1] + 5)
         else:
             years_by_block.append(2025 + 5 * i)
-    block_size = (starts[1] - starts[0]) if len(starts) > 1 else 32
 
     missing_provinces_by_year: dict[int, set[str]] = {}
     for start, year in zip(starts, years_by_block):
