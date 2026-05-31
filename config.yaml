@@ -2,13 +2,13 @@
 #
 # SPDX-License-Identifier: CC0-1.0
 
-version: 0530.1H.2
+version: 0530.1H.3
 logging_level: INFO
 foresight: "myopic"
 baseyear: 2025
 
 # Single-node mode – if true, keep only one target province in the network
-using_single_node: True
+using_single_node: False
 single_node_province: "Shandong"  # Target province when single-node mode is enabled
 
 results_dir: 'results/'
@@ -56,8 +56,8 @@ scenario:
   topology: "current+FCG" # "current" or "FCG" or "current+FCG" or "current+Neighbor"
   planning_horizons:
     # - 2025
-    - 2030
-    # - 2035
+    # - 2030
+    - 2035
     # - 2040
     # - 2045
     # - 2050
@@ -139,6 +139,25 @@ nuclear_capacity_guard:
   # Kept for backward compatibility when one-sided bound is disabled.
   tolerance: 0.2
 
+# Planning-stage synchronous generation floor:
+# local coal/nuclear/gas/biomass electric output >= ratio * local AC electricity load.
+synchronous_generation_floor:
+  enabled: true
+  ratio: 0.10
+  Generator:
+    - coal power plant
+    - coal cc
+    - nuclear
+  Link:
+    OCGT gas:
+      only_bus1_carrier: "AC"
+    CHP gas:
+      only_bus1_carrier: "AC"
+    CHP coal:
+      only_bus1_carrier: "AC"
+    biomass:
+      only_bus1_carrier: "AC"
+
 storage_capacity_guard:
   enabled: true
   # Provincial 2025 baseline power [MW] — NEA end-2025 new-type storage stock.
@@ -167,7 +186,12 @@ dispatch_segmented_prices:
   price_export:
     # Mapped thermal load ratio: (P/Cap) divided by biweekly max within each 2W-SUN bucket per province.
     week_freq: "2W-SUN"
-      # Daily low-output snapshots are set to mapped price 0 when thermal output is
+    # Only for mapped price reconstruction: when local thermal output is below
+    # this share of local AC electricity load, use marginal prices instead of mapped prices.
+    thermal_load_floor:
+      enabled: true
+      ratio: 0.10
+    # Daily low-output snapshots are set to mapped price 0 when thermal output is
     # below (daily max thermal * threshold). Can be set globally and by year.
     daily_low_output_zero_threshold: 0.4
     daily_low_output_zero_threshold_by_year:

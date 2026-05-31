@@ -597,11 +597,167 @@ def _heating_season_mask(idx: pd.DatetimeIndex, sm: int, sd: int, em: int, ed: i
     return pd.Series([_one(pd.Timestamp(x)) for x in idx], index=idx, dtype=bool)
 
 
+def _load_thermal_load_floor_config(config_path: str | Path | None = None) -> tuple[bool, float]:
+    """
+    Optional mapped-price-only must-run threshold:
+
+      dispatch_segmented_prices.price_export.thermal_load_floor:
+        enabled: true
+        ratio: 0.10
+
+    Province-hours at or below ratio * local AC electricity load use marginal
+    prices instead of thermal-load-ratio mapped prices.
+    """
+    cfg_path = Path(config_path) if config_path is not None else _default_config_path()
+    if not cfg_path.exists():
+        return (False, 0.0)
+    with cfg_path.open("r", encoding="utf-8") as f:
+        cfg = yaml.safe_load(f) or {}
+    dsp = cfg.get("dispatch_segmented_prices", {}) or {}
+    pe = dsp.get("price_export", {}) or {}
+    floor_cfg = pe.get("thermal_load_floor") or {}
+    if not isinstance(floor_cfg, dict) or floor_cfg.get("enabled") is False:
+        return (False, 0.0)
+    ratio = float(floor_cfg.get("ratio", 0.0) or 0.0)
+    if ratio <= 0.0:
+        return (False, 0.0)
+    if ratio >= 1.0:
+        raise ValueError(
+            "dispatch_segmented_prices.price_export.thermal_load_floor.ratio must be < 1"
+        )
+    return (True, ratio)
+
+
+def _province_ac_load(
+    n: pypsa.Network,
+    provinces: pd.Index,
+    snapshots: pd.Index,
+) -> pd.DataFrame:
+    province_cols = list(map(str, provinces))
+    province_set = set(province_cols)
+    out = pd.DataFrame(0.0, index=snapshots, columns=province_cols, dtype=float)
+    if not hasattr(n, "loads") or n.loads.empty or not hasattr(n, "loads_t"):
+        return out
+    load_values = n.loads_t.p_set if hasattr(n.loads_t, "p_set") else n.loads_t.p
+    load_values = load_values.reindex(index=snapshots).fillna(0.0)
+    for load_name, row in n.loads.iterrows():
+        if load_name not in load_values.columns:
+            continue
+        bus = str(row.get("bus", ""))
+        if bus not in province_set:
+            continue
+        out[bus] = out[bus].add(
+            pd.to_numeric(load_values[load_name], errors="coerce").fillna(0.0).clip(lower=0.0),
+            fill_value=0.0,
+        )
+    return out
+
+
+def _thermal_load_floor_mask(
+    thermal: pd.DataFrame,
+    n: pypsa.Network,
+    provinces: pd.Index,
+    snapshots: pd.Index,
+    ratio: float,
+) -> pd.DataFrame:
+    load_floor = _province_ac_load(n, provinces, snapshots) * float(ratio)
+    load_floor = load_floor.reindex(index=thermal.index, columns=thermal.columns).fillna(0.0)
+    floor_tolerance_mw = 1.0
+    return thermal.astype(float) <= (load_floor + floor_tolerance_mw)
+
+
+def _thermal_load_floor_band_mask(
+    thermal: pd.DataFrame,
+    n: pypsa.Network,
+    provinces: pd.Index,
+    snapshots: pd.Index,
+    ratio: float,
+    multiplier: float,
+) -> pd.DataFrame:
+    load_floor_band = _province_ac_load(n, provinces, snapshots) * float(ratio) * float(multiplier)
+    load_floor_band = load_floor_band.reindex(index=thermal.index, columns=thermal.columns).fillna(0.0)
+    floor_tolerance_mw = 1.0
+    return thermal.astype(float) <= (load_floor_band + floor_tolerance_mw)
+
+
+def _province_ref_fuel_prices(
+    n: pypsa.Network,
+    provinces: pd.Index,
+    snapshots: pd.Index,
+    *,
+    generator_carriers: set[str],
+    link_carrier_to_bus1_carrier: dict[str, str],
+    week_freq: str,
+    config_path: str | Path | None = None,
+) -> pd.DataFrame:
+    province_cols = list(map(str, provinces))
+    out = pd.DataFrame(index=snapshots, columns=province_cols, dtype=float)
+
+    hs_on, hs_sm, hs_sd, hs_em, hs_ed = _load_heating_season_chp_exclusion_config(
+        config_path=config_path
+    )
+    gen_nc, link_nc = _carriers_without_chp(generator_carriers, link_carrier_to_bus1_carrier)
+    _, _, blocks_full = _weekly_lr_and_blocks(
+        n,
+        provinces,
+        snapshots,
+        week_freq,
+        generator_carriers=generator_carriers,
+        link_carrier_to_bus1_carrier=link_carrier_to_bus1_carrier,
+        config_path=config_path,
+    )
+    if hs_on and (gen_nc != generator_carriers or link_nc != link_carrier_to_bus1_carrier):
+        _, _, blocks_nc = _weekly_lr_and_blocks(
+            n,
+            provinces,
+            snapshots,
+            week_freq,
+            generator_carriers=gen_nc,
+            link_carrier_to_bus1_carrier=link_nc,
+            config_path=config_path,
+        )
+        heating = _heating_season_mask(pd.DatetimeIndex(snapshots), hs_sm, hs_sd, hs_em, hs_ed)
+        heating = heating.reindex(snapshots).fillna(False).to_numpy(dtype=bool)
+        use_split = True
+    else:
+        blocks_nc = blocks_full
+        heating = np.zeros(len(snapshots), dtype=bool)
+        use_split = False
+
+    for p in province_cols:
+        fuel_f = _province_ref_fuel_eur_from_seg0_network(
+            n,
+            p,
+            generator_carriers=generator_carriers,
+            link_carrier_to_bus1_carrier=link_carrier_to_bus1_carrier,
+        )
+        if fuel_f is None or fuel_f <= 0.0:
+            fuel_f = _province_ref_fuel_eur_from_blocks(blocks_full.get(p, []) or [])
+        fuel_f = 0.0 if fuel_f is None else float(fuel_f)
+
+        if use_split:
+            fuel_h = _province_ref_fuel_eur_from_seg0_network(
+                n,
+                p,
+                generator_carriers=gen_nc,
+                link_carrier_to_bus1_carrier=link_nc,
+            )
+            if fuel_h is None or fuel_h <= 0.0:
+                fuel_h = _province_ref_fuel_eur_from_blocks(blocks_nc.get(p, []) or [])
+            fuel_h = fuel_f if fuel_h is None or fuel_h <= 0.0 else float(fuel_h)
+            out[p] = np.where(heating, fuel_h, fuel_f).astype(float)
+        else:
+            out[p] = fuel_f
+
+    return out.fillna(0.0).clip(lower=0.0)
+
+
 def _weekly_normalized_lr(
     thermal: pd.DataFrame,
     blocks: dict[str, list[tuple[float, float]]],
     province_cols: list[str],
     week_freq: str,
+    min_output_ratio: float = 0.4,
 ) -> pd.DataFrame:
     cap_by_province = pd.Series(
         {p: float(sum(cap for cap, _ in blocks.get(p, []))) for p in province_cols},
@@ -617,9 +773,13 @@ def _weekly_normalized_lr(
             "mapped load-ratio weekly normalization requires a DatetimeIndex on network snapshots; "
             f"got {type(idx).__name__}"
         )
-    lr_week_max = lr_base.groupby(pd.Grouper(freq=week_freq)).transform("max")
-    lr_week_max = lr_week_max.where(lr_week_max > 0.0, np.nan)
-    return lr_base.divide(lr_week_max).clip(lower=0.0, upper=1.0).fillna(0.0)
+    grouped = lr_base.groupby(pd.Grouper(freq=week_freq))
+    lr_week_max = grouped.transform("max")
+    floor_ratio = max(float(min_output_ratio), 1e-9)
+    lr_week_min_floor_equiv = grouped.transform("min").clip(lower=0.0) / floor_ratio
+    lr_denominator = lr_week_max.where(lr_week_max >= lr_week_min_floor_equiv, lr_week_min_floor_equiv)
+    lr_denominator = lr_denominator.where(lr_denominator > 0.0, np.nan)
+    return lr_base.divide(lr_denominator).clip(lower=0.0, upper=1.0).fillna(0.0)
 
 
 def _weekly_lr_and_blocks(
@@ -630,6 +790,7 @@ def _weekly_lr_and_blocks(
     *,
     generator_carriers: set[str],
     link_carrier_to_bus1_carrier: dict[str, str],
+    config_path: str | Path | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, list[tuple[float, float]]]]:
     thermal = _infer_local_thermal_dispatch(
         n,
@@ -645,7 +806,11 @@ def _weekly_lr_and_blocks(
         link_carrier_to_bus1_carrier=link_carrier_to_bus1_carrier,
     )
     cols = list(map(str, provinces))
-    lr = _weekly_normalized_lr(thermal, blocks, cols, week_freq)
+    supply_settings = _load_mapped_supply_curve_settings(config_path=config_path)
+    min_output_ratio = 0.4
+    if supply_settings is not None:
+        min_output_ratio = float(supply_settings.get("lr_threshold_first", min_output_ratio))
+    lr = _weekly_normalized_lr(thermal, blocks, cols, week_freq, min_output_ratio=min_output_ratio)
     return thermal, lr, blocks
 
 
@@ -774,6 +939,7 @@ def _local_mapped_prices(
         week_freq,
         generator_carriers=generator_carriers,
         link_carrier_to_bus1_carrier=link_carrier_to_bus1_carrier,
+        config_path=config_path,
     )
 
     if hs_on and (gen_nc != generator_carriers or link_nc != link_carrier_to_bus1_carrier):
@@ -784,6 +950,7 @@ def _local_mapped_prices(
             week_freq,
             generator_carriers=gen_nc,
             link_carrier_to_bus1_carrier=link_nc,
+            config_path=config_path,
         )
         heating = _heating_season_mask(pd.DatetimeIndex(lr_full.index), hs_sm, hs_sd, hs_em, hs_ed)
         heating = heating.reindex(lr_full.index).fillna(False)
@@ -985,7 +1152,7 @@ def mapped_retail_prices(
         provinces=pd.Index(local.columns),
         snapshots=pd.Index(local.index),
     )
-    return _apply_cross_border_exports(
+    out = _apply_cross_border_exports(
         n,
         local,
         marginal,
@@ -993,6 +1160,45 @@ def mapped_retail_prices(
         line_cong_eps_mw=float(line_cong_eps_mw),
         min_inflow_mw=float(min_inflow_mw),
     )
+    floor_enabled, floor_ratio = _load_thermal_load_floor_config(config_path=config_path)
+    if floor_enabled:
+        thermal, _, _ = _weekly_lr_and_blocks(
+            n,
+            provinces=pd.Index(local.columns),
+            snapshots=pd.Index(local.index),
+            week_freq=str(week_freq),
+            generator_carriers=generator_carriers,
+            link_carrier_to_bus1_carrier=link_carrier_to_bus1_carrier,
+            config_path=config_path,
+        )
+        fuel_price = _province_ref_fuel_prices(
+            n,
+            provinces=pd.Index(local.columns),
+            snapshots=pd.Index(local.index),
+            week_freq=str(week_freq),
+            generator_carriers=generator_carriers,
+            link_carrier_to_bus1_carrier=link_carrier_to_bus1_carrier,
+            config_path=config_path,
+        )
+        near_floor_mask = _thermal_load_floor_band_mask(
+            thermal,
+            n,
+            provinces=pd.Index(local.columns),
+            snapshots=pd.Index(local.index),
+            ratio=float(floor_ratio),
+            multiplier=1.5,
+        )
+        fuel_price = fuel_price.reindex(index=out.index, columns=out.columns).fillna(0.0)
+        out = out.mask(near_floor_mask & (out > fuel_price), fuel_price)
+        floor_mask = _thermal_load_floor_mask(
+            thermal,
+            n,
+            provinces=pd.Index(local.columns),
+            snapshots=pd.Index(local.index),
+            ratio=float(floor_ratio),
+        )
+        out = out.mask(floor_mask, marginal)
+    return out.fillna(0.0).clip(lower=0.0)
 
 
 def _select_provinces(prices: pd.DataFrame, provinces: Iterable[str] | None) -> pd.DataFrame:
@@ -1237,4 +1443,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

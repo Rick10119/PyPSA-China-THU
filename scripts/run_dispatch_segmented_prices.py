@@ -37,7 +37,12 @@ if str(_THIS_DIR) not in sys.path:
 
 from add_electricity import apply_market_scenario_costs, load_costs  # noqa: E402
 from _helpers import configure_logging, override_component_attrs  # noqa: E402
-from solve_network_myopic import add_chp_constraints, add_transimission_constraints, prepare_network  # noqa: E402
+from solve_network_myopic import (  # noqa: E402
+    add_chp_constraints,
+    add_synchronous_generation_floor_constraints,
+    add_transimission_constraints,
+    prepare_network,
+)
 
 _REPO_ROOT = _THIS_DIR.parent
 
@@ -136,9 +141,10 @@ def patch_first_segment_marginal_from_fuel_cost(
 
 
 def extra_functionality_dispatch(n, snapshots):
-    """CHP + asymmetric transmission pairs; no planning-year retrofit constraints."""
+    """CHP + asymmetric transmission pairs + synchronous floor; no planning-year retrofit constraints."""
     add_chp_constraints(n)
     add_transimission_constraints(n)
+    add_synchronous_generation_floor_constraints(n, snapshots)
 
 
 def _energy_balance_series(n: pypsa.Network) -> pd.Series:
@@ -233,6 +239,17 @@ def _add_kwargs_filtered(n: pypsa.Network, component: str, name: str, attrs: dic
     n.add(component, name, **clean)
 
 
+def _assign_repeated_time_series(pnl, attr: str, series: pd.Series, columns: list[str]) -> None:
+    """Assign one saved component time series to several new columns without fragmenting the frame."""
+    if not columns:
+        return
+    df = getattr(pnl, attr)
+    values = np.repeat(series.to_numpy()[:, None], len(columns), axis=1)
+    repeated = pd.DataFrame(values, index=df.index, columns=columns)
+    base = df.drop(columns=[c for c in columns if c in df.columns], errors="ignore")
+    setattr(pnl, attr, pd.concat([base, repeated], axis=1))
+
+
 def split_generators_carrier(
     n: pypsa.Network,
     carrier: str,
@@ -280,9 +297,7 @@ def split_generators_carrier(
             static_k["marginal_cost"] = float(marginal_costs[k])
             _add_kwargs_filtered(n, "Generator", nn, static_k)
         for attr, series in saved_ts.items():
-            df = getattr(n.generators_t, attr)
-            for nn in new_names:
-                df[nn] = series.values
+            _assign_repeated_time_series(n.generators_t, attr, series, new_names)
 
 
 def split_links_carrier(
@@ -342,9 +357,7 @@ def split_links_carrier(
             static_k["marginal_cost"] = float(marginal_costs[k])
             _add_kwargs_filtered(n, "Link", nn, static_k)
         for attr, series in saved_ts.items():
-            df = getattr(n.links_t, attr)
-            for nn in new_names:
-                df[nn] = series.values
+            _assign_repeated_time_series(n.links_t, attr, series, new_names)
 
 
 def apply_segmented_carriers(n: pypsa.Network, carriers_cfg: dict) -> None:

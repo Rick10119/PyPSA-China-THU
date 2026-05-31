@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Plot provincial-mean solar value_factor over planning years from solar_value_dataset.xlsx.
+"""Plot generation-weighted solar value_factor over planning years from solar_value_dataset.xlsx.
 
 Default paths use ``version`` and ``results_dir`` from the repo ``config.yaml`` (same layout as
 ``fill_solar_value_dataset_2025.py``).
@@ -58,6 +58,45 @@ def _province_key(zone: str) -> str:
     return zone
 
 
+def _weighted_value_factor(group: pd.DataFrame) -> float:
+    weights = group["solar_ele_GWh"].astype(float).clip(lower=0.0)
+    values = group["value_factor"].astype(float)
+    weight_sum = float(weights.sum())
+    if weight_sum <= 0:
+        return float(values.mean())
+    return float(np.average(values, weights=weights))
+
+
+def _provincial_weighted_value_factors(df: pd.DataFrame) -> pd.DataFrame:
+    rows = []
+    for (year, province), group in df.groupby(["year", "province"], sort=True):
+        solar_ele_gwh = float(group["solar_ele_GWh"].astype(float).clip(lower=0.0).sum())
+        rows.append(
+            {
+                "year": year,
+                "province": province,
+                "value_factor": _weighted_value_factor(group),
+                "solar_ele_GWh": solar_ele_gwh,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def _national_weighted_value_factors(by_prov: pd.DataFrame) -> pd.DataFrame:
+    rows = []
+    for year, group in by_prov.groupby("year", sort=True):
+        rows.append(
+            {
+                "year": year,
+                "mean": _weighted_value_factor(group),
+                "std": float(group["value_factor"].std()),
+                "min": float(group["value_factor"].min()),
+                "max": float(group["value_factor"].max()),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
 def main() -> None:
     _configure_cjk_font()
     ap = argparse.ArgumentParser()
@@ -87,8 +126,8 @@ def main() -> None:
 
     df = pd.read_excel(xlsx, sheet_name="Sheet1", header=0)
     df = df.assign(province=df["load_zone"].map(_province_key))
-    by_prov = df.groupby(["year", "province"], as_index=False)["value_factor"].mean()
-    national = by_prov.groupby("year")["value_factor"].agg(["mean", "std", "min", "max"]).reset_index()
+    by_prov = _provincial_weighted_value_factors(df)
+    national_weighted = _national_weighted_value_factors(by_prov)
 
     pivot = by_prov.pivot(index="province", columns="year", values="value_factor").sort_index()
 
@@ -96,15 +135,15 @@ def main() -> None:
     gs = fig.add_gridspec(1, 2, width_ratios=[1.15, 1.0], wspace=0.28)
 
     ax0 = fig.add_subplot(gs[0, 0])
-    years = national["year"].values
-    m = national["mean"].values
-    sd = national["std"].replace(np.nan, 0).values
-    ax0.plot(years, m, "o-", color="#2563eb", linewidth=2.2, markersize=7, label="各省算术平均")
+    years = national_weighted["year"].values
+    m = national_weighted["mean"].values
+    sd = national_weighted["std"].replace(np.nan, 0).values
+    ax0.plot(years, m, "o-", color="#2563eb", linewidth=2.2, markersize=7, label="按各省光伏发电量加权")
     ax0.fill_between(years, m - sd, m + sd, color="#2563eb", alpha=0.18, label="±1σ（省间离散）")
     ax0.axhline(1.0, color="#94a3b8", linestyle="--", linewidth=1, zorder=0)
     ax0.set_xlabel("年")
     ax0.set_ylabel("Value factor")
-    ax0.set_title(f"solar_value_dataset — 各省平均 VF 逐年变化\nversion {version}")
+    ax0.set_title(f"solar_value_dataset — 发电量加权 VF 逐年变化\nversion {version}")
     ax0.set_xticks(years)
     ax0.legend(loc="upper right", framealpha=0.92)
     ax0.grid(True, alpha=0.35)
@@ -127,8 +166,8 @@ def main() -> None:
     ax1.set_title("分省 Value factor\n内蒙古东西合并为 InnerMongolia")
     fig.colorbar(im, ax=ax1, fraction=0.046, pad=0.04, label="value_factor")
 
-    png = out_dir / "solar_value_factor_yearly_provincial_mean.png"
-    pdf = out_dir / "solar_value_factor_yearly_provincial_mean.pdf"
+    png = out_dir / "solar_value_factor_yearly_generation_weighted.png"
+    pdf = out_dir / "solar_value_factor_yearly_generation_weighted.pdf"
     fig.savefig(png, dpi=160, bbox_inches="tight")
     fig.savefig(pdf, bbox_inches="tight")
     plt.close(fig)
