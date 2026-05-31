@@ -74,6 +74,8 @@ this order:
    uncongested link, A's mapped price can be lifted to the receiving-side marginal price adjusted by
    link efficiency. The receiving province keeps its own local/floor-adjusted price; import flows do
    not lower or raise the receiving province's price.
+4. Enforce a final province-local marginal-price floor: the mapped sidecar is never lower than that
+   province's solved marginal price in the same snapshot.
 
 Related configuration lives under `dispatch_segmented_prices.price_export`:
 

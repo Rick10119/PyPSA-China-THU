@@ -172,6 +172,7 @@ synchronous_generation_floor:
    - 当本省同步/火电出力 `<= 1.5 × floor`，即默认 `15 % × 本省 AC 负荷` 时，如果 mapped 价格高于 `1.0 ×` 参考燃料价，则压到 `1.0 ×` 参考燃料价；
    - 冬季若启用 CHP 排除口径，参考燃料价也使用相同的冬季/非冬季口径。
 3. **再考虑跨省外送价格传导**：只考虑 `bus0` 和 `bus1` 都是省级 AC bus 的省间 link。若 A 省向 B 省外送且线路未拥塞，则 A 省价格可参考 B 省 marginal 价格并按线路效率折算后上调；B 省作为受端，保持自己的本地/floor 修正后价格，不因进口电而被反向调低或调高。
+4. **最后施加本省 marginal 底价**：mapped sidecar 的最终价格不低于同一省、同一 snapshot 的求解 marginal 价格。
 
 本地 mapped 价格中的归一化 thermal load ratio 使用双周窗口，但分母不是简单的“双周最大火电出力”。当前口径为：
 

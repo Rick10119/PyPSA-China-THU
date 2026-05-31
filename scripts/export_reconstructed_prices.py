@@ -1201,6 +1201,7 @@ def mapped_retail_prices(
         line_cong_eps_mw=float(line_cong_eps_mw),
         min_inflow_mw=float(min_inflow_mw),
     )
+    out = out.mask(out < marginal, marginal)
     return out.fillna(0.0).clip(lower=0.0)
 
 
