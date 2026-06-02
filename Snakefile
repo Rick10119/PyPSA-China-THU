@@ -7,13 +7,8 @@ Optimization Snakefile (full electricity+heat model).
 
 This workflow produces solved `postnetwork-*.nc` files via `solve_network_myopic.py`.
 
-Why this file exists:
-- The repo's default `Snakefile` is currently a minimal heat-only workflow.
-- Some analyses (and any endogenous electricity prices) require the full optimized
-  network results (`postnetworks/`).
-
 Run:
-  conda run -n pypsa snakemake -s Snakefile_optimize --cores 6
+  conda run -n pypsa snakemake --cores 6
 """
 
 from os.path import normpath

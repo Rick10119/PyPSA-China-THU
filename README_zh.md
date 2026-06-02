@@ -1,122 +1,67 @@
-# PyPSA-China（简化中文说明）
+# PyPSA-China 中文说明
 
-本文件是面向“更新供热需求 + 可选建筑热惯性（热容）+ 运行 heat-only 流程”的简化说明。
+本仓库基于 PyPSA 构建中国省级能源系统优化模型，覆盖电力、供热、气、煤、氢等部门，并包含电解铝灵活性与电价仿真相关模块。当前 `price-simulation` 分支的重点是：
 
-## 你最常用的命令
+- 多年 myopic 扩建与运行优化；
+- 固定装机后的分段报价 dispatch-only 电价仿真；
+- 省级同步机组最小出力约束；
+- 风电、光伏、核电与储能扩张约束；
+- 电解铝负荷灵活性场景与后处理。
 
-在已激活 conda 环境后运行：
+## 快速运行
+
+先创建并激活环境：
+
+```bash
+conda env create -f envs/environment.yaml
+conda activate pypsa
+```
+
+运行主流程：
 
 ```bash
 snakemake --cores 6
 ```
 
-默认会按当前 `Snakefile` 生成：
-
-- `prenetwork`（含供热部门）
-- `heatonly_postnetwork`（供热解耦求解）
-- 典型日供热出图
-- `summary`（供热占比/装机/CO2）
-
-## 1）只更新热需求（热负荷）要怎么做？
-
-模型会从 HDF5 读取热需求时间序列，典型文件例如：
-
-- `data/heating/heat_demand_profile_positive_2030.h5`
-
-读取规则：
-
-- 优先 key：`/heat_demand_profiles`
-- 如果没有这个 key：自动使用文件中的**第一个 key**（会打印 warning）
-
-数据形状要求：
-
-- **index**：时间戳，必须能对齐 `network.snapshots`（由 `config.yaml: freq` 控制，例如 `6h`）
-- **columns**：省份名（必须与 `pro_names` 一致，例如 `Tianjin` 等）
-- **values**：热负荷功率（通常按 MW_th 理解），用于写入 `Load.p_set`
-
-该热需求会按集中/分散供热比例拆分到：
-
-- `<province> central heat`
-- `<province> decentral heat`
-
-你只需要**覆盖同路径的 `.h5` 文件**即可（文件名不变最省事；key 名变了也能自动兜底）。
-
-## 2）建筑热惯性（热容）如何建模？怎么启用？
-
-我们采用“需求侧热容”的简单建模方式：在 **central heat** 和 **decentral heat** 两套热母线上各加一个建筑热容 `Store`。
-
-### 参数 CSV（单文件，集中/分散两套列）
-
-模板文件：
-
-- `data/heating/building_inertia_template.csv`
-
-列定义（每省一行）：
-
-- `province`
-- `C_th_MWh_per_K_central`, `deltaT_K_central`, `standing_loss_per_hour_central`
-- `C_th_MWh_per_K_decentral`, `deltaT_K_decentral`, `standing_loss_per_hour_decentral`
-
-其中可用热容能量按下面计算：
-\[
-e\_{nom} = C\_{th}\,[\mathrm{MWh/K}] \times \Delta T\,[\mathrm{K}]
-\]
-
-当某一侧的 \(e_{nom}\) 全部为 0 时，该侧的建筑热容 `Store` 不会被添加（保持与原模型一致）。
-
-### 在 `config.yaml` 打开开关
-
-```yaml
-building_inertia:
-  enabled: true
-  params_csv: "data/heating/building_inertia_template.csv"
-  carrier: "building thermal mass"
-```
-
-## 3）电价（exogenous）在 6h 分辨率下怎么处理？
-
-当 `config.yaml: freq` 不是 `1h`（例如 `6h`，全年 1460 个 snapshot），但你的外部电价 CSV 仍是逐小时 `hour=1..8760` 时，电价读取逻辑会自动把小时电价按 slot 聚合到目标快照长度（默认取均值），避免对齐报错。
-
-## 3.1）电价（endogenous / marginal）如何计算？（推荐口径）
-
-本仓库当前推荐的“电价”口径为 **PyPSA 求解后的边际电价**（locational marginal price, LMP），即每个省级电力母线（AC bus）的能量平衡约束对偶变量：
-
-- **来源字段**：`n.buses_t.marginal_price[<province>]`
-- **计算脚本**：`scripts/reconstruct_market_prices.py` 中的 `marginal_retail_prices`
-- **导出脚本**：`scripts/export_reconstructed_prices.py`（仅支持 `--price-mode marginal`）
-
-### 输出单位（统一人民币）
-
-模型内部价格量纲为 **EUR/MWh**。导出 CSV 时默认会按汇率转换为 **CNY/MWh**：
-
-- `--currency CNY`（默认）
-- `--fx-cny-per-eur 7.8`（默认，可改）
-
-导出示例（山东 2025 全年）：
+如果只想先检查规则和输入输出：
 
 ```bash
-conda run -n pypsa python scripts/export_reconstructed_prices.py \
-  --network "results/version-0425.1H.1/postnetworks/positive/postnetwork-ll-current+FCG-linear2050-2025.nc" \
-  --out "results/version-0425.1H.1/_marginal_prices_2025_Shandong.csv" \
-  --price-mode marginal \
-  --currency CNY \
-  --fx-cny-per-eur 7.8 \
-  --province Shandong
+snakemake -np
 ```
 
-## 3.2）两阶段：规划后固定装机，再跑 8760 dispatch（分段报价）
+大型情景建议使用 SLURM：
 
-为了让运行阶段的电价更贴近现货出清（尤其是煤电/气电分段报价），我们支持一个二阶段流程：
+```bash
+python scripts/generate_slurm_jobs_advanced.py
+./submit_multiple_jobs.sh
+```
 
-1) **规划/全模型求解**得到 `postnetwork-*.nc`（含装机 `p_nom_opt`）  
-2) **运行/dispatch-only**：固定装机=`p_nom_opt`，仅重算全年 8760 调度与 **marginal 价格**
+## 关键配置
 
-对应 Snakemake 规则：
+所有主要开关在 `config.yaml` 中。
 
-- `run_dispatch_segmented`：输出 `results/version-*/dispatch_segmented/.../postnetwork-dispatch-seg-*.nc`
-- `export_dispatch_segmented_prices`：输出 `results/version-*/prices/dispatch_segmented/.../dispatch_segmented_prices-*.csv`（CNY/MWh）
+基础设置：
 
-启用开关（`config.yaml`）：
+```yaml
+foresight: "myopic"
+baseyear: 2025
+freq: "1h"
+scenario:
+  planning_horizons: [2025, 2030, 2035, 2040, 2045, 2050, 2055, 2060]
+```
+
+电解铝模块：
+
+```yaml
+add_aluminum: true
+iterative_optimization: true
+aluminum_commitment: false
+aluminum_max_iterations: 10
+aluminum_convergence_tolerance: 0.01
+aluminum_capacity_ratio: 1.0
+```
+
+二阶段电价仿真：
 
 ```yaml
 dispatch_segmented_prices:
@@ -124,283 +69,110 @@ dispatch_segmented_prices:
   export_prices: true
 ```
 
-### 分段报价如何实现（核心思想）
-
-将同一类机组（如 `coal cc`、`OCGT gas`）拆成多个并联容量块（每块一个 `marginal_cost`），用 **线性规划（LP）** 表达凸分段报价，无需 MILP。
-
-分段参数位于 `config.yaml: dispatch_segmented_prices.carriers.*`：
-
-- `shares`：各段容量占比（和为 1）
-- `marginal_cost`：各段边际报价（CNY/MWh 口径由你在配置中标定；代码内部仍按 EUR/MWh 建模，导出再换算）
-
-### 运行阶段 CO2 约束（`co2_limit`）
-
-dispatch-only 阶段会保留网络中的 `GlobalConstraint`（例如 `co2_limit`），即运行阶段仍会受到碳排总量约束。
-
-### 同步机组最小出力约束
-
-规划求解（`scripts/solve_network_myopic.py`）和固定装机后的 dispatch 求解（`scripts/run_dispatch_segmented_prices.py`）均可加入省级同步机组最小出力约束。当前配置口径为：每个省、每个 snapshot，煤电/核电/气电/生物质等同步电源的电侧出力不低于当地 AC 电力负荷的一定比例，默认 `10 %`。
+同步机组最小出力约束：
 
 ```yaml
 synchronous_generation_floor:
   enabled: true
   ratio: 0.10
-  Generator:
-    - coal power plant
-    - coal cc
-    - nuclear
-  Link:
-    OCGT gas:
-      only_bus1_carrier: "AC"
-    CHP gas:
-      only_bus1_carrier: "AC"
-    CHP coal:
-      only_bus1_carrier: "AC"
-    biomass:
-      only_bus1_carrier: "AC"
 ```
 
-其中 `Generator` 直接按 `generators_t.p` 计入省级同步出力；`Link` 按电侧输出计入，即 `links_t.p0 * efficiency`，并映射到 `bus1` 所在省级 AC bus。该约束是硬约束，因此如果某些省份缺少足够同步机组或负荷/装机数据不匹配，规划或 dispatch 可能 infeasible。
+风电、光伏、核电、储能扩张约束分别由以下配置块控制：
 
-### mapped sidecar 价格的 floor 与跨省传导顺序
+- `wind_capacity_guard`
+- `solar_capacity_guard`
+- `nuclear_capacity_guard`
+- `storage_capacity_guard`
 
-`export_dispatch_segmented_prices` 的主输出 CSV 仍是求解后的 marginal/LMP 价格；同时 `scripts/export_reconstructed_prices.py` 会额外导出 `*_mapped.csv`，用于光伏 value factor 等后处理。当前 mapped sidecar 的计算顺序是：
+## 主流程
 
-1. **先算本省本地 mapped 价格**：基于本省同步/火电出力、燃料价和 mapped supply curve。
-2. **先在本省施加 floor 价格规则**：
-   - 当本省同步/火电出力 `<= 10 % × 本省 AC 负荷`（含 1 MW 数值容差）时，mapped 价格直接替换为本省 marginal 价格；
-   - 当本省同步/火电出力 `<= 1.5 × floor`，即默认 `15 % × 本省 AC 负荷` 时，如果 mapped 价格高于 `1.0 ×` 参考燃料价，则压到 `1.0 ×` 参考燃料价；
-   - 冬季若启用 CHP 排除口径，参考燃料价也使用相同的冬季/非冬季口径。
-3. **再考虑跨省外送价格传导**：只考虑 `bus0` 和 `bus1` 都是省级 AC bus 的省间 link。若 A 省向 B 省外送且线路未拥塞，则 A 省价格可参考 B 省 marginal 价格并按线路效率折算后上调；B 省作为受端，保持自己的本地/floor 修正后价格，不因进口电而被反向调低或调高。
-4. **最后施加本省 marginal 底价**：mapped sidecar 的最终价格不低于同一省、同一 snapshot 的求解 marginal 价格。
+Snakemake 工作流的核心顺序为：
 
-本地 mapped 价格中的归一化 thermal load ratio 使用双周窗口，但分母不是简单的“双周最大火电出力”。当前口径为：
-
-\[
-\mathrm{denominator} =
-\max(\mathrm{双周最大火电出力},\ \mathrm{双周最小火电出力} / \mathrm{lr\_threshold\_first})
-\]
-
-\[
-\mathrm{normalized\_LR} = \mathrm{当前火电出力} / \mathrm{denominator}
-\]
-
-默认 `lr_threshold_first = 0.4`。这样对于接近 must-run、出力很平的省份，归一化 LR 会落在约 `0.4` 附近，而不会因为“接近双周最大值”被误映射到高价段。
-
-相关配置位于：
-
-```yaml
-dispatch_segmented_prices:
-  price_export:
-    week_freq: "2W-SUN"
-    thermal_load_floor:
-      enabled: true
-      ratio: 0.10
-    mapped_supply_curve:
-      lr_threshold_first: 0.4
-      mult_at_bandwidth_start: 1.0
-      lr_knots: [0.7, 0.85, 0.95, 1.0]
-      mult_at_knots: [1.2, 1.5, 4.0, 4.0]
+```text
+prepare_base_networks_2020
+  -> prepare_base_networks
+  -> add_existing_baseyear
+  -> add_brownfield
+  -> solve_network_myopic
+  -> run_dispatch_segmented
+  -> export_dispatch_segmented_prices
 ```
 
-## 3.3）主要数据来源（电价相关）
+其中 `solve_network_myopic` 负责扩建与运行优化；`run_dispatch_segmented` 在固定装机后重算全年调度，并输出用于电价分析的结果。
 
-电价本身来自 **PyPSA 求解的对偶（LMP）**，不是外部直接输入。影响电价水平的关键外生数据主要来自成本表：
+## 电价输出
 
-- **成本表**：`data/costs/costs_<year>.csv`（例如 `data/costs/costs_2025.csv`）
-  - 每行包含 `source` 与 `further description`，用于追溯公开数据来源与换算假设
-  - 典型外生量：煤/气燃料价格 proxy、机组效率、VOM、排放因子等
+主输出来自 PyPSA 求解后的省级 AC bus 边际电价：
 
-此外，如果你在二阶段分段报价里显式把“燃料+碳+VOM”打包进 `marginal_cost`（例如 `zero_gas_fuel_marginal_cost: true` 时），则这些分段数值属于**市场标定参数**，应在 README/配置中保留对应的来源口径与年份。
+- 字段：`n.buses_t.marginal_price`
+- 导出脚本：`scripts/export_reconstructed_prices.py`
+- 默认单位：`CNY/MWh`
+- 默认汇率：`fx_cny_per_eur: 7.8`
 
-## 3.4）省级可再生装机潜力假设（用于 `p_nom_max`）
+二阶段 dispatch 输出路径通常为：
 
-为统一省级可再生潜力口径，模型现使用 `data/p_nom/renewable_potential_assumptions_2019.csv` 作为潜力上限假设来源（单位：**万千瓦**）。
+```text
+results/version-<version>/prices/dispatch_segmented/<heating_demand>/
+```
 
-- 在 `scripts/prepare_base_network.py` 中，`onwind/offwind/solar` 会读取该表并覆盖 `p_nom_max`（换算关系：`1 万千瓦 = 10 MW`）。
-- 其中“水电”列当前主要用于文档记录与后续扩展，现有流程未直接将该列作为可扩建水电上限约束。
+`*_mapped.csv` 是额外的 mapped-price sidecar，主要用于光伏 value factor 等后处理。它不是原始 LMP，而是结合本地同步/火电出力、燃料价、低出力 floor 规则和省间外送修正后的分析口径。
 
-表：各省可再生发电装机潜力假设（万千瓦）
+## 数据目录
 
-| 地区 | 水 | 陆风 | 海风 | 光伏 |
-| :-- | --: | --: | --: | --: |
-| 全国 | 69440 | 489204 | 298200 | 1580318 |
-| 北京 | 0 | 39 | 0 | 1040 |
-| 天津 | 0 | 26 | 213 | 557 |
-| 河北 | 227 | 23991 | 841 | 6366 |
-| 山西 | 563 | 16630 | 0 | 46776 |
-| 内蒙古 | 581 | 161016 | 0 | 946787 |
-| 辽宁 | 203 | 5099 | 3248 | 4176 |
-| 吉林 | 344 | 10669 | 0 | 5924 |
-| 黑龙江 | 758 | 18771 | 0 | 9374 |
-| 上海 | 0 | 246 | 406 | 466 |
-| 江苏 | 174 | 5241 | 2243 | 6858 |
-| 浙江 | 614 | 1450 | 3899 | 4621 |
-| 安徽 | 312 | 7020 | 0 | 6236 |
-| 福建 | 1074 | 3803 | 2501 | 2849 |
-| 江西 | 486 | 3661 | 0 | 6601 |
-| 山东 | 117 | 18430 | 3603 | 7642 |
-| 河南 | 471 | 9116 | 0 | 8636 |
-| 湖北 | 1721 | 3798 | 0 | 7704 |
-| 湖南 | 1327 | 3558 | 0 | 8803 |
-| 广东 | 607 | 9252 | 3863 | 4790 |
-| 广西 | 1764 | 12928 | 112 | 8465 |
-| 海南 | 84 | 5656 | 800 | 5818 |
-| 重庆 | 2296 | 1402 | 0 | 3427 |
-| 四川 | 14352 | 14325 | 0 | 10855 |
-| 贵州 | 1809 | 6247 | 0 | 6195 |
-| 云南 | 10439 | 14168 | 0 | 12465 |
-| 西藏 | 20136 | 47609 | 0 | 31773 |
-| 陕西 | 1277 | 10340 | 0 | 9446 |
-| 甘肃 | 1489 | 17626 | 0 | 13274 |
-| 青海 | 2187 | 14227 | 0 | 300834 |
-| 宁夏 | 210 | 3900 | 0 | 45639 |
-| 新疆 | 3818 | 38960 | 0 | 45921 |
+常用输入数据包括：
 
-数据来源：
+- `data/costs/costs_<year>.csv`：技术成本与燃料成本；
+- `data/existing_infrastructure/*_capacity.csv`：已有装机；
+- `data/load/load_<year>_weatheryears_1979_2016_TWh.h5`：省级电力负荷；
+- `data/heating/heat_demand_profile_<scenario>_<year>.h5`：供热负荷；
+- `data/p_nom/al_smelter_p_max.csv`：电解铝最大功率；
+- `data/aluminum_demand/aluminum_demand_all_scenarios.json`：电解铝需求情景；
+- `resources/profile_onwind.nc`、`resources/profile_offwind.nc`、`resources/profile_solar.nc`：可再生出力 profile。
 
-- 《可再生能源数据手册 2019》
-- 《建筑领域双碳实施路径研究》[29]
-- 山西省光伏数据：[30]
-- 内蒙古光伏数据：[31]
-- 宁夏光伏数据：[32]（[人民网能源频道](https://paper.people.com.cn/zgnyb/html/2023-03/20/content_25972378.htm)）
-- 青海光伏数据：[33]（[青海省人民政府网站](http://www.qinghai.gov.cn/dmqh/system/2021/04/22/010381219.shtml)）
+更完整的数据说明见 `data/README.md`。
 
-## 3.5）核电 2030–2060 装机上限（中情景）如何设置
+## 后处理脚本
 
-为控制核电扩张速度并与中长期规划口径对齐，模型新增了核电容量上限约束（`nuclear_capacity_guard`）：
+常用脚本：
 
-- 约束代码：`scripts/nuclear_capacity_guard.py`
-- 求解接入位置：`scripts/solve_network_myopic.py`
-- 全国目标文件：`data/p_nom/national_nuclear_capacity_mid_scenario.csv`
-- 配置开关：`config.yaml` 中 `nuclear_capacity_guard`
+- `scripts/plot_value_scenario_comparison.py`：情景价值/成本对比；
+- `scripts/plot_capacity_MMM_2050.py`：2050 年 MMM 情景容量与成本图；
+- `scripts/plot_optimal_point.py`：不同年份、市场和灵活性下的最优点；
+- `scripts/plot_shandong_price_vs_thermal.py`：山东电价与火电出力诊断图；
+- `scripts/plot_solar_value_factor_yearly.py`：光伏 value factor 年度图；
+- `scripts/fill_solar_value_dataset_2025.py`：补全 2025 光伏 value dataset。
 
-当前默认采用**中情景**全国总装机上限（GW）：
+## 文档
 
-| 年份 | 全国核电装机上限（GW） | 备注 |
-| :-- | --: | :-- |
-| 2030 | 120 | 用户给定中情景锚点 |
-| 2035 | 160 | 用户给定中情景锚点 |
-| 2040 | 225 | 用户给定中情景锚点 |
-| 2045 | 280 | 2040–2050 线性插值 |
-| 2050 | 335 | 用户给定中情景锚点 |
-| 2055 | 390 | 2050 后延伸假设 |
-| 2060 | 450 | 2050 后延伸假设 |
+- `docs/aluminum_integration_guide.md`：电解铝模块说明；
+- `docs/README_aluminum_iterative.md`：迭代优化说明；
+- `docs/scenario_dimensions_guide.md`：情景维度说明；
+- `docs/price_module_market_clearing_report.md`：电价模块与市场出清报告；
+- `docs/README_solar_value_dataset_2025.md`：光伏 value dataset 说明；
+- `docs/slurm_jobs_guide.md`：SLURM 任务说明。
 
-对应 5 年段年均装机速度上限（GW/年）：
+## 合并到 main 前建议
 
-- 2030→2035：8
-- 2035→2040：13
-- 2040→2045：11
-- 2045→2050：11
-- 2050→2055：11
-- 2055→2060：12
+建议保留：
 
-省级分配规则（当前实现）：
+- 主工作流、配置、数据命名规范化改动；
+- `run_dispatch_segmented_prices.py`、`export_reconstructed_prices.py` 和相关 price 配置；
+- 风/光/核/储容量 guard；
+- 与论文复现直接相关的绘图和汇总脚本。
 
-1. 先读取历史核电装机文件 `data/existing_infrastructure/nuclear_capacity.csv`。  
-2. 用 `2020+2025` 累计值计算各省分配权重。  
-3. 将全国上限按该权重分配到省级核电节点（bus）。  
-4. 对核电采用**单边上限**：允许低于目标，不允许超过目标（`allow_underbuild_only: true`）。
+建议归档或移出主线：
 
-说明：
+- 一次性诊断脚本，如 `scripts/_diag_oct30_thermal.py`、`scripts/_diag_shandong_daily.py`；
+- 只服务某次服务器运行的 job 模板；
+- 一次性数据生成脚本，除非 README 或论文复现流程明确需要它们；
+- 本地系统专用脚本，如 `run_local.ps1`。
 
-- 当前权重只来自已有核电省份（广东、福建、浙江、江苏、辽宁、山东、广西、海南），因此其它省份默认上限为 0。
-- 若需采用“2035 = 2030 与 2040 平均”的口径，可把 2035 从 160 改为 172.5（直接修改 `data/p_nom/national_nuclear_capacity_mid_scenario.csv`）。
+## 环境提示
 
-你给出的低/中/高情景及证据分级（CNEA 蓝皮书、国家能源局、国网能研院、清华等）可作为该表后续扩展到多情景文件的依据；当前仓库先落地了中情景一套可运行配置。
+仓库脚本与 PyPSA 版本配套。若使用过新的 PyPSA 版本，可能遇到：
 
-## 3.6）新型储能扩建上限（`storage_capacity_guard`）
+```text
+ImportError: cannot import name 'Dict' from pypsa.descriptors
+```
 
-为控制 myopic 优化中电化学储能过度扩建，模型对**每个规划年、每个省的新建电池**施加上限：
-
-\[
-\Delta P^{\mathrm{new}}_{p,Y} \le P^{\mathrm{stock}}_{p,2025} \times \mu
-\]
-
-- \(P^{\mathrm{stock}}_{p,2025}\)：`data/existing_infrastructure/battery_capacity.csv` 的 `2025` 列（MW，NEA 2025 年底分省新型储能功率）；
-- 默认 \(\mu=1\)，即**每步新建不超过该省 2025 已有储能装机**；
-- 2025 规划年由 `baseyear_capacity_lock` 锁定不扩建；guard 默认从 **2030** 起生效；
-- 单边约束：允许少建、不允许超建。
-
-实现与配置：
-
-- 约束代码：`scripts/storage_capacity_guard.py`
-- 求解接入：`scripts/solve_network_myopic.py`
-- 配置开关：`config.yaml` → `storage_capacity_guard`
-- 分省上限表：`python scripts/export_storage_capacity_guard_upper_limits.py` → `data/p_nom/storage_capacity_guard_upper_limits.csv`
-
-全国累计轨迹（NEA /《储能产业研究白皮书2026》）见 `data/p_nom/national_battery_capacity_from_planning.csv`，**仅作日志参考，不直接绑定分省上限**。详细说明与示例见本文件当前章节。
-
-## 3.7）陆风/海风 national guard（`wind_capacity_guard`）
-
-为避免 `onwind/offwind` 在 2030+ 年份出现超出规划路径的扩建，模型新增风电 national guard：
-
-- 约束代码：`scripts/wind_capacity_guard.py`
-- 求解接入：`scripts/solve_network_myopic.py`
-- 配置开关：`config.yaml` → `wind_capacity_guard`
-- 全国目标：`data/p_nom/national_wind_capacity_from_planning.csv`
-- 当前配置（`config.yaml`）：
-  - `apply_start_year: 2025`
-  - `apply_end_year: 2060`
-  - `allow_underbuild_only: false`
-  - `target_lower_multiplier: 0.8`
-  - `target_upper_multiplier: 1.3`
-
-约束逻辑：
-
-- 按年份读取全国 `onwind/offwind` 目标（MW）；
-- 分别按历史累计装机占比做省级分配：
-  - `onwind` 使用 `data/existing_infrastructure/onwind_capacity.csv`
-  - `offwind` 使用 `data/existing_infrastructure/offwind_capacity.csv`
-- 对各省 `p_nom_max` 施加目标带状约束：**下限=目标×0.8，上限=目标×1.3**。
-
-当前 national target 数据口径：
-
-- 2025：采用国家能源局“2025年可再生能源并网运行情况”（风电累计并网 6.4 亿千瓦，其中陆上 5.9 亿、海上 0.47 亿）；
-- 2030/2035/2060：采用《风能北京宣言2.0》口径（总风电 13/20/50 亿千瓦）；
-- 陆上/海上拆分：2030 使用“海上年新增不低于 1500 万千瓦（2026–2030）”约束得到海上 1.22 亿千瓦，其余年份按文档内假设插值。
-
-## 3.8）光伏 external target guard（`solar_capacity_guard`）
-
-光伏 guard 现改为外部目标带状约束（与风电一致）：
-
-- 全国目标文件：`data/p_nom/national_solar_capacity_from_external_targets.csv`
-- 约束带：下限 `0.8 × target`，上限 `1.3 × target`
-- 关键配置：`config.yaml` → `solar_capacity_guard`
-  - `apply_start_year: 2025`
-  - `apply_end_year: 2060`
-  - `allow_underbuild_only: false`
-  - `target_lower_multiplier: 0.8`
-  - `target_upper_multiplier: 1.3`
-
-目标口径说明（基于中国光伏行业协会 2026 年预测）：
-
-- 2025：国家能源局口径（光伏累计约 12 亿千瓦）；
-- 2026：协会给出新增 180–240GW 区间，当前“基准/一般情景”采用新增 180GW（累计 13.8 亿千瓦）；
-- “十五五”（2026–2030）：协会给出年均新增 238–287GW 区间，当前“基准/一般情景”采用年均新增 238GW（2030 累计 23.9 亿千瓦）；
-- 2030 以后：按“每年新增 238GW”延续到后续求解年份（2035/2040/.../2060），后续可切换到乐观情景（287GW/年）或官方新规划口径。
-
-与光伏潜力约束（`p_nom_max`）关系：
-
-- `solar_capacity_guard` 在求解前会重写各省光伏的 `p_nom_min/p_nom_max`，但上限仍受原始资源潜力约束限制；
-- 实现上对每个省先读取潜力上限（`scripts/prepare_base_network.py` 中 `solar_p_nom_max`），再将 guard 上限与潜力上限取不超过潜力的值，因此不会突破潜力天花板。
-
-## 4）输出在哪里？
-
-以 `version-<version>` 为例：
-
-- heat-only 求解网络：`results/version-<version>/heatonly_postnetworks/.../heatonly_postnetwork-*.nc`
-- 典型日出图：`results/version-<version>/heatonly_plots/.../typical_days/.../*.png`
-- 汇总输出（同一目录三份 CSV）：
-  - `results/version-<version>/heatonly_summary/.../summary/.../heat-shares.csv`
-  - `results/version-<version>/heatonly_summary/.../summary/.../capacities.csv`
-  - `results/version-<version>/heatonly_summary/.../summary/.../co2.csv`
-
-## 5）环境提示（重要）
-
-仓库里的 Snakemake 脚本与依赖版本是配套的。如果你使用过新的 PyPSA 版本，可能会遇到类似：
-
-- `ImportError: cannot import name 'Dict' from pypsa.descriptors`
-
-建议优先使用仓库提供的环境文件（见 `envs/` 目录）来创建/激活环境后再运行。
+优先使用 `envs/environment.yaml` 创建环境；论文复现建议使用 Gurobi。

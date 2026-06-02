@@ -466,6 +466,8 @@ def run(
         solve_opts,
         using_single_node=using_single_node,
         single_node_province=single_node_province,
+        config=config,
+        planning_horizon=planning_year,
     )
     # If we truncate snapshots for a smoke-test (nhours), keep global annual constraints
     # (e.g. `co2_limit`) but scale them to the truncated horizon to avoid artificial

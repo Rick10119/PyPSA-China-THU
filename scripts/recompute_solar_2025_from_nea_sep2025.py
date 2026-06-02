@@ -5,7 +5,7 @@
  bulletin: https://www.nea.gov.cn/20251112/35126d06a151461882b61d0a2e5706a6/c.html
  Uses 截至2025年9月底累计并网容量 (合计, 万千瓦) per province.
 
- PyPSA / readme_cn convention: Δ_2025 = max(C_nea_sep2025_mw − sum(2010..2020)_mw, 0).
+ PyPSA / README_zh convention: Δ_2025 = max(C_nea_sep2025_mw − sum(2010..2020)_mw, 0).
 
  Run: conda run -n pypsa python3 scripts/recompute_solar_2025_from_nea_sep2025.py
 """
