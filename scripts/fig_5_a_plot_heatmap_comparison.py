@@ -29,6 +29,9 @@ from pathlib import Path
 # Publication: sans-serif (Helvetica / Arial), 6 pt, figure 150×70 mm, PDF output
 TEXT_PT = 6
 DATE_TICK_PT = 5  # x-axis date labels on heatmaps
+# Tick marks (journal eproof): visible at print size — length/width in points
+TICK_MAJOR_LEN = 3.5
+TICK_MAJOR_W = 0.85
 FIG_WIDTH_MM = 150
 FIG_HEIGHT_MM = 90
 
@@ -79,19 +82,47 @@ def _reduce_heatmap_day_ticks(ax, columns, *, step: int = 15):
         fontsize=DATE_TICK_PT,
     )
     # Move labels up by ~one digit height (negative pad pulls tick text toward the axes)
-    ax.tick_params(axis="x", which="major", pad=-0.00)
+    _apply_publication_ticks(ax, axis="x", labelsize=DATE_TICK_PT, pad=-0.00)
+
+
+def _apply_publication_ticks(ax, *, axis="both", labelsize=None, pad=None, labelcolor="black"):
+    """Draw outward major tick marks visible in print/PDF."""
+    if labelsize is None:
+        labelsize = TEXT_PT
+    kw = dict(
+        which="major",
+        direction="out",
+        length=TICK_MAJOR_LEN,
+        width=TICK_MAJOR_W,
+        color="black",
+        labelsize=labelsize,
+        labelcolor=labelcolor,
+    )
+    if pad is not None:
+        kw["pad"] = pad
+    ax.tick_params(axis=axis, **kw)
 
 
 def _style_heatmap_colorbar(ax):
-    """Apply TEXT_PT to colorbar ticks and label (no position — layout would overwrite)."""
+    """Colorbar tick marks, labels, and outline for journal figures."""
     try:
         if not ax.collections:
             return
         cb = ax.collections[0].colorbar
         if cb is None:
             return
-        cb.ax.tick_params(axis="y", labelsize=TEXT_PT)
-        lab = cb.ax.yaxis.label.get_text() or "pu"
+        cb.ax.tick_params(
+            axis="y",
+            which="major",
+            direction="out",
+            length=TICK_MAJOR_LEN,
+            width=TICK_MAJOR_W,
+            color="black",
+            labelsize=TEXT_PT,
+            labelcolor="black",
+        )
+        cb.outline.set_linewidth(TICK_MAJOR_W)
+        lab = cb.ax.yaxis.label.get_text() or "p.u."
         cb.set_label(lab, fontsize=TEXT_PT)
     except (AttributeError, IndexError):
         return
@@ -146,6 +177,12 @@ def set_plot_style():
             "legend.fontsize": TEXT_PT,
             "axes.unicode_minus": False,
             "pdf.fonttype": 42,
+            "xtick.direction": "out",
+            "ytick.direction": "out",
+            "xtick.major.size": TICK_MAJOR_LEN,
+            "ytick.major.size": TICK_MAJOR_LEN,
+            "xtick.major.width": TICK_MAJOR_W,
+            "ytick.major.width": TICK_MAJOR_W,
         }
     )
 
@@ -344,7 +381,8 @@ def plot_comparison_heatmap(n_mmm, n_nmm, config, output_dir, tech, province_fil
         1,
         figsize=(_mm_to_inches(FIG_WIDTH_MM), _mm_to_inches(FIG_HEIGHT_MM)),
     )
-    
+    ax1_twin = ax2_twin = None
+
     # MMMU scenario
     if tech == "aluminum":
         df_mmm, base_mmm = create_aluminum_df(n_mmm, province_filter)
@@ -370,7 +408,7 @@ def plot_comparison_heatmap(n_mmm, n_nmm, config, output_dir, tech, province_fil
                 df_mmm,
                 ax=ax1,
                 cmap="coolwarm",
-                cbar_kws={"label": "pu", "shrink": 1},
+                cbar_kws={"label": "p.u.", "shrink": 1},
                 vmin=0.0,
                 vmax=1.0,
             )
@@ -379,7 +417,7 @@ def plot_comparison_heatmap(n_mmm, n_nmm, config, output_dir, tech, province_fil
                 df_mmm,
                 ax=ax1,
                 cmap="coolwarm",
-                cbar_kws={"label": "pu", "shrink": 0.8},
+                cbar_kws={"label": "p.u.", "shrink": 0.8},
                 vmin=-1.0,
                 vmax=1.0,
             )
@@ -411,7 +449,7 @@ def plot_comparison_heatmap(n_mmm, n_nmm, config, output_dir, tech, province_fil
                 # Then draw black line inside
                 ax1_twin.plot(storage_positions, storage_values, "k-", linewidth=0.7, zorder=2)
                 ax1_twin.set_ylabel("Stored aluminum (Mt)", color="black", fontsize=TEXT_PT)
-                ax1_twin.tick_params(axis="y", labelcolor="black", labelsize=TEXT_PT)
+                _apply_publication_ticks(ax1_twin, axis="y", labelcolor="black")
                 ax1_twin.set_xlim(0, len(day_columns))
     
     # Plot NMMU heatmap
@@ -423,7 +461,7 @@ def plot_comparison_heatmap(n_mmm, n_nmm, config, output_dir, tech, province_fil
                 df_nmm,
                 ax=ax2,
                 cmap="coolwarm",
-                cbar_kws={"label": "pu", "shrink": 0.8},
+                cbar_kws={"label": "p.u.", "shrink": 0.8},
                 vmin=0.0,
                 vmax=1.0,
             )
@@ -432,7 +470,7 @@ def plot_comparison_heatmap(n_mmm, n_nmm, config, output_dir, tech, province_fil
                 df_nmm,
                 ax=ax2,
                 cmap="coolwarm",
-                cbar_kws={"label": "pu", "shrink": 0.8},
+                cbar_kws={"label": "p.u.", "shrink": 0.8},
                 vmin=-1.0,
                 vmax=1.0,
             )
@@ -470,7 +508,7 @@ def plot_comparison_heatmap(n_mmm, n_nmm, config, output_dir, tech, province_fil
                     zorder=2,
                 )
                 ax2_twin.set_ylabel("Stored aluminum (Mt)", color="black", fontsize=TEXT_PT)
-                ax2_twin.tick_params(axis="y", labelcolor="black", labelsize=TEXT_PT)
+                _apply_publication_ticks(ax2_twin, axis="y", labelcolor="black")
                 ax2_twin.legend(
                     loc="lower right",
                     bbox_to_anchor=(1.02, -0.39),
@@ -479,9 +517,6 @@ def plot_comparison_heatmap(n_mmm, n_nmm, config, output_dir, tech, province_fil
                 )
                 ax2_twin.set_xlim(0, len(day_columns))
     
-    for _ax in (ax1, ax2):
-        _ax.tick_params(axis="both", which="major", labelsize=TEXT_PT)
-
     plt.tight_layout()
     # Room for colorbars on the right; do not use right>1 (breaks PDF width)
     plt.subplots_adjust(right=0.86, hspace=0.35)
@@ -489,9 +524,28 @@ def plot_comparison_heatmap(n_mmm, n_nmm, config, output_dir, tech, province_fil
     for _ax in (ax1, ax2):
         _shift_heatmap_colorbar_right(_ax)
 
+    # Re-apply ticks after layout so marks are not clipped or reset
+    for _ax in (ax1, ax2):
+        for spine in _ax.spines.values():
+            spine.set_linewidth(TICK_MAJOR_W)
+            spine.set_color("black")
+        _apply_publication_ticks(_ax)
+        _style_heatmap_colorbar(_ax)
+    for _twin in (ax1_twin, ax2_twin):
+        if _twin is not None:
+            _twin.spines["right"].set_linewidth(TICK_MAJOR_W)
+            _twin.spines["right"].set_color("black")
+            _apply_publication_ticks(_twin, axis="y", labelcolor="black")
+
     # Save figure
     output_path = os.path.join(province_dir, "smelter_flexibility_comparison.pdf")
-    fig.savefig(output_path, format="pdf", bbox_inches="tight", facecolor="white")
+    fig.savefig(
+        output_path,
+        format="pdf",
+        bbox_inches="tight",
+        pad_inches=0.08,
+        facecolor="white",
+    )
     print(f"Saved {tech} comparison heatmap to: {output_path}")
     plt.close()
 
