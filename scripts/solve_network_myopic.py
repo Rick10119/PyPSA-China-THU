@@ -62,7 +62,9 @@ def prepare_network(
         n,
         solve_opts=None,
         using_single_node=False,
-        single_node_province="Shandong"
+        single_node_province="Shandong",
+        config=None,
+        planning_horizon=None,
 ):
     # Check if single node mode is enabled
     if using_single_node:
@@ -153,7 +155,7 @@ def prepare_network(
         n.set_snapshots(n.snapshots[:nhours])
         n.snapshot_weightings[:] = 8760. / nhours
 
-    cfg_for_guard = getattr(n, "config", None)
+    cfg_for_guard = config if isinstance(config, dict) else getattr(n, "config", None)
     if cfg_for_guard is None:
         cfg_for_guard = snakemake.config if "snakemake" in globals() else {}
     scenario_context = None
@@ -168,7 +170,10 @@ def prepare_network(
     apply_wind_capacity_guard(n, cfg_for_guard)
     apply_nuclear_capacity_guard(n, cfg_for_guard)
     apply_storage_capacity_guard(n, cfg_for_guard, scenario_context=scenario_context)
-    planning_horizon = getattr(getattr(globals().get("snakemake", None), "wildcards", None), "planning_horizons", None)
+    if planning_horizon is None:
+        planning_horizon = getattr(getattr(globals().get("snakemake", None), "wildcards", None), "planning_horizons", None)
+    if planning_horizon is None and len(n.snapshots):
+        planning_horizon = int(pd.DatetimeIndex(n.snapshots)[0].year)
     apply_baseyear_capacity_locks(n, planning_horizon, config=cfg_for_guard)
 
     return n
@@ -770,7 +775,8 @@ def solve_aluminum_optimization_parallel_wrapper(args):
         n_province,
         solve_opts,
         using_single_node=using_single_node,
-        single_node_province=single_node_province
+        single_node_province=single_node_province,
+        config=config,
     )
     
     # Set configuration
@@ -1006,7 +1012,8 @@ def solve_network_iterative(n, config, solving, opts="", max_iterations=10, conv
                 n_current,
                 kwargs.get("solve_opts", {}),
                 using_single_node=using_single_node,
-                single_node_province=single_node_province
+                single_node_province=single_node_province,
+                config=config,
             )
             
             # Set configuration
@@ -1545,7 +1552,9 @@ if __name__ == '__main__':
         n,
         solve_opts,
         using_single_node=snakemake.params.using_single_node,
-        single_node_province=snakemake.params.single_node_province
+        single_node_province=snakemake.params.single_node_province,
+        config=snakemake.config,
+        planning_horizon=snakemake.wildcards.planning_horizons,
     )
 
     # Check whether electrolytic aluminum iterative optimization is enabled

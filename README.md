@@ -269,7 +269,7 @@ PyPSA-China/
 │   ├── costs/                 # technology cost projections
 │   ├── grids/                 # grid topology
 │   ├── load/                  # provincial load profiles
-│   └── resources/             # renewable resource data
+├── resources/                 # renewable generation profiles
 ├── scripts/
 │   ├── prepare_base_network*.py
 │   ├── add_existing_baseyear.py
@@ -294,8 +294,10 @@ Detailed documentation is provided in the `docs/` folder:
 | [Iterative Optimization Notes](docs/README_aluminum_iterative.md) | Refactoring notes for the aluminum iterative algorithm: convergence criterion, network reload strategy, `p_set` fixing, virtual-generator marginal costs, and the potline-based representative-line method. |
 | [Flexible Aluminum Smelting Intro](docs/flexible_aluminum_smelting_intro.md) | Technical feasibility report on flexible aluminum smelting — EnPot/TRIMET evidence, historical curtailment events, the economic logic of seasonal batch operation, and potline-level modeling parameters for China. |
 | [Scenario Dimensions Guide](docs/scenario_dimensions_guide.md) | How to configure and use the three scenario dimensions (smelter flexibility, primary demand, grid-interaction market opportunity) and generate all 27 combinations. |
-| [Scenario Visualization Guide](docs/scenario_visualization_guide.md) | Instructions for `plot_scenario_comparison.py` — 9-panel comparison charts, summary tables, cost categorization, and CLI usage. |
+| [Scenario Visualization Guide](docs/scenario_visualization_guide.md) | Instructions for the maintained scenario post-processing scripts: value comparison, capacity/cost panels, and optimal-point plots. |
 | [SLURM Jobs Guide](docs/slurm_jobs_guide.md) | Generating, submitting, monitoring, and troubleshooting SLURM batch jobs on HPC clusters. |
+| [Price Module Report](docs/price_module_market_clearing_report.md) | Notes on the two-stage dispatch price workflow, mapped-price sidecar, and solar value-factor dataset. |
+| [Solar Value Dataset Notes](docs/README_solar_value_dataset_2025.md) | How to fill and plot the 2025 solar value-factor dataset from dispatch price outputs. |
 
 ## Iterative Aluminum Optimization Algorithm
 
@@ -310,17 +312,22 @@ This approach keeps the main problem as a tractable LP while capturing potline-l
 
 ## Scenario Analysis and Visualization
 
-After completing scenario runs, generate comparison figures:
+After completing scenario runs, generate comparison figures with the maintained
+post-processing scripts:
 
 ```bash
-# cost changes across all demand × market × flexibility scenarios
-python scripts/plot_scenario_comparison.py --file-type costs --verbose
+# cost/value changes across demand × market × flexibility scenarios
+python scripts/plot_value_scenario_comparison.py
 
-# capacity changes
-python scripts/plot_scenario_comparison.py --file-type capacities --verbose
+# publication-style 2050 MMM capacity/cost panel
+python scripts/plot_capacity_MMM_2050.py
+
+# optimal capacity points across years and market/flexibility settings
+python scripts/plot_optimal_point.py
 ```
 
-Output is saved to `results/scenario_analysis/` and includes 9-panel bar charts and CSV summary tables.
+Outputs are saved under the configured `results/version-*` directories and script-specific
+analysis folders.
 
 ## Output Files
 
