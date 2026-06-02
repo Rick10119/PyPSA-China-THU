@@ -28,15 +28,12 @@ module load anaconda3/2024.6
 conda activate pypsa
 
 git fetch --all --prune
-git checkout "price-simulation"
+git checkout "<branch-name>"
 git pull
 
 snakemake --unlock
 snakemake -np
 sbatch job.slurm
-sbatch job_fill_solar.slurm
-sbatch job_capacity.slurm
-sbatch job_price.slurm
 
 
 chmod +x submit_multiple_jobs.sh

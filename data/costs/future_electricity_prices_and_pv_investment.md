@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 Ruike Lyu -->
+<!-- SPDX-License-Identifier: CC-BY-4.0 -->
+
 # **高比例光伏接入下中国未来电力系统规划模型研究：燃料价格设定与电价演变机制探析**
 
 ## **宏观背景与电力系统运行逻辑的深层解构**

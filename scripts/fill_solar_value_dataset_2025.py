@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Ruike Lyu
+#
+# SPDX-License-Identifier: MIT
+
 #!/usr/bin/env python3
 """
 Fill solar value dataset rows for planning years from `config.yaml` (`scenario.planning_horizons`).

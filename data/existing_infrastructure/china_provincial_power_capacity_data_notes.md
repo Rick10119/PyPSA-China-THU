@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 Ruike Lyu -->
+<!-- SPDX-License-Identifier: CC-BY-4.0 -->
+
 # **中国电力系统 2021–2025 年多电源及储能装机容量空间演变与 PyPSA-China-THU 模型数据重构分析**
 
 ## **第一章 宏观能源系统转型与 PyPSA-China 数据架构的前置解析**

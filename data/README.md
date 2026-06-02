@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 Ruike Lyu -->
+<!-- SPDX-License-Identifier: CC-BY-4.0 -->
+
 # Data Directory
 
 This directory contains all input data files required for running PyPSA-China energy system optimization model. The data is organized into subdirectories by category.

@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Ruike Lyu
+#
+# SPDX-License-Identifier: MIT
+
 
 # SPDX-FileCopyrightText: : 2022 The PyPSA-Eur Authors
 #

@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Ruike Lyu
+#
+# SPDX-License-Identifier: MIT
+
 import logging
 import re
 from pathlib import Path

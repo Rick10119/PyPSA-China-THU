@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Ruike Lyu
+#
+# SPDX-License-Identifier: MIT
+
 #!/usr/bin/env python3
 """
 Export national solar installed capacity by planning year from planning NC files.

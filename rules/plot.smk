@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Ruike Lyu
+#
+# SPDX-License-Identifier: MIT
+
 # rule plot_network:
 #     input:
 #         network=config['results_dir'] + 'version-' + str(

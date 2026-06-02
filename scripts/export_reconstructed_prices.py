@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Ruike Lyu
+#
+# SPDX-License-Identifier: MIT
+
 """
 Export reconstructed electricity prices from a solved PyPSA network `.nc`.
 

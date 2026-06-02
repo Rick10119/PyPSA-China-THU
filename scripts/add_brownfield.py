@@ -1,4 +1,5 @@
 # SPDX-FileCopyrightText: : 2024 The PyPSA-China Authors
+# SPDX-FileCopyrightText: 2026 Ruike Lyu
 #
 # SPDX-License-Identifier: MIT
 

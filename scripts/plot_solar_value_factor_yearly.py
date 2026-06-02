@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Ruike Lyu
+#
+# SPDX-License-Identifier: MIT
+
 #!/usr/bin/env python3
 """Plot generation-weighted solar value_factor over planning years from solar_value_dataset.xlsx.
 

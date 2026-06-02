@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 Ruike Lyu -->
+<!-- SPDX-License-Identifier: CC-BY-4.0 -->
+
 # Scenario Result Visualization Guide
 
 This guide points to the maintained post-processing scripts in the current

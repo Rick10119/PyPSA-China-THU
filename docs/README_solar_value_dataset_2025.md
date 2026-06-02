@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 Ruike Lyu -->
+<!-- SPDX-License-Identifier: CC-BY-4.0 -->
+
 # 2025 Solar Value Dataset Calculation Method
 
 This document describes the current calculation method used to fill 2025 rows in:

@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Ruike Lyu
+#
+# SPDX-License-Identifier: MIT
+
 """
 Plot full-year relationship between (reconstructed price, thermal dispatch) for Shandong.
 

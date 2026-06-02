@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 Ruike Lyu -->
+<!-- SPDX-License-Identifier: CC-BY-4.0 -->
+
 # **Technical Feasibility, Economic Rationale, and Potline-Level Modeling Parameters for Flexible Aluminum Smelting in High-Renewable Grids**
 
 ## **1. Introduction: A Paradigm Shift from Baseload to Flexible Operation**

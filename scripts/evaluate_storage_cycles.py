@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Ruike Lyu
+#
+# SPDX-License-Identifier: MIT
+
 """
 评估多种储能技术在不同循环周期下的理论套利价值（1 MW 单元）。
 

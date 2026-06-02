@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 Ruike Lyu -->
+<!-- SPDX-License-Identifier: CC-BY-4.0 -->
+
 # PyPSA-China 中文说明
 
 本仓库基于 PyPSA 构建中国省级能源系统优化模型，覆盖电力、供热、气、煤、氢等部门，并包含电解铝灵活性与电价仿真相关模块。当前 `price-simulation` 分支的重点是：
@@ -7,6 +10,15 @@
 - 省级同步机组最小出力约束；
 - 风电、光伏、核电与储能扩张约束；
 - 电解铝负荷灵活性场景与后处理。
+
+## 主要贡献
+
+本分支面向论文发表和主分支合并，主要贡献包括：
+
+1. **更符合实际的可再生能源装机约束**：为风电、光伏扩张增加全国目标到省级分配的约束带，并保留资源潜力上限，避免不现实的新能源过度扩张。
+2. **基准年份更新到 2025 年**：将基准年装机和成本数据更新到 2025 年口径，并规范既有装机数据文件命名。
+3. **电价恢复与模拟模块**：新增固定装机后的 dispatch-only 分段报价流程，导出边际电价、mapped price sidecar 和光伏 value factor 分析所需数据。
+4. **电解铝迭代求解模块**：基于节点边际电价求解电解铝子问题，再将电解铝负荷回填主模型，实现电力系统与工业柔性负荷的迭代耦合。
 
 ## 快速运行
 
@@ -150,22 +162,6 @@ results/version-<version>/prices/dispatch_segmented/<heating_demand>/
 - `docs/price_module_market_clearing_report.md`：电价模块与市场出清报告；
 - `docs/README_solar_value_dataset_2025.md`：光伏 value dataset 说明；
 - `docs/slurm_jobs_guide.md`：SLURM 任务说明。
-
-## 合并到 main 前建议
-
-建议保留：
-
-- 主工作流、配置、数据命名规范化改动；
-- `run_dispatch_segmented_prices.py`、`export_reconstructed_prices.py` 和相关 price 配置；
-- 风/光/核/储容量 guard；
-- 与论文复现直接相关的绘图和汇总脚本。
-
-建议归档或移出主线：
-
-- 一次性诊断脚本，如 `scripts/_diag_oct30_thermal.py`、`scripts/_diag_shandong_daily.py`；
-- 只服务某次服务器运行的 job 模板；
-- 一次性数据生成脚本，除非 README 或论文复现流程明确需要它们；
-- 本地系统专用脚本，如 `run_local.ps1`。
 
 ## 环境提示
 

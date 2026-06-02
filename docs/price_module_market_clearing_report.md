@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 Ruike Lyu -->
+<!-- SPDX-License-Identifier: CC-BY-4.0 -->
+
 # PyPSA-China 电价与市场出清机制扩展梳理报告
 
 ## 1. 报告目的
@@ -56,7 +59,7 @@
 
 ### 4.1 建立第二阶段固定容量调度与电价导出流程
 
-当前分支新增了 `scripts/run_dispatch_segmented_prices.py` 和 `scripts/export_reconstructed_prices.py`，并通过 `Snakefile` / `Snakefile_price` 将其接入工作流。
+当前工作流新增了 `scripts/run_dispatch_segmented_prices.py` 和 `scripts/export_reconstructed_prices.py`，并通过主 `Snakefile` 将其接入工作流。
 
 主要变化是：
 
@@ -151,7 +154,6 @@
 当前项目还新增了多类诊断与分析脚本：
 
 - `plot_shandong_price_vs_thermal.py`：分析山东价格与火电出力关系。
-- `_diag_oct30_thermal.py`、`_diag_shandong_daily.py`：用于典型日、典型省份调试。
 - `time_sampling.py`：支持采样工程。
 - `plot_solar_value_factor_yearly.py`：分析光伏价值因子年度变化。
 
