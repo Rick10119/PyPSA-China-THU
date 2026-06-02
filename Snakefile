@@ -7,17 +7,13 @@ Optimization Snakefile (full electricity+heat model).
 
 This workflow produces solved `postnetwork-*.nc` files via `solve_network_myopic.py`.
 
-Why this file exists:
-- The repo's default `Snakefile` is currently a minimal heat-only workflow.
-- Some analyses (and any endogenous electricity prices) require the full optimized
-  network results (`postnetworks/`).
-
 Run:
-  conda run -n pypsa snakemake -s Snakefile_optimize --cores 6
+  conda run -n pypsa snakemake --cores 6
 """
 
 from os.path import normpath
 from shutil import move
+from snakemake.io import ancient
 
 # from snakemake.remote.HTTP import RemoteProvider as HTTPRemoteProvider
 # HTTP = HTTPRemoteProvider()
@@ -25,18 +21,39 @@ from shutil import move
 configfile: "config.yaml"
 
 ATLITE_NPROCESSES = config['atlite'].get('nprocesses', 4)
+FIRST_PLANNING_HORIZON = str(config["scenario"]["planning_horizons"][0])
+
+
+def all_rule_inputs(wildcards):
+    """Targets for `rule all`: reconstructed price CSVs when dispatch export is enabled."""
+    dseg = config.get("dispatch_segmented_prices") or {}
+    results = (
+        config["results_dir"] + "version-" + str(config["version"]) + "/"
+    )
+    if not bool(dseg.get("enabled", False)):
+        return expand(
+            results
+            + "postnetworks/{heating_demand}/postnetwork-{opts}-{topology}-{pathway}-{planning_horizons}.nc",
+            **config["scenario"],
+        )
+    if bool(dseg.get("export_prices", True)):
+        return expand(
+            results
+            + "prices/dispatch_segmented/{heating_demand}/dispatch_segmented_prices-{opts}-{topology}-{pathway}-{planning_horizons}.csv",
+            **config["scenario"],
+        )
+    return expand(
+        results
+        + "dispatch_segmented/{heating_demand}/postnetwork-dispatch-seg-{opts}-{topology}-{pathway}-{planning_horizons}.nc",
+        **config["scenario"],
+    )
+
 
 if config["foresight"] == "myopic":
 
     rule all:
         input:
-            expand(
-                config["results_dir"]
-                + "version-"
-                + str(config["version"])
-                + "/postnetworks/{heating_demand}/postnetwork-{opts}-{topology}-{pathway}-{planning_horizons}.nc",
-                **config["scenario"],
-            )
+            all_rule_inputs,
 
     # rule prepare_all_networks:
     #     input:
@@ -110,15 +127,19 @@ if config["foresight"] == "myopic":
             ),
 
             expand(
-                config['results_dir'] + 'version-' + str(config['version']) + '/postnetworks/{heating_demand}/postnetwork-{opts}-{topology}-{pathway}-{planning_horizons}.nc',
+                config['results_dir'] + 'version-' + str(config['version']) + '/dispatch_segmented/{heating_demand}/postnetwork-dispatch-seg-{opts}-{topology}-{pathway}-{planning_horizons}.nc',
                 **config["scenario"]
             )
 
-    # Baseyear prenetwork (first planning horizon).
-    # Historically hardcoded to 2020; generalized to the configured baseyear.
+    # Prenetwork for the first configured planning horizon.
+    # The physical model baseyear is configured separately as `baseyear`
+    # (default 2025), so local tests can run only 2030 without treating
+    # 2030 as the no-expansion baseyear.
     rule prepare_base_networks_2020:
         input:
-            config="config.yaml",
+            # Treat config as non-updating input to avoid reruns on config edits.
+            # The rule will still run when its output file is missing.
+            config=ancient("config.yaml"),
             overrides="data/override_component_attrs",
             edges="data/grids/edges.txt",
             edges_ext="data/grids/edges_current.csv",
@@ -140,7 +161,7 @@ if config["foresight"] == "myopic":
             + str(config["version"])
             + "/prenetworks/{heating_demand}/prenetwork-{opts}-{topology}-{pathway}-{planning_horizons}.nc",
         wildcard_constraints:
-            planning_horizons=config["scenario"]["planning_horizons"][0],  # only applies to baseyear
+            planning_horizons=FIRST_PLANNING_HORIZON,
         threads: config["threads"]
         resources: mem_mb=config["mem_per_thread"] * config["threads"]
         script: "scripts/prepare_base_network.py"
@@ -172,6 +193,9 @@ if config["foresight"] == "myopic":
 
     ruleorder: prepare_base_networks_2020 > prepare_base_networks
 
+    def existing_infrastructure_csv(tech):
+        return f"data/existing_infrastructure/{tech.lower().replace(' ', '_')}_capacity.csv"
+
     rule add_existing_baseyear:
         input:
             overrides="data/override_component_attrs",
@@ -181,14 +205,14 @@ if config["foresight"] == "myopic":
             + "/prenetworks/{heating_demand}/prenetwork-{opts}-{topology}-{pathway}-{planning_horizons}.nc",
             tech_costs="data/costs/costs_{planning_horizons}.csv",
             cop_name="data/heating/cop.h5",
-            **{f"existing_{tech}": f"data/existing_infrastructure/{tech} capacity.csv" for tech in config["existing_infrastructure"]},
+            **{f"existing_{tech}": existing_infrastructure_csv(tech) for tech in config["existing_infrastructure"]},
         output:
             config["results_dir"]
             + "version-"
             + str(config["version"])
             + "/prenetworks-brownfield/{heating_demand}/prenetwork-{opts}-{topology}-{pathway}-{planning_horizons}.nc"
         wildcard_constraints:
-            planning_horizons=config["scenario"]["planning_horizons"][0],  # only applies to baseyear
+            planning_horizons=FIRST_PLANNING_HORIZON,
         threads: config["threads"]
         resources: mem_mb=config["mem_per_thread"] * config["threads"]
         script: "scripts/add_existing_baseyear.py"
@@ -196,6 +220,8 @@ if config["foresight"] == "myopic":
     def solved_previous_horizon(wildcards):
         planning_horizons = config["scenario"]["planning_horizons"]
         i = planning_horizons.index(int(wildcards.planning_horizons))
+        if i == 0:
+            raise ValueError("add_brownfield cannot be used for the first planning horizon.")
         planning_horizon_p = str(planning_horizons[i - 1])
         return (
             config["results_dir"]
@@ -221,6 +247,8 @@ if config["foresight"] == "myopic":
             + "version-"
             + str(config["version"])
             + "/prenetworks-brownfield/{heating_demand}/prenetwork-{opts}-{topology}-{pathway}-{planning_horizons}.nc",
+        wildcard_constraints:
+            planning_horizons="|".join(map(str, config["scenario"]["planning_horizons"][1:])) or r"$^",
         threads: config["threads"]
         resources: mem_mb=config["mem_per_thread"] * config["threads"]
         script: "scripts/add_brownfield.py"
@@ -257,6 +285,102 @@ if config["foresight"] == "myopic":
         script: "scripts/solve_network_myopic.py"
 
     ruleorder: prepare_base_networks > add_existing_baseyear > solve_network_myopic
+
+    rule run_dispatch_segmented:
+        input:
+            overrides="data/override_component_attrs",
+            network=config["results_dir"]
+            + "version-"
+            + str(config["version"])
+            + "/postnetworks/{heating_demand}/postnetwork-{opts}-{topology}-{pathway}-{planning_horizons}.nc",
+        output:
+            network=config["results_dir"]
+            + "version-"
+            + str(config["version"])
+            + "/dispatch_segmented/{heating_demand}/postnetwork-dispatch-seg-{opts}-{topology}-{pathway}-{planning_horizons}.nc",
+        log:
+            solver=normpath(
+                "logs/dispatch_segmented/{heating_demand}/postnetwork-dispatch-seg-{opts}-{topology}-{pathway}-{planning_horizons}.log"
+            ),
+        params:
+            solving=config["solving"],
+            using_single_node=config["using_single_node"],
+            single_node_province=config["single_node_province"],
+        threads: config["threads"]
+        resources:
+            mem_mb=config["mem_per_thread"] * config["threads"]
+        script:
+            "scripts/run_dispatch_segmented_prices.py"
+
+    rule export_dispatch_segmented_prices:
+        input:
+            network=config["results_dir"]
+            + "version-"
+            + str(config["version"])
+            + "/dispatch_segmented/{heating_demand}/postnetwork-dispatch-seg-{opts}-{topology}-{pathway}-{planning_horizons}.nc",
+        output:
+            prices=config["results_dir"]
+            + "version-"
+            + str(config["version"])
+            + "/prices/dispatch_segmented/{heating_demand}/dispatch_segmented_prices-{opts}-{topology}-{pathway}-{planning_horizons}.csv",
+        params:
+            week_freq=lambda wc: (config.get("dispatch_segmented_prices") or {}).get("price_export", {}).get(
+                "week_freq", "W-SUN"
+            ),
+            import_agg=lambda wc: (config.get("dispatch_segmented_prices") or {}).get("price_export", {}).get(
+                "import_agg", "min_offer"
+            ),
+            line_cong_eps_mw=lambda wc: float(
+                (config.get("dispatch_segmented_prices") or {}).get("price_export", {}).get("line_cong_eps_mw", 1e-3)
+            ),
+            min_inflow_mw=lambda wc: float(
+                (config.get("dispatch_segmented_prices") or {}).get("price_export", {}).get("min_inflow_mw", 1e-3)
+            ),
+            currency=lambda wc: (config.get("dispatch_segmented_prices") or {}).get("price_export", {}).get(
+                "currency", "CNY"
+            ),
+            fx_cny_per_eur=lambda wc: float(
+                (config.get("dispatch_segmented_prices") or {}).get("price_export", {}).get("fx_cny_per_eur", 7.8)
+            ),
+            provinces=lambda wc: (
+                [config["single_node_province"]]
+                if bool(config.get("using_single_node", False))
+                else (config.get("reconstruct_prices") or {}).get("provinces")
+            ),
+        threads: 1
+        resources:
+            mem_mb=4000
+        run:
+            import subprocess
+            import sys
+
+            cmd = [
+                sys.executable,
+                "scripts/export_reconstructed_prices.py",
+                "--network",
+                input.network,
+                "--out",
+                output.prices,
+                "--price-mode",
+                "marginal",
+                "--week-freq",
+                str(params.week_freq),
+                "--import-agg",
+                str(params.import_agg),
+                "--line-cong-eps-mw",
+                str(params.line_cong_eps_mw),
+                "--min-inflow-mw",
+                str(params.min_inflow_mw),
+                "--currency",
+                str(params.currency),
+                "--fx-cny-per-eur",
+                str(params.fx_cny_per_eur),
+            ]
+            if params.provinces:
+                for p in params.provinces:
+                    cmd += ["--province", str(p)]
+
+            subprocess.run(cmd, check=True)
 
 # rule build_population:
 #     input:
@@ -392,6 +516,5 @@ if config["foresight"] == "myopic":
 #     resources: mem_mb = ATLITE_NPROCESSES * 5000
 #     script: "scripts/build_biomass_potential.py"
 
-if config.get("plot", False):
+if config.get("plot", True):
     include: "rules/plot.smk"
-

@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 Ruike Lyu -->
+<!-- SPDX-License-Identifier: CC-BY-4.0 -->
+
 # PyPSA-China: An Open Optimization Model of the Chinese Energy System
 
 PyPSA-China is an open-source capacity expansion and operational optimization model for the Chinese energy system, built on the [PyPSA](https://pypsa.org/) framework. It covers electricity, heating, gas, and hydrogen carriers at provincial resolution and features a dedicated module for modeling aluminum smelter flexibility as a demand-side resource in high-renewable grids.
@@ -15,6 +18,15 @@ China's power system is undergoing a rapid transition toward variable renewable 
 - **Three-dimensional scenario framework**: smelter flexibility × primary demand × grid-interaction market opportunity, each at low / mid / high levels (27 combinations).
 - **Configurable capacity ratios**: aluminum smelter capacity can be scaled from 5 % to 100 % of the installed base to explore overcapacity effects.
 - **HPC support**: automated SLURM job generation for large-scale scenario sweeps across 1 000+ configurations.
+
+## Main Contributions
+
+This branch prepares the model for publication and focuses on four reproducibility-oriented extensions:
+
+1. **Realistic renewable capacity constraints**: add national-to-provincial guardrails for wind and solar expansion, with target bands and physical potential ceilings to avoid unrealistic VRE build-out.
+2. **2025 base-year update**: update base-year installed capacity and technology-cost inputs to a 2025 reference year, including cleaned existing-infrastructure file names and updated planning trajectories.
+3. **Electricity-price reconstruction and simulation**: add a fixed-capacity dispatch stage with segmented thermal bids and price export sidecars for marginal prices, mapped prices, and solar value-factor analysis.
+4. **Iterative aluminum smelter optimization**: add a nodal-price-based decomposition loop that solves aluminum potline operation as a sub-problem and feeds the resulting load profile back into the system model.
 
 ## Workflow
 
@@ -38,28 +50,57 @@ solve_network_myopic         (optimize dispatch + investment; aluminum iterative
 
 Each stage reads from `config.yaml` and data files under `data/`, and writes intermediate or final networks to `results/`.
 
-### Heat-only (decoupled heating) workflow
+### Heat-only workflow note (deprecated)
 
-This repository also includes a **heat-only** workflow that strips the electricity system planning/dispatch and solves only the heating technology selection + dispatch with **exogenous electricity prices**. It keeps CHP heat-related constraints and allows CHP electricity to be settled at the exogenous price (import/export settlement layer).
+Older versions of this repo included an experimental **heat-only** workflow that relied on **exogenous electricity prices**. That approach is deprecated in this repo; electricity price analysis should use post-processing based on solved networks (see `scripts/reconstruct_market_prices.py`).
 
-The minimal heat-only DAG is:
+### Synchronous-generation floor and mapped-price sidecar
 
+The planning solve (`scripts/solve_network_myopic.py`) and the fixed-capacity dispatch solve
+(`scripts/run_dispatch_segmented_prices.py`) can enforce a provincial synchronous-generation floor.
+With the current default configuration, coal, nuclear, gas, and biomass synchronous generators must
+produce at least `10 %` of the local AC electricity load in each province and snapshot:
+
+```yaml
+synchronous_generation_floor:
+  enabled: true
+  ratio: 0.10
 ```
-prepare_base_networks
-  → add_existing_baseyear
-  → add_brownfield
-  → solve_heat_decoupled
-  → plot_heatonly_typical_days
-  → summary_heatonly
-```
 
-Key outputs (example paths):
-- **Solved heat-only network**: `results/version-<version>/heatonly_postnetworks/<heating_demand>/heatonly_postnetwork-<opts>-<topology>-<pathway>-<planning_horizons>.nc`
-- **Typical-day plots**: `results/version-<version>/heatonly_plots/<heating_demand>/typical_days/<opts>-<topology>-<pathway>-<planning_horizons>/`
-- **Summaries (same folder)**: `results/version-<version>/heatonly_summary/<heating_demand>/summary/<opts>-<topology>-<pathway>-<planning_horizons>/`
-  - `heat-shares.csv` (annual heat supply shares)
-  - `capacities.csv` (installed capacities by carrier)
-  - `co2.csv` (total CO2 and active cap constant)
+The dispatch price export still writes the primary CSV from solved marginal prices
+(`buses_t.marginal_price`). In addition, `scripts/export_reconstructed_prices.py` writes a
+`*_mapped.csv` sidecar used by solar value-factor analysis. The mapped sidecar is reconstructed in
+this order:
+
+1. Build a local mapped price from thermal/synchronous output and the fuel-based supply curve.
+   The biweekly normalization denominator is:
+   `max(biweekly_max_thermal_output, biweekly_min_thermal_output / lr_threshold_first)`.
+   With the default `lr_threshold_first: 0.4`, a stable must-run floor maps to the first supply
+   band instead of being normalized to the peak band.
+2. Apply the local must-run floor price rule before any cross-province transmission adjustment:
+   - at or below `10 %` of local AC load, use the province's marginal price;
+   - within `1.5 x` the floor (`15 %` of local AC load by default), cap mapped prices at the
+     `1.0 x` reference fuel price.
+3. Apply cross-province export adjustment. Only province-to-province links are considered
+   (`bus0` and `bus1` both provincial AC buses). If province A exports to province B on an
+   uncongested link, A's mapped price can be lifted to the receiving-side marginal price adjusted by
+   link efficiency. The receiving province keeps its own local/floor-adjusted price; import flows do
+   not lower or raise the receiving province's price.
+4. Enforce a final province-local marginal-price floor: the mapped sidecar is never lower than that
+   province's solved marginal price in the same snapshot.
+
+Related configuration lives under `dispatch_segmented_prices.price_export`:
+
+```yaml
+dispatch_segmented_prices:
+  price_export:
+    week_freq: "2W-SUN"
+    thermal_load_floor:
+      enabled: true
+      ratio: 0.10
+    mapped_supply_curve:
+      lr_threshold_first: 0.4
+```
 
 ## Installation
 
@@ -178,6 +219,28 @@ aluminum_convergence_tolerance: 0.01
 aluminum_capacity_ratio: 1.0             # scale smelter capacity
 ```
 
+### Wind/Solar Capacity Guards (current default)
+
+To prevent unrealistic VRE expansion in myopic planning, the model applies pre-solve national-to-provincial guards for wind and solar:
+
+- **Wind guard**: `wind_capacity_guard` in `config.yaml`, implemented in `scripts/wind_capacity_guard.py`
+- **Solar guard**: `solar_capacity_guard` in `config.yaml`, implemented in `scripts/solar_capacity_guard.py`
+- **Applied years**: `2025` to `2060`
+- **Band constraints**: lower = `0.8 × target`, upper = `1.3 × target` (`allow_underbuild_only: false`)
+
+Target files:
+
+- Wind (`onwind`/`offwind`): `data/p_nom/national_wind_capacity_from_planning.csv`
+- Solar: `data/p_nom/national_solar_capacity_from_external_targets.csv`
+
+Solar target trajectory currently follows the CPIA 2026 outlook baseline path:
+
+- 2026 additions range: 180–240 GW (baseline uses +180 GW)
+- 2026–2030 average additions range: 238–287 GW/yr (baseline uses +238 GW/yr)
+- Post-2030 planning years continue with +238 GW/yr unless replaced by newer official assumptions
+
+These guards do **not** override physical provincial potential ceilings: `p_nom_max` potential limits from `prepare_base_network` remain active and still cap the final feasible upper bound.
+
 ### Scenario Dimensions
 
 ```yaml
@@ -218,7 +281,7 @@ PyPSA-China/
 │   ├── costs/                 # technology cost projections
 │   ├── grids/                 # grid topology
 │   ├── load/                  # provincial load profiles
-│   └── resources/             # renewable resource data
+├── resources/                 # renewable generation profiles
 ├── scripts/
 │   ├── prepare_base_network*.py
 │   ├── add_existing_baseyear.py
@@ -241,10 +304,12 @@ Detailed documentation is provided in the `docs/` folder:
 |----------|-------------|
 | [Aluminum Integration Guide](docs/aluminum_integration_guide.md) | End-to-end explanation of how aluminum demand data, smelter capacity, and model components (Link, Store, Load, Hub) are assembled, including unit-conversion formulas and the data-flow diagram. |
 | [Iterative Optimization Notes](docs/README_aluminum_iterative.md) | Refactoring notes for the aluminum iterative algorithm: convergence criterion, network reload strategy, `p_set` fixing, virtual-generator marginal costs, and the potline-based representative-line method. |
-| [Flexible Aluminum Smelting Intro](docs/Flexible%20Aluminum%20Smelting%20Intro.md) | Technical feasibility report on flexible aluminum smelting — EnPot/TRIMET evidence, historical curtailment events, the economic logic of seasonal batch operation, and potline-level modeling parameters for China. |
+| [Flexible Aluminum Smelting Intro](docs/flexible_aluminum_smelting_intro.md) | Technical feasibility report on flexible aluminum smelting — EnPot/TRIMET evidence, historical curtailment events, the economic logic of seasonal batch operation, and potline-level modeling parameters for China. |
 | [Scenario Dimensions Guide](docs/scenario_dimensions_guide.md) | How to configure and use the three scenario dimensions (smelter flexibility, primary demand, grid-interaction market opportunity) and generate all 27 combinations. |
-| [Scenario Visualization Guide](docs/scenario_visualization_guide.md) | Instructions for `plot_scenario_comparison.py` — 9-panel comparison charts, summary tables, cost categorization, and CLI usage. |
+| [Scenario Visualization Guide](docs/scenario_visualization_guide.md) | Instructions for the maintained scenario post-processing scripts: value comparison, capacity/cost panels, and optimal-point plots. |
 | [SLURM Jobs Guide](docs/slurm_jobs_guide.md) | Generating, submitting, monitoring, and troubleshooting SLURM batch jobs on HPC clusters. |
+| [Price Module Report](docs/price_module_market_clearing_report.md) | Notes on the two-stage dispatch price workflow, mapped-price sidecar, and solar value-factor dataset. |
+| [Solar Value Dataset Notes](docs/README_solar_value_dataset_2025.md) | How to fill and plot the 2025 solar value-factor dataset from dispatch price outputs. |
 
 ## Iterative Aluminum Optimization Algorithm
 
@@ -259,17 +324,22 @@ This approach keeps the main problem as a tractable LP while capturing potline-l
 
 ## Scenario Analysis and Visualization
 
-After completing scenario runs, generate comparison figures:
+After completing scenario runs, generate comparison figures with the maintained
+post-processing scripts:
 
 ```bash
-# cost changes across all demand × market × flexibility scenarios
-python scripts/plot_scenario_comparison.py --file-type costs --verbose
+# cost/value changes across demand × market × flexibility scenarios
+python scripts/plot_value_scenario_comparison.py
 
-# capacity changes
-python scripts/plot_scenario_comparison.py --file-type capacities --verbose
+# publication-style 2050 MMM capacity/cost panel
+python scripts/plot_capacity_MMM_2050.py
+
+# optimal capacity points across years and market/flexibility settings
+python scripts/plot_optimal_point.py
 ```
 
-Output is saved to `results/scenario_analysis/` and includes 9-panel bar charts and CSV summary tables.
+Outputs are saved under the configured `results/version-*` directories and script-specific
+analysis folders.
 
 ## Output Files
 

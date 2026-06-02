@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Ruike Lyu
+#
+# SPDX-License-Identifier: MIT
+
 
 # SPDX-FileCopyrightText: : 2022 The PyPSA-Eur Authors
 #
@@ -179,6 +183,8 @@ def configure_logging(snakemake, skip_handlers=False):
         fallback_path = Path(__file__).parent.joinpath('..', 'logs', f"{snakemake.rule}.log")
         logfile = snakemake.log.get('python', snakemake.log[0] if snakemake.log
                                     else fallback_path)
+        logfile = Path(logfile)
+        logfile.parent.mkdir(parents=True, exist_ok=True)
         kwargs.update(
             {'handlers': [
                 # Prefer the 'python' log, otherwise take the first log for each
@@ -565,4 +571,3 @@ def define_spatial(nodes, options):
     spatial.lignite.locations = ["China"]
 
     return spatial
-

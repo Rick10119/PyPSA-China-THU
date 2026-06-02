@@ -1,0 +1,577 @@
+# SPDX-FileCopyrightText: 2026 Ruike Lyu
+#
+# SPDX-License-Identifier: MIT
+
+#!/usr/bin/env python3
+"""
+Fill solar value dataset rows for planning years from `config.yaml` (`scenario.planning_horizons`).
+
+Paths and the network filename stem match Snakemake wildcards:
+`{results_dir}/version-{version}/.../{opts}-{topology}-{pathway}-{year}` (first element of list-valued
+`scenario.opts`, `pathway`, `heating_demand` when multiple are configured).
+
+Inputs per year:
+- dispatch segmented network (.nc): solar generation/demand/capacity side metrics
+- provincial LMP time series for value-factor metrics (default: mapped dispatch prices CSV)
+- optional: planning postnetwork `buses_t.marginal_price` (pass --planning-marginal;
+  EUR/MWh converted with FX to match legacy CSV convention)
+
+Capacity adjustment rule:
+- 2025: apply real-capacity correction from `solar_capacity.csv`
+- 2030 and later: no capacity correction (use model capacity directly)
+"""
+
+from __future__ import annotations
+
+import argparse
+from dataclasses import dataclass
+from pathlib import Path
+from shutil import copy2
+
+import sys
+from typing import Any
+
+import pandas as pd
+import pypsa
+import yaml
+from openpyxl import load_workbook
+
+_SCRIPTS = Path(__file__).resolve().parent
+if str(_SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS))
+
+from reconstruct_market_prices import ReconstructPriceConfig, marginal_retail_prices  # noqa: E402
+
+ROOT = Path(__file__).resolve().parents[1]
+_DEFAULT_CONFIG_PATH = ROOT / "config.yaml"
+_CSV_ENCODING = "utf-8"
+
+
+def _first_scenario_value(value: Any, default: str) -> str:
+    """Snakemake `expand` uses list-valued scenario keys; standalone scripts pick the first."""
+    if value is None:
+        return default
+    if isinstance(value, list):
+        return str(value[0]) if value else default
+    return str(value)
+
+
+@dataclass(frozen=True)
+class SolarValueFillConfig:
+    """Paths and scenario stem derived from repo `config.yaml` (same wildcards as Snakefile)."""
+
+    root: Path
+    version_dir: Path
+    heating_demand: str
+    scenario_stem: str
+    target_years: tuple[int, ...]
+    fx_cny_per_eur: float
+    xlsx_path: Path
+    backup_path: Path
+    cap_compare_path: Path
+    real_solar_cap_path: Path
+    real_solar_year_columns: tuple[str, ...]
+
+
+def load_solar_value_fill_config(config_path: Path) -> SolarValueFillConfig:
+    if not config_path.is_file():
+        raise FileNotFoundError(f"Config not found: {config_path}")
+    with config_path.open("r", encoding=_CSV_ENCODING) as f:
+        cfg = yaml.safe_load(f) or {}
+
+    root = config_path.parent.resolve()
+    results_rel = str(cfg.get("results_dir") or "results/")
+    version = cfg.get("version")
+    if version is None:
+        raise KeyError("config.yaml must define 'version'")
+    version_dir = (root / Path(results_rel) / f"version-{version}").resolve()
+
+    scen = cfg.get("scenario") or {}
+    opts = _first_scenario_value(scen.get("opts"), "ll")
+    pathway = _first_scenario_value(scen.get("pathway"), "linear2050")
+    topology = str(scen.get("topology") or "current+FCG")
+    heating = _first_scenario_value(scen.get("heating_demand"), "positive")
+    scenario_stem = f"{opts}-{topology}-{pathway}"
+
+    horizons = scen.get("planning_horizons")
+    if horizons is None:
+        target_years = tuple(range(2025, 2065, 5))
+    else:
+        target_years = tuple(int(y) for y in horizons)
+
+    dsp = cfg.get("dispatch_segmented_prices") or {}
+    pe = dsp.get("price_export") or {}
+    fx = float(pe.get("fx_cny_per_eur", 7.8))
+
+    sch = cfg.get("solar_capacity_guard") or {}
+    hist_csv = str(
+        sch.get("historical_capacity_csv") or "data/existing_infrastructure/solar_capacity.csv"
+    )
+    year_cols = sch.get("historical_year_columns") or ["2010", "2015", "2020", "2025"]
+    if not isinstance(year_cols, list):
+        raise TypeError("solar_capacity_guard.historical_year_columns must be a list of strings")
+    real_solar_year_columns = tuple(str(c) for c in year_cols)
+    real_solar_cap_path = (root / hist_csv).resolve()
+
+    return SolarValueFillConfig(
+        root=root,
+        version_dir=version_dir,
+        heating_demand=heating,
+        scenario_stem=scenario_stem,
+        target_years=target_years,
+        fx_cny_per_eur=fx,
+        xlsx_path=version_dir / "solar_value_dataset.xlsx",
+        backup_path=version_dir / "solar_value_dataset.multi-year-backup.xlsx",
+        cap_compare_path=version_dir / "solar_capacity_compare_by_year.csv",
+        real_solar_cap_path=real_solar_cap_path,
+        real_solar_year_columns=real_solar_year_columns,
+    )
+
+# Workbook province -> source province names
+PROVINCE_MAP = {
+    "Xizang": "Tibet",
+    "WestInnerMongolia": "InnerMongolia",
+    "EastInnerMongolia": "InnerMongolia",
+}
+
+# Proxy split for Inner Mongolia east/west (applied to all modeled years).
+# Source used: 2025 Inner Mongolia power bulletin reports generation shares
+# (蒙东 21.93%, 蒙西 78.07%). Public direct PV east/west split was not found.
+INNER_MONGOLIA_SPLIT_2025 = {
+    "EastInnerMongolia": 0.2193,
+    "WestInnerMongolia": 0.7807,
+}
+
+
+def _mapped_name(province: str) -> str:
+    return PROVINCE_MAP.get(province, province)
+
+
+def _group_sum_by_bus(frame: pd.DataFrame, bus_of_component: pd.Series) -> pd.DataFrame:
+    if frame.empty:
+        return pd.DataFrame(index=frame.index)
+    return frame.T.groupby(bus_of_component).sum().T
+
+
+def _thermal_floor_candidate_mask(carrier: pd.Series) -> pd.Series:
+    """Carriers constrained by daily minimum loading (CHP/coal/coal-CC-like labels)."""
+    c = carrier.astype(str).str.lower()
+    return (
+        c.str.contains("chp", regex=False)
+        | c.str.contains("coal power plant", regex=False)
+        | c.str.contains("coal cc", regex=False)
+        | c.str.contains("coal_cc", regex=False)
+    )
+
+
+def _solar_dispatch_after_thermal_floor(
+    solar_dispatch: pd.Series, thermal_dispatch: pd.Series, min_ratio: float = 0.4
+) -> tuple[pd.Series, pd.Series]:
+    """
+    Apply daily thermal minimum-loading rule and return:
+    - corrected solar dispatch series
+    - extra curtailed solar due to thermal floor
+    """
+    if solar_dispatch.empty:
+        return solar_dispatch.copy(), solar_dispatch.copy()
+
+    daily_max = thermal_dispatch.resample("D").transform("max").reindex(solar_dispatch.index)
+    thermal_floor = daily_max * float(min_ratio)
+    replacement = (thermal_floor - thermal_dispatch).clip(lower=0.0)
+    # Replacement cannot exceed simultaneous solar generation.
+    extra_curtail = replacement.clip(upper=solar_dispatch).fillna(0.0)
+    corrected = (solar_dispatch - extra_curtail).clip(lower=0.0)
+    return corrected, extra_curtail
+
+
+def _electric_supply_by_bus(n: pypsa.Network, ac_buses: pd.Index) -> pd.DataFrame:
+    """Electricity supplied to AC buses by generators, conversion links, and storage discharge."""
+    snapshots = n.snapshots
+    total = pd.DataFrame(0.0, index=snapshots, columns=ac_buses, dtype=float)
+
+    gen_mask = n.generators.bus.isin(ac_buses)
+    gen_cols = n.generators.index[gen_mask]
+    if len(gen_cols):
+        gen_dispatch = n.generators_t.p[gen_cols].clip(lower=0.0)
+        gen_bus = n.generators.loc[gen_cols, "bus"]
+        total = total.add(_group_sum_by_bus(gen_dispatch, gen_bus), fill_value=0.0)
+
+    if hasattr(n, "storage_units") and not n.storage_units.empty and hasattr(n, "storage_units_t"):
+        su_mask = n.storage_units.bus.isin(ac_buses)
+        su_cols = n.storage_units.index[su_mask]
+        if len(su_cols) and hasattr(n.storage_units_t, "p"):
+            su_dispatch = n.storage_units_t.p[su_cols].clip(lower=0.0)
+            su_bus = n.storage_units.loc[su_cols, "bus"]
+            total = total.add(_group_sum_by_bus(su_dispatch, su_bus), fill_value=0.0)
+
+    if hasattr(n, "links") and not n.links.empty and hasattr(n, "links_t") and hasattr(n.links_t, "p0"):
+        link_mask = n.links.bus1.isin(ac_buses) & ~(
+            n.links.bus0.isin(ac_buses) & n.links.bus1.isin(ac_buses)
+        )
+        link_cols = n.links.index[link_mask]
+        if len(link_cols):
+            eff = pd.to_numeric(n.links.loc[link_cols, "efficiency"], errors="coerce").fillna(1.0)
+            link_output = n.links_t.p0[link_cols].multiply(eff, axis=1).clip(lower=0.0)
+            link_bus = n.links.loc[link_cols, "bus1"]
+            total = total.add(_group_sum_by_bus(link_output, link_bus), fill_value=0.0)
+
+    return total.reindex(index=snapshots, columns=ac_buses).fillna(0.0)
+
+
+def _network_path(year: int, cfg: SolarValueFillConfig) -> Path:
+    return (
+        cfg.version_dir
+        / "dispatch_segmented"
+        / cfg.heating_demand
+        / f"postnetwork-dispatch-seg-{cfg.scenario_stem}-{year}.nc"
+    )
+
+
+def _planning_network_path(year: int, cfg: SolarValueFillConfig) -> Path:
+    return (
+        cfg.version_dir
+        / "postnetworks"
+        / cfg.heating_demand
+        / f"postnetwork-{cfg.scenario_stem}-{year}.nc"
+    )
+
+
+def _price_column_for_bus(bus: str, price_cols: set[str]) -> str | None:
+    """Resolve dispatch bus name to a column in the planning LMP frame (single InnerMongolia etc.)."""
+    if bus in price_cols:
+        return bus
+    alt = PROVINCE_MAP.get(bus)
+    if alt and alt in price_cols:
+        return alt
+    return None
+
+
+def _price_csv_path(year: int, cfg: SolarValueFillConfig) -> Path:
+    return (
+        cfg.version_dir
+        / "prices"
+        / "dispatch_segmented"
+        / cfg.heating_demand
+        / f"dispatch_segmented_prices-{cfg.scenario_stem}-{year}_mapped.csv"
+    )
+
+
+def _block_starts(ws) -> list[int]:
+    zones = [ws.cell(r, 1).value for r in range(2, ws.max_row + 1)]
+    first_zone = zones[0]
+    return [i + 2 for i, z in enumerate(zones) if z == first_zone]
+
+
+def _load_real_solar_capacity_2025(cfg: SolarValueFillConfig) -> pd.Series:
+    cap = pd.read_csv(cfg.real_solar_cap_path, encoding=_CSV_ENCODING)
+    required_cols = ["Region", *cfg.real_solar_year_columns]
+    if any(c not in cap.columns for c in required_cols):
+        raise ValueError(
+            f"Expected columns {required_cols!r} in historical solar capacity CSV "
+            f"({cfg.real_solar_cap_path})"
+        )
+    real_cap = cap.set_index("Region")[list(cfg.real_solar_year_columns)].astype(float).sum(axis=1)
+    return real_cap
+
+
+def _compute_metrics_for_year(
+    year: int,
+    adjust_capacity: bool,
+    cfg: SolarValueFillConfig,
+    *,
+    price_source: str,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    network_path = _network_path(year, cfg)
+    if not network_path.exists():
+        raise FileNotFoundError(f"Dispatch network not found for {year}: {network_path}")
+
+    n = pypsa.Network(network_path)
+    snapshots = pd.DatetimeIndex(n.snapshots)
+
+    if price_source == "planning_marginal":
+        planning_path = _planning_network_path(year, cfg)
+        if not planning_path.exists():
+            raise FileNotFoundError(f"Planning network not found for {year}: {planning_path}")
+        n_plan = pypsa.Network(planning_path)
+        prices = marginal_retail_prices(n_plan, config=ReconstructPriceConfig()).astype(float)
+        prices = prices * float(cfg.fx_cny_per_eur)
+        prices = prices.reindex(snapshots)
+        if prices.isna().any().any():
+            raise ValueError(
+                f"Planning LMPs for {year} do not cover all dispatch snapshots (check {planning_path})."
+            )
+    elif price_source == "mapped_csv":
+        price_csv_path = _price_csv_path(year, cfg)
+        if not price_csv_path.exists():
+            raise FileNotFoundError(f"Mapped price CSV not found for {year}: {price_csv_path}")
+        prices = pd.read_csv(price_csv_path, encoding=_CSV_ENCODING)
+        prices = prices.rename(columns={"snapshot": "time"})
+        prices["time"] = pd.to_datetime(prices["time"])
+        prices = prices.set_index("time").sort_index()
+        prices = prices.reindex(snapshots)
+        if prices.isna().any().any():
+            raise ValueError("Mapped price CSV and network snapshots do not align exactly.")
+    else:
+        raise ValueError(f"Unknown price_source: {price_source!r}")
+
+    price_col_set = set(prices.columns.astype(str))
+
+    # Select solar generators (include all carriers containing 'solar').
+    solar_mask = n.generators.carrier.astype(str).str.contains("solar", case=False, regex=False)
+    solar_gens = n.generators.index[solar_mask]
+
+    if len(solar_gens) == 0:
+        raise ValueError("No solar generators found in network.")
+
+    solar_dispatch = n.generators_t.p[solar_gens].clip(lower=0.0)
+    solar_bus = n.generators.loc[solar_gens, "bus"]
+    solar_dispatch_bus = _group_sum_by_bus(solar_dispatch, solar_bus)
+
+    avail = n.generators_t.p_max_pu[solar_gens].multiply(
+        n.generators.loc[solar_gens, "p_nom_opt"], axis=1
+    )
+    solar_available_bus = _group_sum_by_bus(avail, solar_bus)
+
+    solar_capacity_bus = n.generators.loc[solar_gens].groupby("bus")["p_nom_opt"].sum()
+    real_solar_capacity_bus = _load_real_solar_capacity_2025(cfg) if adjust_capacity else pd.Series(dtype=float)
+
+    ac_buses = n.buses.index[n.buses.carrier.astype(str) == "AC"]
+
+    # System total electricity supply by AC bus/hour:
+    # generators, conversion-link outputs to AC buses, and storage-unit discharge.
+    total_gen_bus = _electric_supply_by_bus(n, ac_buses)
+
+    # Thermal units constrained by daily minimum loading.
+    all_ac_gen_mask = n.generators.bus.isin(ac_buses)
+    thermal_mask = all_ac_gen_mask & _thermal_floor_candidate_mask(n.generators.carrier)
+    thermal_gens = n.generators.index[thermal_mask]
+    thermal_dispatch = n.generators_t.p[thermal_gens].clip(lower=0.0)
+    thermal_bus = n.generators.loc[thermal_gens, "bus"]
+    thermal_dispatch_bus = _group_sum_by_bus(thermal_dispatch, thermal_bus)
+
+    # Standard value-factor denominator:
+    # system weighted-average market value = sum(total_gen * nodal_price) / sum(total_gen)
+    system_value_num = 0.0
+    system_gen_sum = 0.0
+    for b in total_gen_bus.columns:
+        pc = _price_column_for_bus(str(b), price_col_set)
+        if pc is None:
+            continue
+        g = total_gen_bus[b]
+        p = prices[pc].astype(float)
+        system_value_num += float((g * p).sum())
+        system_gen_sum += float(g.sum())
+    system_avg_market_value = (system_value_num / system_gen_sum) if system_gen_sum > 0 else 0.0
+
+    # Provincial demand on AC buses.
+    load_values = n.loads_t.p_set if hasattr(n.loads_t, "p_set") else n.loads_t.p
+    load_mask = n.loads.bus.isin(ac_buses)
+    load_cols = n.loads.index[load_mask]
+    loads = load_values[load_cols].clip(lower=0.0)
+    load_bus = n.loads.loc[load_cols, "bus"]
+    load_bus_ts = _group_sum_by_bus(loads, load_bus)
+
+    provinces = sorted(set(ac_buses).union(prices.columns))
+    weight_sum = float(n.snapshot_weightings.generators.sum())
+
+    cap_compare_rows: list[dict[str, float | str]] = []
+    rows: list[dict[str, float | str]] = []
+    for province in provinces:
+        dispatch_s_raw = solar_dispatch_bus.get(province, pd.Series(0.0, index=snapshots))
+        available_s = solar_available_bus.get(province, pd.Series(0.0, index=snapshots))
+        total_gen_s = total_gen_bus.get(province, pd.Series(0.0, index=snapshots))
+        thermal_s = thermal_dispatch_bus.get(province, pd.Series(0.0, index=snapshots))
+        load_s = load_bus_ts.get(province, pd.Series(0.0, index=snapshots))
+        pc = _price_column_for_bus(str(province), price_col_set)
+        price_s = prices[pc].astype(float) if pc is not None else pd.Series(0.0, index=snapshots)
+
+        dispatch_s, extra_curtail_s = _solar_dispatch_after_thermal_floor(
+            dispatch_s_raw.astype(float), thermal_s.astype(float), min_ratio=0.4
+        )
+        solar_mwh = float(dispatch_s.sum())
+        solar_gwh = solar_mwh / 1000.0
+        demand_mwh = float(load_s.sum())
+        total_gen_mwh = float(total_gen_s.sum())
+        available_mwh = float(available_s.sum())
+        extra_curtail_mwh = float(extra_curtail_s.sum())
+        nc_cap_mw = float(solar_capacity_bus.get(province, 0.0))
+        real_cap_mw = float(real_solar_capacity_bus.get(province, nc_cap_mw)) if adjust_capacity else nc_cap_mw
+        cap_ratio = (real_cap_mw / nc_cap_mw) if nc_cap_mw > 0 else 1.0
+        solar_mwh_for_penetration = solar_mwh * cap_ratio
+
+        pv_value_num = float((dispatch_s * price_s).sum())
+        pv_avg_market_value = (pv_value_num / solar_mwh) if solar_mwh > 0 else 0.0
+        value_num = pv_avg_market_value
+        value_den = system_avg_market_value
+        value_factor = (value_num / value_den) if value_den > 0 else 0.0
+        # Conservative provincial penetration: take the lower of
+        # load-based and generation-based shares.
+        penetration_load = (solar_mwh_for_penetration / demand_mwh) if demand_mwh > 0 else 0.0
+        penetration_gen = (solar_mwh_for_penetration / total_gen_mwh) if total_gen_mwh > 0 else 0.0
+        penetration = min(penetration_load, penetration_gen)
+        curtailment = ((available_mwh - solar_mwh) / available_mwh) if available_mwh > 0 else 0.0
+        cap_factor = (solar_mwh / (nc_cap_mw * weight_sum)) if nc_cap_mw > 0 and weight_sum > 0 else 0.0
+
+        cap_compare_rows.append(
+            {
+                "year": year,
+                "province": province,
+                "nc_solar_capacity_mw": nc_cap_mw,
+                "real_solar_capacity_mw": real_cap_mw,
+                "real_to_nc_ratio": cap_ratio,
+                "capacity_adjusted": adjust_capacity,
+            }
+        )
+
+        rows.append(
+            {
+                "province": province,
+                "solar_ele_GWh": solar_gwh,
+                "value_factor_numerator": value_num,
+                "value_factor_denominator": value_den,
+                "value_factor": value_factor,
+                "solar_penetration": penetration,
+                "solar_curtailment_rate": curtailment,
+                "solar_capacity_factor": cap_factor,
+                "solar_extra_curtailment_mwh_from_thermal_floor": extra_curtail_mwh,
+            }
+        )
+
+    cap_compare_df = pd.DataFrame(cap_compare_rows)
+    return pd.DataFrame(rows).set_index("province"), cap_compare_df
+
+
+def _write_workbook(metrics_by_year: dict[int, pd.DataFrame], cfg: SolarValueFillConfig) -> None:
+    copy2(cfg.xlsx_path, cfg.backup_path)
+
+    wb = load_workbook(cfg.xlsx_path)
+    ws = wb["Sheet1"]
+
+    starts = _block_starts(ws)
+    block_size = (starts[1] - starts[0]) if len(starts) > 1 else 32
+    years_by_block: list[int] = []
+    for i, start in enumerate(starts):
+        existing_years: list[int] = []
+        for row in range(start, min(start + block_size, ws.max_row + 1)):
+            value = ws.cell(row=row, column=2).value
+            if pd.notna(value):
+                try:
+                    existing_years.append(int(value))
+                except (TypeError, ValueError):
+                    continue
+        if existing_years:
+            years_by_block.append(max(set(existing_years), key=existing_years.count))
+        elif years_by_block:
+            years_by_block.append(years_by_block[-1] + 5)
+        else:
+            years_by_block.append(2025 + 5 * i)
+
+    missing_provinces_by_year: dict[int, set[str]] = {}
+    for start, year in zip(starts, years_by_block):
+        if year not in cfg.target_years or year not in metrics_by_year:
+            continue
+        metrics = metrics_by_year[year]
+        for row in range(start, min(start + block_size, ws.max_row + 1)):
+            zone = ws.cell(row=row, column=1).value
+            if not zone:
+                continue
+            zone = str(zone)
+            source_zone = _mapped_name(zone)
+            if source_zone not in metrics.index:
+                missing_provinces_by_year.setdefault(year, set()).add(f"{zone} -> {source_zone}")
+                continue
+
+            m = metrics.loc[source_zone]
+            solar_ele_gwh = float(m["solar_ele_GWh"])
+            if source_zone == "InnerMongolia" and zone in INNER_MONGOLIA_SPLIT_2025:
+                solar_ele_gwh *= INNER_MONGOLIA_SPLIT_2025[zone]
+            # Overwrite legacy workbook values whenever a new metric is available
+            # for this row (including valid zeros). Keep old value only for missing/NaN.
+            values_to_write = {
+                2: year,
+                3: solar_ele_gwh,
+                4: float(m["value_factor_numerator"]),
+                5: float(m["value_factor_denominator"]),
+                6: float(m["value_factor"]),
+                7: float(m["solar_penetration"]),
+                8: float(m["solar_curtailment_rate"]),
+                9: float(m["solar_capacity_factor"]),
+            }
+            for col, new_value in values_to_write.items():
+                if pd.notna(new_value):
+                    ws.cell(row=row, column=col, value=float(new_value) if col >= 3 else int(new_value))
+
+    wb.save(cfg.xlsx_path)
+
+    for year in sorted(missing_provinces_by_year):
+        missing = ", ".join(sorted(missing_provinces_by_year[year]))
+        print(f"Skip missing provinces in {year}: {missing}")
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser(description="Fill solar_value_dataset.xlsx from dispatch + price series.")
+    ap.add_argument(
+        "--config",
+        type=Path,
+        default=_DEFAULT_CONFIG_PATH,
+        help="Path to config.yaml (default: repo root config.yaml).",
+    )
+    price_group = ap.add_mutually_exclusive_group()
+    price_group.add_argument(
+        "--mapped-csv",
+        dest="price_source",
+        action="store_const",
+        const="mapped_csv",
+        help="Use dispatch_segmented *_mapped.csv prices (default).",
+    )
+    price_group.add_argument(
+        "--planning-marginal",
+        dest="price_source",
+        action="store_const",
+        const="planning_marginal",
+        help="Use planning postnetwork LMPs instead of mapped CSV prices.",
+    )
+    ap.set_defaults(price_source="mapped_csv")
+    args = ap.parse_args()
+    cfg = load_solar_value_fill_config(args.config.resolve())
+    price_source = str(args.price_source)
+
+    metrics_by_year: dict[int, pd.DataFrame] = {}
+    cap_compare_all: list[pd.DataFrame] = []
+    for year in cfg.target_years:
+        try:
+            metrics, cap_compare = _compute_metrics_for_year(
+                year,
+                (year == 2025),
+                cfg,
+                price_source=price_source,
+            )
+        except FileNotFoundError as e:
+            print(f"Skip {year}: {e}")
+            continue
+        metrics_by_year[year] = metrics
+        cap_compare_all.append(cap_compare)
+
+    if not metrics_by_year:
+        raise RuntimeError(
+            "No years were processed. Check dispatch_segmented .nc files and mapped CSV exports under "
+            "prices/dispatch_segmented/ (or pass --planning-marginal and ensure matching planning "
+            "postnetworks under postnetworks/)."
+        )
+
+    if cap_compare_all:
+        pd.concat(cap_compare_all, ignore_index=True).to_csv(
+            cfg.cap_compare_path, index=False, encoding=_CSV_ENCODING
+        )
+
+    _write_workbook(metrics_by_year, cfg)
+    print(f"Config: {args.config.resolve()}")
+    print(f"Results tree: {cfg.version_dir} (stem {cfg.scenario_stem!r}, heating {cfg.heating_demand!r})")
+    print(f"Price source: {price_source}")
+    print(f"Filled years: {sorted(metrics_by_year.keys())}")
+    print(f"Target years: {list(cfg.target_years)}")
+    print(f"Backup created: {cfg.backup_path}")
+
+
+if __name__ == "__main__":
+    main()

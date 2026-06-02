@@ -52,12 +52,19 @@ linopy_model_logger = logging.getLogger('linopy.model')
 linopy_model_logger.setLevel(logging.WARNING)
 
 from pypsa.descriptors import get_switchable_as_dense as get_as_dense
+from baseyear_capacity_lock import apply_baseyear_capacity_locks
+from solar_capacity_guard import apply_solar_capacity_guard
+from wind_capacity_guard import apply_wind_capacity_guard
+from storage_capacity_guard import apply_storage_capacity_guard
+from nuclear_capacity_guard import apply_nuclear_capacity_guard
 
 def prepare_network(
         n,
         solve_opts=None,
         using_single_node=False,
-        single_node_province="Shandong"
+        single_node_province="Shandong",
+        config=None,
+        planning_horizon=None,
 ):
     # Check if single node mode is enabled
     if using_single_node:
@@ -147,6 +154,27 @@ def prepare_network(
         nhours = solve_opts['nhours']
         n.set_snapshots(n.snapshots[:nhours])
         n.snapshot_weightings[:] = 8760. / nhours
+
+    cfg_for_guard = config if isinstance(config, dict) else getattr(n, "config", None)
+    if cfg_for_guard is None:
+        cfg_for_guard = snakemake.config if "snakemake" in globals() else {}
+    scenario_context = None
+    if "snakemake" in globals():
+        scenario_context = {
+            "opts": getattr(snakemake.wildcards, "opts", None),
+            "topology": getattr(snakemake.wildcards, "topology", None),
+            "pathway": getattr(snakemake.wildcards, "pathway", None),
+            "heating_demand": getattr(snakemake.wildcards, "heating_demand", None),
+        }
+    apply_solar_capacity_guard(n, cfg_for_guard, scenario_context=scenario_context)
+    apply_wind_capacity_guard(n, cfg_for_guard)
+    apply_nuclear_capacity_guard(n, cfg_for_guard)
+    apply_storage_capacity_guard(n, cfg_for_guard, scenario_context=scenario_context)
+    if planning_horizon is None:
+        planning_horizon = getattr(getattr(globals().get("snakemake", None), "wildcards", None), "planning_horizons", None)
+    if planning_horizon is None and len(n.snapshots):
+        planning_horizon = int(pd.DatetimeIndex(n.snapshots)[0].year)
+    apply_baseyear_capacity_locks(n, planning_horizon, config=cfg_for_guard)
 
     return n
 
@@ -286,6 +314,142 @@ def add_retrofit_constraints(n):
                 rhs = max_cap - retrofit_cap
                 n.model.add_constraints(lhs == rhs, name=f"Generator-coal-retrofit-{year}-{bus}")
 
+
+def _as_list(value) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, (list, tuple, set)):
+        return [str(v) for v in value]
+    return []
+
+
+def _non_snapshot_dim(expr) -> str | None:
+    dims = getattr(expr, "dims", None)
+    if dims is None:
+        data = getattr(expr, "data", None)
+        dims = getattr(data, "dims", None)
+    if dims is None:
+        return None
+    for dim in dims:
+        if str(dim) != "snapshot":
+            return str(dim)
+    return None
+
+
+def _province_ac_load_by_snapshot(n, snapshots, provinces: set[str]) -> pd.DataFrame:
+    load_values = n.loads_t.p_set if hasattr(n.loads_t, "p_set") else n.loads_t.p
+    load_values = load_values.reindex(index=snapshots).fillna(0.0)
+    out = pd.DataFrame(0.0, index=pd.Index(snapshots), columns=sorted(provinces), dtype=float)
+    for load_name, row in n.loads.iterrows():
+        if load_name not in load_values.columns:
+            continue
+        bus = str(row.get("bus", ""))
+        if bus not in provinces:
+            continue
+        out[bus] = out[bus].add(
+            pd.to_numeric(load_values[load_name], errors="coerce").fillna(0.0).clip(lower=0.0),
+            fill_value=0.0,
+        )
+    return out
+
+
+def _sync_generator_groups(n, floor_cfg: dict, provinces: set[str]) -> dict[str, list[str]]:
+    carriers = set(_as_list(floor_cfg.get("Generator")))
+    groups: dict[str, list[str]] = {}
+    if not carriers or not hasattr(n, "generators") or n.generators.empty:
+        return groups
+    for gen_name, row in n.generators.iterrows():
+        if str(row.get("carrier", "")) not in carriers:
+            continue
+        bus = str(row.get("bus", ""))
+        if bus not in provinces:
+            continue
+        groups.setdefault(bus, []).append(str(gen_name))
+    return groups
+
+
+def _sync_link_groups(n, floor_cfg: dict, provinces: set[str]) -> dict[str, list[str]]:
+    specs = floor_cfg.get("Link") or {}
+    groups: dict[str, list[str]] = {}
+    if not isinstance(specs, dict) or not specs or not hasattr(n, "links") or n.links.empty:
+        return groups
+    for link_name, row in n.links.iterrows():
+        carrier = str(row.get("carrier", ""))
+        if carrier not in specs:
+            continue
+        spec = specs.get(carrier) or {}
+        only_bus1_carrier = spec.get("only_bus1_carrier") if isinstance(spec, dict) else None
+        bus1 = str(row.get("bus1", ""))
+        if bus1 not in provinces:
+            continue
+        if only_bus1_carrier and bus1 in n.buses.index:
+            if str(n.buses.at[bus1, "carrier"]) != str(only_bus1_carrier):
+                continue
+        groups.setdefault(bus1, []).append(str(link_name))
+    return groups
+
+
+def add_synchronous_generation_floor_constraints(n, snapshots) -> None:
+    """Require configured synchronous generators/links to cover a share of local AC load."""
+    cfg = getattr(n, "config", {}) or {}
+    floor_cfg = cfg.get("synchronous_generation_floor") or {}
+    if not isinstance(floor_cfg, dict) or not bool(floor_cfg.get("enabled", False)):
+        return
+    ratio = float(floor_cfg.get("ratio", 0.0) or 0.0)
+    if ratio <= 0.0:
+        return
+    if ratio >= 1.0:
+        raise ValueError(f"synchronous_generation_floor.ratio must be < 1, got {ratio}")
+
+    ac_buses = n.buses.index[n.buses.carrier.astype(str) == "AC"] if "carrier" in n.buses.columns else n.buses.index
+    provinces = set(map(str, ac_buses))
+    if not provinces:
+        logger.warning("synchronous_generation_floor enabled but no AC province buses were found.")
+        return
+
+    load_by_province = _province_ac_load_by_snapshot(n, snapshots, provinces)
+    gen_groups = _sync_generator_groups(n, floor_cfg, provinces)
+    link_groups = _sync_link_groups(n, floor_cfg, provinces)
+    gen_p = n.model["Generator-p"] if "Generator-p" in n.model.variables else None
+    link_p = n.model["Link-p"] if "Link-p" in n.model.variables else None
+    scale = 1e-3
+    added = 0
+
+    for province in sorted(provinces):
+        rhs = (load_by_province[province].astype(float) * ratio * scale).rename("snapshot")
+        if float(rhs.max()) <= 0.0:
+            continue
+
+        lhs = None
+        gens = [g for g in gen_groups.get(province, []) if gen_p is not None and g in n.generators.index]
+        if gens:
+            gen_sel = gen_p.loc[:, gens]
+            gen_dim = _non_snapshot_dim(gen_sel)
+            lhs = (gen_sel.sum(gen_dim) if gen_dim is not None else gen_sel) * scale
+
+        links = [l for l in link_groups.get(province, []) if link_p is not None and l in n.links.index]
+        if links:
+            eff = n.links.loc[links, "efficiency"].astype(float).clip(lower=0.0)
+            link_sel = link_p.loc[:, links] * eff
+            link_dim = _non_snapshot_dim(link_sel)
+            link_lhs = (link_sel.sum(link_dim) if link_dim is not None else link_sel) * scale
+            lhs = link_lhs if lhs is None else lhs + link_lhs
+
+        if lhs is None:
+            logger.warning(
+                "synchronous_generation_floor: skip %s because no configured synchronous components were found.",
+                province,
+            )
+            continue
+
+        n.model.add_constraints(lhs >= rhs, name=f"sync-generation-floor-{province}")
+        added += 1
+
+    logger.info("Added synchronous_generation_floor constraints for %s provinces at ratio %.3f.", added, ratio)
+
+
 def extra_functionality(n, snapshots, fixed_aluminum_usage=None):
     """
     Collects supplementary constraints which will be passed to ``pypsa.linopf.network_lopf``.
@@ -298,6 +462,7 @@ def extra_functionality(n, snapshots, fixed_aluminum_usage=None):
     add_transimission_constraints(n)
     if snakemake.wildcards.planning_horizons != "2020":
         add_retrofit_constraints(n)
+    add_synchronous_generation_floor_constraints(n, snapshots)
 
 def solve_aluminum_optimization(n, config, solving, opts="", nodal_prices=None, target_province=None, national_smelter_production=None, **kwargs):
     """
@@ -610,7 +775,8 @@ def solve_aluminum_optimization_parallel_wrapper(args):
         n_province,
         solve_opts,
         using_single_node=using_single_node,
-        single_node_province=single_node_province
+        single_node_province=single_node_province,
+        config=config,
     )
     
     # Set configuration
@@ -846,7 +1012,8 @@ def solve_network_iterative(n, config, solving, opts="", max_iterations=10, conv
                 n_current,
                 kwargs.get("solve_opts", {}),
                 using_single_node=using_single_node,
-                single_node_province=single_node_province
+                single_node_province=single_node_province,
+                config=config,
             )
             
             # Set configuration
@@ -1385,7 +1552,9 @@ if __name__ == '__main__':
         n,
         solve_opts,
         using_single_node=snakemake.params.using_single_node,
-        single_node_province=snakemake.params.single_node_province
+        single_node_province=snakemake.params.single_node_province,
+        config=snakemake.config,
+        planning_horizon=snakemake.wildcards.planning_horizons,
     )
 
     # Check whether electrolytic aluminum iterative optimization is enabled

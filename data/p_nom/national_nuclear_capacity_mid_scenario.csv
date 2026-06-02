@@ -1,0 +1,8 @@
+year,national_nuclear_capacity_mw,national_nuclear_capacity_gw,assumption_note
+2030,120000,120.0,mid_scenario_anchor_from_user
+2035,160000,160.0,mid_scenario_anchor_from_user
+2040,225000,225.0,mid_scenario_anchor_from_user
+2045,280000,280.0,linear_interpolation_2040_2050
+2050,335000,335.0,mid_scenario_anchor_from_user
+2055,390000,390.0,designed_extension_for_2060_path
+2060,450000,450.0,designed_extension_for_2060_path
