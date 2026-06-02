@@ -1,6 +1,6 @@
 # Server Commands (PyPSA-China)
 
-snakemake --configfile config.yaml --cores 16 --resources mem_mb=100000
+snakemake --configfile config.yaml --cores 12 --resources mem_mb=112000
 
 ## 1) Environment setup (first run or env update)
 

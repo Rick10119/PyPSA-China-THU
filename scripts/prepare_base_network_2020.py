@@ -182,7 +182,14 @@ def prepare_network(config):
         load = 1e6 * store['load']
         load = load.loc[network.snapshots]
 
-    load.columns = pro_names
+    missing_load_cols = nodes.difference(load.columns)
+    extra_load_cols = pd.Index(load.columns).difference(nodes)
+    if not missing_load_cols.empty or not extra_load_cols.empty:
+        raise ValueError(
+            "Electric-load province columns do not match model provinces. "
+            f"Missing: {missing_load_cols.tolist()}; extra: {extra_load_cols.tolist()}"
+        )
+    load = load.reindex(columns=nodes)
 
     # Add electrical load
     network.madd("Load", nodes, bus=nodes, p_set=load[nodes])
