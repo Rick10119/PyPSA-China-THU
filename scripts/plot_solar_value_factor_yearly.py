@@ -1,7 +1,3 @@
-# SPDX-FileCopyrightText: 2026 Ruike Lyu
-#
-# SPDX-License-Identifier: MIT
-
 #!/usr/bin/env python3
 """Plot generation-weighted solar value_factor over planning years from solar_value_dataset.xlsx.
 
@@ -49,10 +45,24 @@ def _configure_cjk_font() -> None:
             "Heiti SC",
             "Songti SC",
             "Arial Unicode MS",
-            "sans-serif",
+            "DejaVu Sans",
+        ]
+    elif sys.platform == "win32":
+        plt.rcParams["font.sans-serif"] = [
+            "Noto Sans SC",
+            "Microsoft YaHei",
+            "SimHei",
+            "SimSun",
+            "DejaVu Sans",
         ]
     else:
-        plt.rcParams["font.sans-serif"] = ["Noto Sans CJK SC", "WenQuanYi Zen Hei", "sans-serif"]
+        plt.rcParams["font.sans-serif"] = [
+            "Noto Sans CJK SC",
+            "Noto Sans SC",
+            "WenQuanYi Zen Hei",
+            "DejaVu Sans",
+        ]
+    plt.rcParams["font.family"] = "sans-serif"
     plt.rcParams["axes.unicode_minus"] = False
 
 
