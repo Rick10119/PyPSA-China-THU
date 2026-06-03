@@ -570,16 +570,6 @@ def _province_offer_blocks(
     return blocks
 
 
-def _carriers_without_chp(
-    generator_carriers: set[str],
-    link_carrier_to_bus1_carrier: dict[str, str],
-) -> tuple[set[str], dict[str, str]]:
-    """Drop carriers whose names contain ``chp`` (case-insensitive) from mapped-price stacks."""
-    gen = {c for c in generator_carriers if "chp" not in str(c).lower()}
-    link = {k: v for k, v in link_carrier_to_bus1_carrier.items() if "chp" not in str(k).lower()}
-    return gen, link
-
-
 def _load_heating_season_chp_exclusion_config(
     config_path: str | Path | None = None,
 ) -> tuple[bool, int, int, int, int]:
@@ -734,10 +724,6 @@ def _province_ref_fuel_prices(
     province_cols = list(map(str, provinces))
     out = pd.DataFrame(index=snapshots, columns=province_cols, dtype=float)
 
-    hs_on, hs_sm, hs_sd, hs_em, hs_ed = _load_heating_season_chp_exclusion_config(
-        config_path=config_path
-    )
-    gen_nc, link_nc = _carriers_without_chp(generator_carriers, link_carrier_to_bus1_carrier)
     _, _, blocks_full = _weekly_lr_and_blocks(
         n,
         provinces,
@@ -747,23 +733,6 @@ def _province_ref_fuel_prices(
         link_carrier_to_bus1_carrier=link_carrier_to_bus1_carrier,
         config_path=config_path,
     )
-    if hs_on and (gen_nc != generator_carriers or link_nc != link_carrier_to_bus1_carrier):
-        _, _, blocks_nc = _weekly_lr_and_blocks(
-            n,
-            provinces,
-            snapshots,
-            week_freq,
-            generator_carriers=gen_nc,
-            link_carrier_to_bus1_carrier=link_nc,
-            config_path=config_path,
-        )
-        heating = _heating_season_mask(pd.DatetimeIndex(snapshots), hs_sm, hs_sd, hs_em, hs_ed)
-        heating = heating.reindex(snapshots).fillna(False).to_numpy(dtype=bool)
-        use_split = True
-    else:
-        blocks_nc = blocks_full
-        heating = np.zeros(len(snapshots), dtype=bool)
-        use_split = False
 
     for p in province_cols:
         fuel_f = _province_ref_fuel_eur_from_seg0_network(
@@ -775,20 +744,7 @@ def _province_ref_fuel_prices(
         if fuel_f is None or fuel_f <= 0.0:
             fuel_f = _province_ref_fuel_eur_from_blocks(blocks_full.get(p, []) or [])
         fuel_f = 0.0 if fuel_f is None else float(fuel_f)
-
-        if use_split:
-            fuel_h = _province_ref_fuel_eur_from_seg0_network(
-                n,
-                p,
-                generator_carriers=gen_nc,
-                link_carrier_to_bus1_carrier=link_nc,
-            )
-            if fuel_h is None or fuel_h <= 0.0:
-                fuel_h = _province_ref_fuel_eur_from_blocks(blocks_nc.get(p, []) or [])
-            fuel_h = fuel_f if fuel_h is None or fuel_h <= 0.0 else float(fuel_h)
-            out[p] = np.where(heating, fuel_h, fuel_f).astype(float)
-        else:
-            out[p] = fuel_f
+        out[p] = fuel_f
 
     return out.fillna(0.0).clip(lower=0.0)
 
@@ -970,9 +926,6 @@ def _local_mapped_prices(
     cfg_curve = _load_mapped_price_control_points(config_path=config_path) if supply_settings is None else None
     out = pd.DataFrame(index=snapshots, columns=list(map(str, provinces)), dtype=float)
 
-    hs_on, hs_sm, hs_sd, hs_em, hs_ed = _load_heating_season_chp_exclusion_config(config_path=config_path)
-    gen_nc, link_nc = _carriers_without_chp(generator_carriers, link_carrier_to_bus1_carrier)
-
     thermal_full, lr_full, blocks_full = _weekly_lr_and_blocks(
         n,
         provinces,
@@ -983,38 +936,10 @@ def _local_mapped_prices(
         config_path=config_path,
     )
 
-    if hs_on and (gen_nc != generator_carriers or link_nc != link_carrier_to_bus1_carrier):
-        thermal_nc, lr_nc, blocks_nc = _weekly_lr_and_blocks(
-            n,
-            provinces,
-            snapshots,
-            week_freq,
-            generator_carriers=gen_nc,
-            link_carrier_to_bus1_carrier=link_nc,
-            config_path=config_path,
-        )
-        heating = _heating_season_mask(pd.DatetimeIndex(lr_full.index), hs_sm, hs_sd, hs_em, hs_ed)
-        heating = heating.reindex(lr_full.index).fillna(False)
-        heating_b = heating.to_numpy(dtype=bool)
-        use_split = True
-    else:
-        thermal_nc, lr_nc, blocks_nc = thermal_full, lr_full, blocks_full
-        heating_b = np.zeros(len(lr_full.index), dtype=bool)
-        use_split = False
-
     zero_threshold = _daily_low_output_zero_threshold(out.index, config_path=config_path)
 
     for p in out.columns:
-        th_f = pd.to_numeric(thermal_full[p], errors="coerce").fillna(0.0).astype(float)
-        if use_split:
-            th_h = pd.to_numeric(thermal_nc[p], errors="coerce").fillna(0.0).astype(float)
-            th_active = pd.Series(
-                np.where(heating_b, th_h.to_numpy(dtype=float), th_f.to_numpy(dtype=float)),
-                index=out.index,
-                dtype=float,
-            )
-        else:
-            th_active = th_f
+        th_active = pd.to_numeric(thermal_full[p], errors="coerce").fillna(0.0).astype(float)
         zero_mask = _daily_low_output_zero_mask(th_active, threshold=zero_threshold).to_numpy(dtype=bool)
 
         if supply_settings is not None:
@@ -1027,58 +952,24 @@ def _local_mapped_prices(
             if fuel_f is None or fuel_f <= 0.0:
                 fuel_f = _province_ref_fuel_eur_from_blocks(blocks_full.get(p, []) or [])
 
-            if use_split:
-                fuel_h = _province_ref_fuel_eur_from_seg0_network(
-                    n,
-                    p,
-                    generator_carriers=gen_nc,
-                    link_carrier_to_bus1_carrier=link_nc,
-                )
-                if fuel_h is None or fuel_h <= 0.0:
-                    fuel_h = _province_ref_fuel_eur_from_blocks(blocks_nc.get(p, []) or [])
-
             if fuel_f is not None and float(fuel_f) > 0.0:
                 mult_f = _mapped_multiplier_from_lr_normalized(
                     lr_full[p].to_numpy(dtype=float), supply_settings
                 )
-                if use_split:
-                    f_h = (
-                        float(fuel_h)
-                        if fuel_h is not None and float(fuel_h) > 0.0
-                        else float(fuel_f)
-                    )
-                    mult_h = _mapped_multiplier_from_lr_normalized(
-                        lr_nc[p].to_numpy(dtype=float), supply_settings
-                    )
-                    pf = mult_f * float(fuel_f)
-                    ph = mult_h * f_h
-                    vals = np.where(heating_b, ph, pf).astype(float)
-                else:
-                    vals = (mult_f * float(fuel_f)).astype(float)
+                vals = (mult_f * float(fuel_f)).astype(float)
                 vals[zero_mask] = 0.0
                 out[p] = vals
                 continue
 
         if cfg_curve is not None:
             x, y = cfg_curve
-            v_f = np.interp(lr_full[p].to_numpy(dtype=float), x, y).astype(float)
-            if use_split:
-                v_h = np.interp(lr_nc[p].to_numpy(dtype=float), x, y).astype(float)
-                vals = np.where(heating_b, v_h, v_f).astype(float)
-            else:
-                vals = v_f
+            vals = np.interp(lr_full[p].to_numpy(dtype=float), x, y).astype(float)
             vals[zero_mask] = 0.0
             out[p] = vals
             continue
 
         xf, yf = _build_interp_curve(blocks_full.get(p, []))
-        v_f = np.interp(lr_full[p].to_numpy(dtype=float), xf, yf).astype(float)
-        if use_split:
-            xh, yh = _build_interp_curve(blocks_nc.get(p, []))
-            v_h = np.interp(lr_nc[p].to_numpy(dtype=float), xh, yh).astype(float)
-            vals = np.where(heating_b, v_h, v_f).astype(float)
-        else:
-            vals = v_f
+        vals = np.interp(lr_full[p].to_numpy(dtype=float), xf, yf).astype(float)
         vals[zero_mask] = 0.0
         out[p] = vals
 
