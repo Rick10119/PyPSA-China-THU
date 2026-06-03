@@ -300,7 +300,7 @@ def add_retrofit_constraints(n):
         coal_retrofit = n.generators[
             n.generators.index.str.contains("retrofit") & (n.generators.build_year == year)
         ]
-        buses = pd.Index(coal.bus).union(pd.Index(coal_retrofit.bus))
+        buses = pd.Index(coal.bus.tolist() + coal_retrofit.bus.tolist()).drop_duplicates()
 
         for bus in buses:
             if bus not in p_nom_max.index or str(year) not in p_nom_max.columns:
