@@ -20,6 +20,11 @@ from functions import pro_names, offwind_nodes
 def basename(x):
     return x.split("-2")[0]
 
+
+def component_static(c):
+    return c.static if hasattr(c, "static") else c.df
+
+
 def add_brownfield(n, n_p, year):
 
     print("adding brownfield")
@@ -38,52 +43,57 @@ def add_brownfield(n, n_p, year):
     for c in n_p.iterate_components(["Link", "Generator", "Store"]):
 
         attr = "e" if c.name == "Store" else "p"
+        static = component_static(c)
 
         # first, remove generators, links and stores that track
         # CO2 or global EU values since these are already in n
         n_p.mremove(
             c.name,
-            c.df.index[c.df.lifetime==np.inf]
+            static.index[static.lifetime==np.inf]
         )
+        static = component_static(c)
         # remove assets whose build_year + lifetime < year
         n_p.mremove(
             c.name,
-            c.df.index[c.df.build_year + c.df.lifetime < year]
+            static.index[static.build_year + static.lifetime < year]
         )
+        static = component_static(c)
         # remove assets if their optimized nominal capacity is lower than a threshold
         # since CHP heat Link is proportional to CHP electric Link, make sure threshold is compatible
-        chp_heat = c.df.index[(
-            c.df[attr + "_nom_extendable"]
-            & c.df.index.str.contains("CHP")
+        chp_heat = static.index[(
+            static[attr + "_nom_extendable"]
+            & static.index.str.contains("CHP")
         )]
 
         threshold = snakemake.config['existing_capacities']['threshold_capacity']
 
         if not chp_heat.empty:
-            threshold_chp_heat = threshold*c.df.loc[chp_heat].efficiency2/c.df.loc[chp_heat].efficiency
+            threshold_chp_heat = threshold*static.loc[chp_heat].efficiency2/static.loc[chp_heat].efficiency
             n_p.mremove(
                 c.name,
-                chp_heat[c.df.loc[chp_heat, attr + "_nom_opt"] < threshold_chp_heat]
+                chp_heat[static.loc[chp_heat, attr + "_nom_opt"] < threshold_chp_heat]
             )
+            static = component_static(c)
 
         n_p.mremove(
             c.name,
-            c.df.index[c.df[attr + "_nom_extendable"] & ~c.df.index.isin(chp_heat) & (c.df[attr + "_nom_opt"] < threshold)]
+            static.index[static[attr + "_nom_extendable"] & ~static.index.isin(chp_heat) & (static[attr + "_nom_opt"] < threshold)]
         )
+        static = component_static(c)
 
         # copy over assets but fix their capacity
-        c.df[attr + "_nom"] = np.maximum(c.df[attr + "_nom"], c.df[attr + "_nom_opt"])
-        c.df[attr + "_nom_extendable"] = False
-        c.df[attr + "_nom_max"] = np.inf
+        static[attr + "_nom"] = np.maximum(static[attr + "_nom"], static[attr + "_nom_opt"])
+        static[attr + "_nom_extendable"] = False
+        static[attr + "_nom_max"] = np.inf
 
         # Import static component attributes into the current network.
         # PyPSA's import helpers differ across versions; PyPSA 1.2.0 uses the
         # internal `_import_components_from_df`, while some older versions expose
         # `import_components_from_dataframe`.
         try:
-            n.import_components_from_dataframe(c.df, c.name, overwrite=True)
+            n.import_components_from_dataframe(static, c.name, overwrite=True)
         except AttributeError:
-            n._import_components_from_df(c.df, c.name, overwrite=True)
+            n._import_components_from_df(static, c.name, overwrite=True)
 
         # copy time-dependent
         selection = (

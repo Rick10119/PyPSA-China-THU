@@ -2,14 +2,14 @@
 #
 # SPDX-License-Identifier: CC0-1.0
 
-version: 0531.1H.1
+version: 0602.1H.1
 logging_level: INFO
 foresight: "myopic"
 baseyear: 2025
 
 # Single-node mode – if true, keep only one target province in the network
-using_single_node: False
-single_node_province: "Shandong"  # Target province when single-node mode is enabled
+using_single_node: false
+single_node_province: "Tibet"  # Target province when single-node mode is enabled
 
 results_dir: 'results/'
 summary_dir: 'summary/'
@@ -57,12 +57,12 @@ scenario:
   planning_horizons:
     - 2025
     - 2030
-    - 2035
-    - 2040
-    - 2045
-    - 2050
-    - 2055
-    - 2060
+    # - 2035
+    # - 2040
+    # - 2045
+    # - 2050
+    # - 2055
+    # - 2060
   co2_reduction:
     # linear2060:
     #   '2025': -1.
@@ -195,7 +195,7 @@ dispatch_segmented_prices:
     # below (daily max thermal * threshold). Can be set globally and by year.
     daily_low_output_zero_threshold: 0.4
     daily_low_output_zero_threshold_by_year:
-      "2025": 0.42
+      "2025": 0.5
       "2030": 0.40
       "2035": 0.40
     # Nov 15–Mar 15 (inclusive): CHP excluded from P/Cap for mapped LR only; rest of year full stack.

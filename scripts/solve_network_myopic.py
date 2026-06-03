@@ -30,6 +30,14 @@ ALLOWED_OPTIMIZE_KWARGS = [
 ]
 
 logger = logging.getLogger(__name__)
+
+
+def raise_if_optimization_failed(status, condition, *, stage: str) -> None:
+    """Fail before exporting an unsolved network as a downstream postnetwork."""
+    if status == "ok":
+        return
+    logger.error("%s optimization failed: status=%s condition=%s", stage, status, condition)
+    raise RuntimeError(f"{stage} optimization failed: status={status} condition={condition}")
 # PyPSA logging API changed in v1.0 (module-level `pypsa.pf` removed).
 try:
     pypsa.pf.logger.setLevel(logging.WARNING)  # type: ignore[attr-defined]
@@ -286,33 +294,48 @@ def add_retrofit_constraints(n):
     p_nom_max = pd.read_csv("data/p_nom/p_nom_max_cc.csv",index_col=0)
     planning_horizon = snakemake.wildcards.planning_horizons
     for year in range(int(planning_horizon) - 40, 2021, 5):
-        coal = n.generators[(n.generators.carrier=="coal power plant") & (n.generators.build_year==year)].query("p_nom_extendable").index
-        Bus = n.generators[(n.generators.carrier == "coal power plant") & (n.generators.build_year == year)].query(
-            "p_nom_extendable").bus.values
-        coal_retrofit = n.generators[n.generators.index.str.contains("retrofit")& (n.generators.build_year==year) & n.generators.bus.isin(Bus)].query("p_nom_extendable").index
-        coal_retrofitted = n.generators[n.generators.index.str.contains("retrofit") & (n.generators.build_year==year) & n.generators.bus.isin(Bus)].query("~p_nom_extendable").groupby("bus").sum().p_nom_opt
+        coal = n.generators[
+            (n.generators.carrier == "coal power plant") & (n.generators.build_year == year)
+        ]
+        coal_retrofit = n.generators[
+            n.generators.index.str.contains("retrofit") & (n.generators.build_year == year)
+        ]
+        buses = pd.Index(coal.bus).union(pd.Index(coal_retrofit.bus))
 
-        # Create a Series with proper index for the available capacity
-        available_capacity = pd.Series(
-            (p_nom_max[str(year)].loc[Bus] - coal_retrofitted.reindex(p_nom_max[str(year)].loc[Bus].index,fill_value=0)).values,
-            index=Bus
-        )
+        for bus in buses:
+            if bus not in p_nom_max.index or str(year) not in p_nom_max.columns:
+                continue
 
-        # Create constraint with proper dimension handling
-        for bus in Bus:
-            if bus in coal_retrofitted.index:
-                retrofit_cap = coal_retrofitted[bus]
-            else:
-                retrofit_cap = 0
-                
-            max_cap = p_nom_max[str(year)].loc[bus]
-            coal_bus = coal[n.generators.loc[coal].bus == bus]
-            coal_retrofit_bus = coal_retrofit[n.generators.loc[coal_retrofit].bus == bus]
-            
-            if len(coal_bus) > 0 or len(coal_retrofit_bus) > 0:
-                lhs = n.model["Generator-p_nom"].loc[coal_bus].sum() + n.model["Generator-p_nom"].loc[coal_retrofit_bus].sum()
-                rhs = max_cap - retrofit_cap
-                n.model.add_constraints(lhs == rhs, name=f"Generator-coal-retrofit-{year}-{bus}")
+            coal_bus = coal[coal.bus == bus]
+            coal_retrofit_bus = coal_retrofit[coal_retrofit.bus == bus]
+            ext = pd.Index(coal_bus.index[coal_bus.p_nom_extendable]).union(
+                coal_retrofit_bus.index[coal_retrofit_bus.p_nom_extendable]
+            )
+            if ext.empty:
+                continue
+
+            fixed = pd.concat(
+                [
+                    coal_bus[~coal_bus.p_nom_extendable],
+                    coal_retrofit_bus[~coal_retrofit_bus.p_nom_extendable],
+                ]
+            )
+            fixed_cap = float(fixed[["p_nom", "p_nom_opt"]].fillna(0.0).max(axis=1).sum())
+            max_cap = float(p_nom_max.at[bus, str(year)])
+            rhs = max_cap - fixed_cap
+            if rhs < 0:
+                logger.warning(
+                    "Fixed coal/retrofit capacity already exceeds p_nom_max for %s build_year=%s: "
+                    "max=%.6f MW, fixed=%.6f MW; forcing remaining extendable capacity to 0.",
+                    bus,
+                    year,
+                    max_cap,
+                    fixed_cap,
+                )
+                rhs = 0.0
+
+            lhs = n.model["Generator-p_nom"].loc[ext].sum()
+            n.model.add_constraints(lhs <= rhs, name=f"Generator-coal-retrofit-{year}-{bus}")
 
 
 def _as_list(value) -> list[str]:
@@ -1136,6 +1159,11 @@ def solve_network_iterative(n, config, solving, opts="", max_iterations=10, conv
                 extra_functionality=extra_functionality,
                 **optimize_kwargs,
             )
+        raise_if_optimization_failed(
+            status,
+            condition,
+            stage=f"Main network iteration {iteration}",
+        )
         
         # Recording solver performance statistics
         solver_performance['iteration_times'].append(time.time() - iteration_start_time)
@@ -1500,6 +1528,7 @@ def solve_network_standard(n, config, solving, opts="", **kwargs):
             extra_functionality=extra_functionality,
             **optimize_kwargs,
         )
+    raise_if_optimization_failed(status, condition, stage="Main network")
 
     # Store the objective value from the model.
     # In PyPSA v1.x, `Network.objective` is a read-only property; keep this as metadata.
