@@ -5,7 +5,7 @@ This is intended to be called from Snakemake (preferred) or from CLI.
 
 Output CSVs (same snapshot index, selected provinces unless --province is omitted for nodal):
 - Primary: marginal (provincial) prices from `buses_t.marginal_price`
-- Sidecar: mapped reconstruction from segmented thermal bids (+ export adjustments)
+- Sidecar: mapped reconstruction from segmented thermal bids
 - Sidecar: **nodal** marginal prices — full `buses_t.marginal_price` (all buses with duals),
   or the same column subset as `--province` when provinces are restricted
 
@@ -463,12 +463,6 @@ def _resolve_bus_province(bus_name: str, provinces: set[str]) -> str | None:
     return None
 
 
-def _safe_series(df: pd.DataFrame, col: str, index: pd.Index) -> pd.Series:
-    if col in df.columns:
-        return pd.to_numeric(df[col], errors="coerce").reindex(index).fillna(0.0).astype(float)
-    return pd.Series(0.0, index=index, dtype=float)
-
-
 def _generator_selected(carrier: str, generator_carriers: set[str]) -> bool:
     return str(carrier) in generator_carriers
 
@@ -636,8 +630,8 @@ def _load_thermal_load_floor_config(config_path: str | Path | None = None) -> tu
         enabled: true
         ratio: 0.10
 
-    Province-hours at or below ratio * local AC electricity load use 1x
-    coal-power generation cost instead of thermal-load-ratio mapped prices.
+    Province-hours at or near ratio * local AC electricity load are treated as
+    zero-price must-run hours instead of thermal-load-ratio mapped prices.
     """
     cfg_path = Path(config_path) if config_path is not None else _default_config_path()
     if not cfg_path.exists():
@@ -976,14 +970,6 @@ def _local_mapped_prices(
     return out.fillna(0.0).clip(lower=0.0)
 
 
-def _is_uncongested(link_row: pd.Series, p0_t: pd.Series, eps_mw: float) -> pd.Series:
-    p_nom = float(pd.to_numeric(link_row.get("p_nom", 0.0), errors="coerce") or 0.0)
-    if p_nom <= 0:
-        return pd.Series(False, index=p0_t.index)
-    loading = pd.to_numeric(p0_t, errors="coerce").abs()
-    return (loading <= max(p_nom - float(eps_mw), 0.0)).fillna(False)
-
-
 def _province_marginal_prices(
     n: pypsa.Network,
     provinces: pd.Index,
@@ -996,70 +982,6 @@ def _province_marginal_prices(
     mp = n.buses_t.marginal_price.reindex(index=snapshots, columns=cols)
     mp = mp.apply(pd.to_numeric, errors="coerce").fillna(0.0).astype(float)
     return out.add(mp, fill_value=0.0)
-
-
-def _apply_cross_border_exports(
-    n: pypsa.Network,
-    local_prices: pd.DataFrame,
-    reference_prices: pd.DataFrame,
-    *,
-    import_agg: str,
-    line_cong_eps_mw: float,
-    min_inflow_mw: float,
-) -> pd.DataFrame:
-    provinces = list(local_prices.columns)
-    prov_set = set(provinces)
-    local = local_prices.copy().astype(float)
-    reference = reference_prices.reindex(index=local.index, columns=local.columns).fillna(0.0).astype(float)
-    export_price_candidates: dict[str, list[pd.Series]] = {p: [] for p in provinces}
-
-    if not hasattr(n, "links") or n.links.empty or not hasattr(n, "links_t") or not hasattr(n.links_t, "p0"):
-        return local
-
-    for l, row in n.links.iterrows():
-        b0 = str(row.get("bus0", ""))
-        b1 = str(row.get("bus1", ""))
-        if b0 not in prov_set or b1 not in prov_set:
-            continue
-
-        p0 = _safe_series(n.links_t.p0, str(l), local.index)
-        uncong = _is_uncongested(row, p0, float(line_cong_eps_mw))
-        if not uncong.any():
-            continue
-
-        eta_fwd = float(pd.to_numeric(row.get("efficiency", 1.0), errors="coerce") or 1.0)
-        eta_rev = float(pd.to_numeric(row.get("efficiency2", np.nan), errors="coerce"))
-        if np.isnan(eta_rev):
-            eta_rev = eta_fwd
-        eta_fwd = max(eta_fwd, 1e-6)
-        eta_rev = max(eta_rev, 1e-6)
-
-        # Forward flow: b0 -> b1 if p0 > 0.
-        # Exporting province b0 references receiving province b1 price,
-        # mapped back with distance/loss correction.
-        fwd_mask = uncong & (p0 > float(min_inflow_mw))
-        if fwd_mask.any():
-            ref_fwd = (reference[b1] * eta_fwd).where(fwd_mask)
-            export_price_candidates[b0].append(ref_fwd)
-
-        # Reverse flow: b1 -> b0 if p0 < 0.
-        rev_mask = uncong & (p0 < -float(min_inflow_mw))
-        if rev_mask.any():
-            ref_rev = (reference[b0] * eta_rev).where(rev_mask)
-            export_price_candidates[b1].append(ref_rev)
-
-    out = local.copy()
-    for p in provinces:
-        if not export_price_candidates[p]:
-            continue
-        mat = pd.concat(export_price_candidates[p], axis=1)
-        # For exporting province, use the highest receiving-side reference price.
-        # Keep import_agg argument for backward-compatible interfaces.
-        _ = import_agg
-        agg_ref = mat.max(axis=1, skipna=True)
-        out[p] = np.maximum(local[p], agg_ref.fillna(local[p]))
-
-    return out.fillna(0.0).clip(lower=0.0)
 
 
 def mapped_retail_prices(
@@ -1085,19 +1007,10 @@ def mapped_retail_prices(
         snapshots=pd.Index(local.index),
     )
     zero_price_mask = local.astype(float) <= 1e-9
-    local_for_exports = local.copy()
+    local_mapped = local.copy()
     floor_enabled, floor_ratio = _load_thermal_load_floor_config(config_path=config_path)
     if floor_enabled:
         thermal, _, _ = _weekly_lr_and_blocks(
-            n,
-            provinces=pd.Index(local.columns),
-            snapshots=pd.Index(local.index),
-            week_freq=str(week_freq),
-            generator_carriers=generator_carriers,
-            link_carrier_to_bus1_carrier=link_carrier_to_bus1_carrier,
-            config_path=config_path,
-        )
-        fuel_price = _province_ref_fuel_prices(
             n,
             provinces=pd.Index(local.columns),
             snapshots=pd.Index(local.index),
@@ -1114,26 +1027,9 @@ def mapped_retail_prices(
             ratio=float(floor_ratio),
             multiplier=1.5,
         )
-        fuel_price = fuel_price.reindex(index=local_for_exports.index, columns=local_for_exports.columns).fillna(0.0)
-        local_for_exports = local_for_exports.mask(
-            near_floor_mask & (local_for_exports > fuel_price), fuel_price
-        )
-        floor_mask = _thermal_load_floor_mask(
-            thermal,
-            n,
-            provinces=pd.Index(local.columns),
-            snapshots=pd.Index(local.index),
-            ratio=float(floor_ratio),
-        )
-        local_for_exports = local_for_exports.mask(floor_mask, coal_1x)
-    out = _apply_cross_border_exports(
-        n,
-        local_for_exports,
-        coal_1x,
-        import_agg=str(import_agg),
-        line_cong_eps_mw=float(line_cong_eps_mw),
-        min_inflow_mw=float(min_inflow_mw),
-    )
+        zero_price_mask = zero_price_mask | near_floor_mask
+        local_mapped = local_mapped.mask(near_floor_mask, 0.0)
+    out = local_mapped
     out = out.mask((out < coal_1x) & ~zero_price_mask, coal_1x)
     out = out.mask(zero_price_mask, 0.0)
     return out.fillna(0.0).clip(lower=0.0)
@@ -1293,11 +1189,21 @@ def main() -> None:
         choices=["min_offer", "max_offer"],
         help=(
             "Deprecated compatibility argument. "
-            "Current mapped export adjustment always uses highest receiving-side reference."
+            "Mapped sidecar prices are now mapped independently by province."
         ),
     )
-    ap.add_argument("--line-cong-eps-mw", type=float, default=1e-3, help="Congestion slack in MW (default: 1e-3)")
-    ap.add_argument("--min-inflow-mw", type=float, default=1e-3, help="Ignore smaller line flows (default: 1e-3)")
+    ap.add_argument(
+        "--line-cong-eps-mw",
+        type=float,
+        default=1e-3,
+        help="Deprecated compatibility argument; mapped sidecar ignores line-flow adjustment.",
+    )
+    ap.add_argument(
+        "--min-inflow-mw",
+        type=float,
+        default=1e-3,
+        help="Deprecated compatibility argument; mapped sidecar ignores line-flow adjustment.",
+    )
     ap.add_argument(
         "--price-mode",
         default="marginal",

@@ -65,15 +65,13 @@ this order:
    `max(biweekly_max_thermal_output, biweekly_min_thermal_output / lr_threshold_first)`.
    With the default `lr_threshold_first: 0.4`, a stable must-run floor maps to the first supply
    band instead of being normalized to the peak band.
-2. Apply the local must-run floor price rule before any cross-province transmission adjustment:
-   - at or below `10 %` of local AC load, use the province's marginal price;
-   - within `1.5 x` the floor (`15 %` of local AC load by default), cap mapped prices at the
-     `1.0 x` reference fuel price.
-3. Apply cross-province export adjustment. Only province-to-province links are considered
-   (`bus0` and `bus1` both provincial AC buses). If province A exports to province B on an
-   uncongested link, A's mapped price can be lifted to the receiving-side marginal price adjusted by
-   link efficiency. The receiving province keeps its own local/floor-adjusted price; import flows do
-   not lower or raise the receiving province's price.
+2. Apply the local must-run floor price rule:
+   - at or near `10 %` of local AC load, treat synchronous output as must-run rather than marginal;
+   - within `1.5 x` the floor (`15 %` of local AC load by default), keep the mapped sidecar price at
+     `0` and protect it from later coal-price floors.
+3. Do not apply a separate cross-province transmission price adjustment. Each province keeps its
+   own mapped price based on local synchronous/thermal output; transmission effects are already
+   reflected in the solved dispatch and marginal-price output.
 
 Related configuration lives under `dispatch_segmented_prices.price_export`:
 
