@@ -1046,6 +1046,19 @@ def prepare_network(config):
                      lifetime=costs.at['central gas CHP', 'lifetime'])
 
     if "coal power plant" in config["Techs"]["conv_techs"]:
+            coal_expansion_start_year = int(config.get("coal_power_plant", {}).get("expansion_start_year", 2025))
+            if int(planning_horizons) >= coal_expansion_start_year:
+                network.madd("Generator",
+                             nodes,
+                             suffix=' coal power plant',
+                             bus=nodes,
+                             carrier="coal power plant",
+                             p_nom_extendable=True,
+                             efficiency=costs.at['coal', 'efficiency'],
+                             marginal_cost=costs.at['coal', 'marginal_cost'],
+                             capital_cost=costs.at['coal', 'capital_cost'],
+                             lifetime=costs.at['coal', 'lifetime'])
+
             network.add("Carrier", "coal cc", co2_emissions=0.034)
             network.madd("Generator",
                         nodes,
@@ -1058,19 +1071,21 @@ def prepare_network(config):
                         capital_cost=costs.at['coal', 'capital_cost'] + costs.at['retrofit', 'capital_cost'], #NB: capital cost is per MWel
                         lifetime=costs.at['retrofit', 'lifetime'])
 
-            for year in range(int(planning_horizons)-25,2021,5):
-                network.madd("Generator",
-                             nodes,
-                             suffix=' coal-' + str(year) + "-retrofit",
-                             bus=nodes,
-                             carrier="coal cc",
-                             p_nom_extendable=True,
-                             capital_cost=costs.at['retrofit', 'capital_cost'],
-                             efficiency=costs.at['coal', 'efficiency'] * 0.9,
-                             lifetime=costs.at['retrofit', 'lifetime'],
-                             build_year=year,
-                             marginal_cost=costs.at['coal', 'marginal_cost'] + costs.at['retrofit', 'VOM']*0.34
-                             )
+            retrofit_start_year = int(config.get("coal_retrofit", {}).get("start_year", 2025))
+            if int(planning_horizons) >= retrofit_start_year:
+                for year in range(int(planning_horizons)-25,2021,5):
+                    network.madd("Generator",
+                                 nodes,
+                                 suffix=' coal-' + str(year) + "-retrofit",
+                                 bus=nodes,
+                                 carrier="coal cc",
+                                 p_nom_extendable=True,
+                                 capital_cost=costs.at['retrofit', 'capital_cost'],
+                                 efficiency=costs.at['coal', 'efficiency'] * 0.9,
+                                 lifetime=costs.at['retrofit', 'lifetime'],
+                                 build_year=year,
+                                 marginal_cost=costs.at['coal', 'marginal_cost'] + costs.at['retrofit', 'VOM']*0.34
+                                 )
 
     if "CHP coal" in config["Techs"]["conv_techs"]:
         network.madd("Link",

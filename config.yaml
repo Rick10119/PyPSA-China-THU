@@ -2,14 +2,14 @@
 #
 # SPDX-License-Identifier: CC0-1.0
 
-version: 0602.1H.1
+version: 0602.1H.2
 logging_level: INFO
 foresight: "myopic"
 baseyear: 2025
 
 # Single-node mode – if true, keep only one target province in the network
-using_single_node: false
-single_node_province: "Tibet"  # Target province when single-node mode is enabled
+using_single_node: true
+single_node_province: "Shanghai"  # Target province when single-node mode is enabled
 
 results_dir: 'results/'
 summary_dir: 'summary/'
@@ -157,6 +157,13 @@ synchronous_generation_floor:
       only_bus1_carrier: "AC"
     biomass:
       only_bus1_carrier: "AC"
+
+coal_retrofit:
+  # Keep 2025 coal expansion as ordinary coal capacity; allow CCS retrofit candidates from 2030 onward.
+  start_year: 2030
+
+coal_power_plant:
+  expansion_start_year: 2025
 
 storage_capacity_guard:
   enabled: true
