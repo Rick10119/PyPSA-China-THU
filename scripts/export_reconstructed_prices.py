@@ -370,6 +370,47 @@ def _province_ref_fuel_eur_from_blocks(blocks: list[tuple[float, float]]) -> flo
     return float(w / s)
 
 
+def _national_coal_power_1x_eur_from_seg0_network(n: pypsa.Network) -> float:
+    """Capacity-weighted 1x coal-power cost from ``coal power plant__seg0`` blocks."""
+    if not hasattr(n, "generators") or n.generators.empty:
+        return 0.0
+    wsum = 0.0
+    capsum = 0.0
+    for g, row in n.generators.iterrows():
+        if not str(g).endswith("__seg0"):
+            continue
+        if str(row.get("carrier", "")) != "coal power plant":
+            continue
+        cap = float(pd.to_numeric(row.get("p_nom", 0.0), errors="coerce") or 0.0)
+        mc = float(pd.to_numeric(row.get("marginal_cost", 0.0), errors="coerce") or 0.0)
+        if cap > 1e-9 and mc >= 0.0:
+            wsum += cap * mc
+            capsum += cap
+    return float(wsum / capsum) if capsum > 1e-9 else 0.0
+
+
+def _province_coal_power_1x_prices(
+    n: pypsa.Network,
+    provinces: pd.Index,
+    snapshots: pd.Index,
+) -> pd.DataFrame:
+    """Province-hour reference price equal to 1x coal-power generation cost."""
+    province_cols = list(map(str, provinces))
+    fallback = _national_coal_power_1x_eur_from_seg0_network(n)
+    out = pd.DataFrame(index=snapshots, columns=province_cols, dtype=float)
+    for p in province_cols:
+        val = _province_ref_fuel_eur_from_seg0_network(
+            n,
+            p,
+            generator_carriers={"coal power plant"},
+            link_carrier_to_bus1_carrier={},
+        )
+        if val is None or val <= 0.0:
+            val = fallback
+        out[p] = float(val or 0.0)
+    return out.fillna(0.0).clip(lower=0.0)
+
+
 def _province_elec_buses(n: pypsa.Network) -> pd.Index:
     buses_df = n.buses
     if "carrier" in buses_df.columns:
@@ -605,8 +646,8 @@ def _load_thermal_load_floor_config(config_path: str | Path | None = None) -> tu
         enabled: true
         ratio: 0.10
 
-    Province-hours at or below ratio * local AC electricity load use marginal
-    prices instead of thermal-load-ratio mapped prices.
+    Province-hours at or below ratio * local AC electricity load use 1x
+    coal-power generation cost instead of thermal-load-ratio mapped prices.
     """
     cfg_path = Path(config_path) if config_path is not None else _default_config_path()
     if not cfg_path.exists():
@@ -1069,7 +1110,7 @@ def _province_marginal_prices(
 def _apply_cross_border_exports(
     n: pypsa.Network,
     local_prices: pd.DataFrame,
-    marginal_prices: pd.DataFrame,
+    reference_prices: pd.DataFrame,
     *,
     import_agg: str,
     line_cong_eps_mw: float,
@@ -1078,7 +1119,7 @@ def _apply_cross_border_exports(
     provinces = list(local_prices.columns)
     prov_set = set(provinces)
     local = local_prices.copy().astype(float)
-    marginal = marginal_prices.reindex(index=local.index, columns=local.columns).fillna(0.0).astype(float)
+    reference = reference_prices.reindex(index=local.index, columns=local.columns).fillna(0.0).astype(float)
     export_price_candidates: dict[str, list[pd.Series]] = {p: [] for p in provinces}
 
     if not hasattr(n, "links") or n.links.empty or not hasattr(n, "links_t") or not hasattr(n.links_t, "p0"):
@@ -1107,13 +1148,13 @@ def _apply_cross_border_exports(
         # mapped back with distance/loss correction.
         fwd_mask = uncong & (p0 > float(min_inflow_mw))
         if fwd_mask.any():
-            ref_fwd = (marginal[b1] * eta_fwd).where(fwd_mask)
+            ref_fwd = (reference[b1] * eta_fwd).where(fwd_mask)
             export_price_candidates[b0].append(ref_fwd)
 
         # Reverse flow: b1 -> b0 if p0 < 0.
         rev_mask = uncong & (p0 < -float(min_inflow_mw))
         if rev_mask.any():
-            ref_rev = (marginal[b0] * eta_rev).where(rev_mask)
+            ref_rev = (reference[b0] * eta_rev).where(rev_mask)
             export_price_candidates[b1].append(ref_rev)
 
     out = local.copy()
@@ -1147,11 +1188,12 @@ def mapped_retail_prices(
         link_carrier_to_bus1_carrier=link_carrier_to_bus1_carrier,
         config_path=config_path,
     )
-    marginal = _province_marginal_prices(
+    coal_1x = _province_coal_power_1x_prices(
         n,
         provinces=pd.Index(local.columns),
         snapshots=pd.Index(local.index),
     )
+    zero_price_mask = local.astype(float) <= 1e-9
     local_for_exports = local.copy()
     floor_enabled, floor_ratio = _load_thermal_load_floor_config(config_path=config_path)
     if floor_enabled:
@@ -1192,16 +1234,17 @@ def mapped_retail_prices(
             snapshots=pd.Index(local.index),
             ratio=float(floor_ratio),
         )
-        local_for_exports = local_for_exports.mask(floor_mask, marginal)
+        local_for_exports = local_for_exports.mask(floor_mask, coal_1x)
     out = _apply_cross_border_exports(
         n,
         local_for_exports,
-        marginal,
+        coal_1x,
         import_agg=str(import_agg),
         line_cong_eps_mw=float(line_cong_eps_mw),
         min_inflow_mw=float(min_inflow_mw),
     )
-    out = out.mask(out < marginal, marginal)
+    out = out.mask((out < coal_1x) & ~zero_price_mask, coal_1x)
+    out = out.mask(zero_price_mask, 0.0)
     return out.fillna(0.0).clip(lower=0.0)
 
 
@@ -1271,8 +1314,15 @@ def export_prices(
         baseline = baseline.reindex(index=prices.index, columns=prices.columns).fillna(0.0).astype(float)
         prices_f = prices.astype(float)
         prices = prices_f.mask(prices_f < baseline, baseline)
+        mapped_baseline = _province_coal_power_1x_prices(
+            n,
+            provinces=pd.Index(mapped_prices.columns),
+            snapshots=pd.Index(mapped_prices.index),
+        ).reindex(index=mapped_prices.index, columns=mapped_prices.columns).fillna(0.0).astype(float)
         mapped_f = mapped_prices.astype(float)
-        mapped_prices = mapped_f.mask(mapped_f < baseline, baseline)
+        mapped_zero_mask = mapped_f <= 1e-9
+        mapped_prices = mapped_f.mask((mapped_f < mapped_baseline) & ~mapped_zero_mask, mapped_baseline)
+        mapped_prices = mapped_prices.mask(mapped_zero_mask, 0.0)
         nodal_marginal = _calibrate_nodal_with_baseline(nodal_marginal, n0)
 
     cur = str(currency).upper()
@@ -1370,7 +1420,8 @@ def main() -> None:
         action="store_true",
         help=(
             "When exporting, take elementwise max between dispatch LMPs (--network) and "
-            "baseline LMPs (--baseline-network)."
+            "baseline LMPs (--baseline-network). Mapped sidecar uses 1x coal-power "
+            "generation cost as its floor instead of baseline LMPs."
         ),
     )
     ap.add_argument(
