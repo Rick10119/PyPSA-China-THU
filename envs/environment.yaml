@@ -28,7 +28,7 @@ dependencies:
   - pip
 
   # Core model stack
-  - pypsa=1.2.0
+  - pypsa=1.2.2
   - atlite
   - linopy
   - dask
