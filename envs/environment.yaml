@@ -1,5 +1,4 @@
 # SPDX-FileCopyrightText: : 2026
-# SPDX-FileCopyrightText: 2026 Ruike Lyu
 #
 # SPDX-License-Identifier: MIT
 #
@@ -29,7 +28,7 @@ dependencies:
   - pip
 
   # Core model stack
-  - pypsa=1.2.0
+  - pypsa=1.2.2
   - atlite
   - linopy
   - dask

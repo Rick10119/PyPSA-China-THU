@@ -1,6 +1,3 @@
-<!-- SPDX-FileCopyrightText: 2026 Ruike Lyu -->
-<!-- SPDX-License-Identifier: CC-BY-4.0 -->
-
 # PyPSA-China 电价与市场出清机制扩展梳理报告
 
 ## 1. 报告目的
@@ -59,7 +56,7 @@
 
 ### 4.1 建立第二阶段固定容量调度与电价导出流程
 
-当前工作流新增了 `scripts/run_dispatch_segmented_prices.py` 和 `scripts/export_reconstructed_prices.py`，并通过主 `Snakefile` 将其接入工作流。
+当前分支新增了 `scripts/run_dispatch_segmented_prices.py` 和 `scripts/export_reconstructed_prices.py`，并通过 `Snakefile` / `Snakefile_price` 将其接入工作流。
 
 主要变化是：
 
@@ -106,15 +103,15 @@
 
 ### 4.5 省间输电与阻塞价格处理
 
-原始 PyPSA 的节点边际价已经包含网络约束和输电容量紧约束的影响。当前项目进一步做了两层处理：
+原始 PyPSA 的节点边际价已经包含网络约束和输电容量紧约束的影响。当前项目区分两类输出：
 
 - 主输出仍使用 `buses_t.marginal_price`，即调度模型直接给出的省级节点边际价格。
-- mapped sidecar 中加入跨省出口调整：当省 A 向省 B 外送且线路未拥塞时，A 的 mapped price 可参考接收端边际价格并按线路效率调整。
+- mapped sidecar 不再单独处理省间输电；各省按本地同步/火电出力独立映射价格，输电影响已经通过调度结果和主输出 LMP 反映。
 
 这区分了两类价格：
 
 - `marginal`：由模型约束直接给出的节点边际价格，阻塞已经内生反映。
-- `mapped`：用于光伏价值等后处理分析的火电出力-报价映射价格，并叠加出口参考调整。
+- `mapped`：用于光伏价值等后处理分析的本地火电/同步机出力-报价映射价格，不叠加跨省出口参考调整。
 
 ### 4.6 失负荷机制
 
@@ -154,6 +151,7 @@
 当前项目还新增了多类诊断与分析脚本：
 
 - `plot_shandong_price_vs_thermal.py`：分析山东价格与火电出力关系。
+- `_diag_oct30_thermal.py`、`_diag_shandong_daily.py`：用于典型日、典型省份调试。
 - `time_sampling.py`：支持采样工程。
 - `plot_solar_value_factor_yearly.py`：分析光伏价值因子年度变化。
 
@@ -168,7 +166,7 @@
 | 负电价 | 尚未真正实现 | 目前可识别低价/零价时段，mapped price 和 marginal price 导出均裁剪为非负 | 需要允许负报价、负边际成本、价格下限、必须消纳补贴或负荷侧报价 |
 | 弃风弃光 | 已实现并用于分析 | 风光可用出力与实际出力差额可计算弃电；光伏价值数据集计算弃光率 | 需补充弃风指标、按省/小时系统性导出、与负电价联动 |
 | 失负荷 | 机制存在但默认关闭 | `load_shedding` 可添加高成本虚拟发电机 | 需要设定 VOLL、启用极端情景、输出未供电电量和稀缺价格 |
-| 内部/省间阻塞 | 已部分实现 | PyPSA 节点边际价格内生反映输电约束；mapped price 有出口调整 | 省内网络仍是省级聚合，无法表示省内断面阻塞；需更细节点或断面约束 |
+| 内部/省间阻塞 | 已部分实现 | PyPSA 节点边际价格内生反映输电约束；mapped price 按省本地出力独立映射 | 省内网络仍是省级聚合，无法表示省内断面阻塞；需更细节点或断面约束 |
 | 同步机最小出力 | 已实现 | 10% 本地负荷同步机出力底线 | 需要按省、季节、电压稳定/惯量需求校准，而不是统一比例 |
 | 市场规则 | 尚不完整 | 已从系统优化过渡到 dispatch-only 近似出清 | 尚缺日前/实时、报价上下限、辅助服务、容量补偿、结算规则 |
 

@@ -15,4 +15,5 @@ __pycache__
 /.cursor
 /grbnodes0
 /results
+/diagnostics
 .venv

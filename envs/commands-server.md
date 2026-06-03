@@ -1,6 +1,6 @@
 # Server Commands (PyPSA-China)
 
-snakemake --configfile config.yaml --cores 16 --resources mem_mb=100000
+snakemake --configfile config.yaml --cores 12 --resources mem_mb=112000
 
 ## 1) Environment setup (first run or env update)
 
@@ -28,12 +28,15 @@ module load anaconda3/2024.6
 conda activate pypsa
 
 git fetch --all --prune
-git checkout "<branch-name>"
+git checkout "price-simulation"
 git pull
 
 snakemake --unlock
 snakemake -np
 sbatch job.slurm
+sbatch job_fill_solar.slurm
+sbatch job_capacity.slurm
+sbatch job_price.slurm
 
 
 chmod +x submit_multiple_jobs.sh
@@ -76,7 +79,7 @@ find ./results | xargs touch
 ## 6) Plotting / debugging (example: Sep 2)
 
 ```bash
-find ./results/version-0516.1H.2 | xargs touch 
+find ./results/version-0516.1H.2 | xargs touch
 snakemake --unlock
 snakemake --configfile configs/config_MMMF_2050_10p.yaml -np --rerun-incomplete --ignore-incomplete --rerun-triggers mtime
 snakemake --configfile configs/config_MMMF_2050_10p.yaml --cores 6 --rerun-incomplete --ignore-incomplete --rerun-triggers mtime

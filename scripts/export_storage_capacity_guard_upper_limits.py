@@ -1,7 +1,3 @@
-# SPDX-FileCopyrightText: 2026 Ruike Lyu
-#
-# SPDX-License-Identifier: MIT
-
 #!/usr/bin/env python3
 from __future__ import annotations
 
@@ -11,7 +7,12 @@ from pathlib import Path
 import pandas as pd
 import yaml
 
-from storage_capacity_guard import _get_provincial_2025_baseline_mw, _resolve_repo_path
+from storage_capacity_guard import (
+    _get_provincial_2025_baseline_mw,
+    _resolve_repo_path,
+    _target_multipliers,
+    get_provincial_storage_shares,
+)
 
 
 def main() -> None:
@@ -36,7 +37,8 @@ def main() -> None:
         raise ValueError("storage_capacity_guard.enabled is false.")
 
     baseline = _get_provincial_2025_baseline_mw(guard_cfg)
-    multiplier = float(guard_cfg.get("new_build_cap_multiplier", 1.0))
+    shares = get_provincial_storage_shares(guard_cfg)
+    lower_mult, upper_mult = _target_multipliers(guard_cfg)
     max_hours = float(
         config.get("electricity", {}).get("max_hours", {}).get("battery", 6.0)
     )
@@ -60,16 +62,24 @@ def main() -> None:
             else float("nan")
         )
         for province, baseline_mw in baseline.items():
-            cap_power = float(baseline_mw) * multiplier if guard_active else 0.0
+            share = float(shares.get(province, 0.0))
+            target_power = national_target * share if guard_active and pd.notna(national_target) else 0.0
+            min_power = max(target_power * lower_mult, 0.0) if guard_active else 0.0
+            max_power = max(target_power * upper_mult, 0.0) if guard_active else 0.0
             rows.append(
                 {
                     "year": year,
                     "province": province,
                     "baseline_2025_power_mw": float(baseline_mw),
-                    "max_new_build_power_mw": cap_power,
-                    "max_new_build_energy_mwh": cap_power * max_hours if guard_active else 0.0,
+                    "provincial_share": share,
+                    "target_total_power_mw": target_power,
+                    "min_extendable_power_mw": min_power,
+                    "max_extendable_power_mw": max_power,
+                    "min_extendable_energy_mwh": min_power * max_hours if guard_active else 0.0,
+                    "max_extendable_energy_mwh": max_power * max_hours if guard_active else 0.0,
                     "guard_active": guard_active,
-                    "new_build_cap_multiplier": multiplier,
+                    "lower_multiplier": lower_mult,
+                    "upper_multiplier": upper_mult,
                     "national_cumulative_target_mw": national_target,
                 }
             )

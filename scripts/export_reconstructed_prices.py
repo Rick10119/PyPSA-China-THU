@@ -1,7 +1,3 @@
-# SPDX-FileCopyrightText: 2026 Ruike Lyu
-#
-# SPDX-License-Identifier: MIT
-
 """
 Export reconstructed electricity prices from a solved PyPSA network `.nc`.
 
@@ -9,7 +5,7 @@ This is intended to be called from Snakemake (preferred) or from CLI.
 
 Output CSVs (same snapshot index, selected provinces unless --province is omitted for nodal):
 - Primary: marginal (provincial) prices from `buses_t.marginal_price`
-- Sidecar: mapped reconstruction from segmented thermal bids (+ export adjustments)
+- Sidecar: mapped reconstruction from segmented thermal bids
 - Sidecar: **nodal** marginal prices — full `buses_t.marginal_price` (all buses with duals),
   or the same column subset as `--province` when provinces are restricted
 
@@ -374,6 +370,47 @@ def _province_ref_fuel_eur_from_blocks(blocks: list[tuple[float, float]]) -> flo
     return float(w / s)
 
 
+def _national_coal_power_1x_eur_from_seg0_network(n: pypsa.Network) -> float:
+    """Capacity-weighted 1x coal-power cost from ``coal power plant__seg0`` blocks."""
+    if not hasattr(n, "generators") or n.generators.empty:
+        return 0.0
+    wsum = 0.0
+    capsum = 0.0
+    for g, row in n.generators.iterrows():
+        if not str(g).endswith("__seg0"):
+            continue
+        if str(row.get("carrier", "")) != "coal power plant":
+            continue
+        cap = float(pd.to_numeric(row.get("p_nom", 0.0), errors="coerce") or 0.0)
+        mc = float(pd.to_numeric(row.get("marginal_cost", 0.0), errors="coerce") or 0.0)
+        if cap > 1e-9 and mc >= 0.0:
+            wsum += cap * mc
+            capsum += cap
+    return float(wsum / capsum) if capsum > 1e-9 else 0.0
+
+
+def _province_coal_power_1x_prices(
+    n: pypsa.Network,
+    provinces: pd.Index,
+    snapshots: pd.Index,
+) -> pd.DataFrame:
+    """Province-hour reference price equal to 1x coal-power generation cost."""
+    province_cols = list(map(str, provinces))
+    fallback = _national_coal_power_1x_eur_from_seg0_network(n)
+    out = pd.DataFrame(index=snapshots, columns=province_cols, dtype=float)
+    for p in province_cols:
+        val = _province_ref_fuel_eur_from_seg0_network(
+            n,
+            p,
+            generator_carriers={"coal power plant"},
+            link_carrier_to_bus1_carrier={},
+        )
+        if val is None or val <= 0.0:
+            val = fallback
+        out[p] = float(val or 0.0)
+    return out.fillna(0.0).clip(lower=0.0)
+
+
 def _province_elec_buses(n: pypsa.Network) -> pd.Index:
     buses_df = n.buses
     if "carrier" in buses_df.columns:
@@ -424,12 +461,6 @@ def _resolve_bus_province(bus_name: str, provinces: set[str]) -> str | None:
     if b in provinces:
         return b
     return None
-
-
-def _safe_series(df: pd.DataFrame, col: str, index: pd.Index) -> pd.Series:
-    if col in df.columns:
-        return pd.to_numeric(df[col], errors="coerce").reindex(index).fillna(0.0).astype(float)
-    return pd.Series(0.0, index=index, dtype=float)
 
 
 def _generator_selected(carrier: str, generator_carriers: set[str]) -> bool:
@@ -533,16 +564,6 @@ def _province_offer_blocks(
     return blocks
 
 
-def _carriers_without_chp(
-    generator_carriers: set[str],
-    link_carrier_to_bus1_carrier: dict[str, str],
-) -> tuple[set[str], dict[str, str]]:
-    """Drop carriers whose names contain ``chp`` (case-insensitive) from mapped-price stacks."""
-    gen = {c for c in generator_carriers if "chp" not in str(c).lower()}
-    link = {k: v for k, v in link_carrier_to_bus1_carrier.items() if "chp" not in str(k).lower()}
-    return gen, link
-
-
 def _load_heating_season_chp_exclusion_config(
     config_path: str | Path | None = None,
 ) -> tuple[bool, int, int, int, int]:
@@ -609,8 +630,8 @@ def _load_thermal_load_floor_config(config_path: str | Path | None = None) -> tu
         enabled: true
         ratio: 0.10
 
-    Province-hours at or below ratio * local AC electricity load use marginal
-    prices instead of thermal-load-ratio mapped prices.
+    Province-hours at or near ratio * local AC electricity load are treated as
+    zero-price must-run hours instead of thermal-load-ratio mapped prices.
     """
     cfg_path = Path(config_path) if config_path is not None else _default_config_path()
     if not cfg_path.exists():
@@ -697,10 +718,6 @@ def _province_ref_fuel_prices(
     province_cols = list(map(str, provinces))
     out = pd.DataFrame(index=snapshots, columns=province_cols, dtype=float)
 
-    hs_on, hs_sm, hs_sd, hs_em, hs_ed = _load_heating_season_chp_exclusion_config(
-        config_path=config_path
-    )
-    gen_nc, link_nc = _carriers_without_chp(generator_carriers, link_carrier_to_bus1_carrier)
     _, _, blocks_full = _weekly_lr_and_blocks(
         n,
         provinces,
@@ -710,23 +727,6 @@ def _province_ref_fuel_prices(
         link_carrier_to_bus1_carrier=link_carrier_to_bus1_carrier,
         config_path=config_path,
     )
-    if hs_on and (gen_nc != generator_carriers or link_nc != link_carrier_to_bus1_carrier):
-        _, _, blocks_nc = _weekly_lr_and_blocks(
-            n,
-            provinces,
-            snapshots,
-            week_freq,
-            generator_carriers=gen_nc,
-            link_carrier_to_bus1_carrier=link_nc,
-            config_path=config_path,
-        )
-        heating = _heating_season_mask(pd.DatetimeIndex(snapshots), hs_sm, hs_sd, hs_em, hs_ed)
-        heating = heating.reindex(snapshots).fillna(False).to_numpy(dtype=bool)
-        use_split = True
-    else:
-        blocks_nc = blocks_full
-        heating = np.zeros(len(snapshots), dtype=bool)
-        use_split = False
 
     for p in province_cols:
         fuel_f = _province_ref_fuel_eur_from_seg0_network(
@@ -738,20 +738,7 @@ def _province_ref_fuel_prices(
         if fuel_f is None or fuel_f <= 0.0:
             fuel_f = _province_ref_fuel_eur_from_blocks(blocks_full.get(p, []) or [])
         fuel_f = 0.0 if fuel_f is None else float(fuel_f)
-
-        if use_split:
-            fuel_h = _province_ref_fuel_eur_from_seg0_network(
-                n,
-                p,
-                generator_carriers=gen_nc,
-                link_carrier_to_bus1_carrier=link_nc,
-            )
-            if fuel_h is None or fuel_h <= 0.0:
-                fuel_h = _province_ref_fuel_eur_from_blocks(blocks_nc.get(p, []) or [])
-            fuel_h = fuel_f if fuel_h is None or fuel_h <= 0.0 else float(fuel_h)
-            out[p] = np.where(heating, fuel_h, fuel_f).astype(float)
-        else:
-            out[p] = fuel_f
+        out[p] = fuel_f
 
     return out.fillna(0.0).clip(lower=0.0)
 
@@ -933,9 +920,6 @@ def _local_mapped_prices(
     cfg_curve = _load_mapped_price_control_points(config_path=config_path) if supply_settings is None else None
     out = pd.DataFrame(index=snapshots, columns=list(map(str, provinces)), dtype=float)
 
-    hs_on, hs_sm, hs_sd, hs_em, hs_ed = _load_heating_season_chp_exclusion_config(config_path=config_path)
-    gen_nc, link_nc = _carriers_without_chp(generator_carriers, link_carrier_to_bus1_carrier)
-
     thermal_full, lr_full, blocks_full = _weekly_lr_and_blocks(
         n,
         provinces,
@@ -946,38 +930,10 @@ def _local_mapped_prices(
         config_path=config_path,
     )
 
-    if hs_on and (gen_nc != generator_carriers or link_nc != link_carrier_to_bus1_carrier):
-        thermal_nc, lr_nc, blocks_nc = _weekly_lr_and_blocks(
-            n,
-            provinces,
-            snapshots,
-            week_freq,
-            generator_carriers=gen_nc,
-            link_carrier_to_bus1_carrier=link_nc,
-            config_path=config_path,
-        )
-        heating = _heating_season_mask(pd.DatetimeIndex(lr_full.index), hs_sm, hs_sd, hs_em, hs_ed)
-        heating = heating.reindex(lr_full.index).fillna(False)
-        heating_b = heating.to_numpy(dtype=bool)
-        use_split = True
-    else:
-        thermal_nc, lr_nc, blocks_nc = thermal_full, lr_full, blocks_full
-        heating_b = np.zeros(len(lr_full.index), dtype=bool)
-        use_split = False
-
     zero_threshold = _daily_low_output_zero_threshold(out.index, config_path=config_path)
 
     for p in out.columns:
-        th_f = pd.to_numeric(thermal_full[p], errors="coerce").fillna(0.0).astype(float)
-        if use_split:
-            th_h = pd.to_numeric(thermal_nc[p], errors="coerce").fillna(0.0).astype(float)
-            th_active = pd.Series(
-                np.where(heating_b, th_h.to_numpy(dtype=float), th_f.to_numpy(dtype=float)),
-                index=out.index,
-                dtype=float,
-            )
-        else:
-            th_active = th_f
+        th_active = pd.to_numeric(thermal_full[p], errors="coerce").fillna(0.0).astype(float)
         zero_mask = _daily_low_output_zero_mask(th_active, threshold=zero_threshold).to_numpy(dtype=bool)
 
         if supply_settings is not None:
@@ -990,70 +946,28 @@ def _local_mapped_prices(
             if fuel_f is None or fuel_f <= 0.0:
                 fuel_f = _province_ref_fuel_eur_from_blocks(blocks_full.get(p, []) or [])
 
-            if use_split:
-                fuel_h = _province_ref_fuel_eur_from_seg0_network(
-                    n,
-                    p,
-                    generator_carriers=gen_nc,
-                    link_carrier_to_bus1_carrier=link_nc,
-                )
-                if fuel_h is None or fuel_h <= 0.0:
-                    fuel_h = _province_ref_fuel_eur_from_blocks(blocks_nc.get(p, []) or [])
-
             if fuel_f is not None and float(fuel_f) > 0.0:
                 mult_f = _mapped_multiplier_from_lr_normalized(
                     lr_full[p].to_numpy(dtype=float), supply_settings
                 )
-                if use_split:
-                    f_h = (
-                        float(fuel_h)
-                        if fuel_h is not None and float(fuel_h) > 0.0
-                        else float(fuel_f)
-                    )
-                    mult_h = _mapped_multiplier_from_lr_normalized(
-                        lr_nc[p].to_numpy(dtype=float), supply_settings
-                    )
-                    pf = mult_f * float(fuel_f)
-                    ph = mult_h * f_h
-                    vals = np.where(heating_b, ph, pf).astype(float)
-                else:
-                    vals = (mult_f * float(fuel_f)).astype(float)
+                vals = (mult_f * float(fuel_f)).astype(float)
                 vals[zero_mask] = 0.0
                 out[p] = vals
                 continue
 
         if cfg_curve is not None:
             x, y = cfg_curve
-            v_f = np.interp(lr_full[p].to_numpy(dtype=float), x, y).astype(float)
-            if use_split:
-                v_h = np.interp(lr_nc[p].to_numpy(dtype=float), x, y).astype(float)
-                vals = np.where(heating_b, v_h, v_f).astype(float)
-            else:
-                vals = v_f
+            vals = np.interp(lr_full[p].to_numpy(dtype=float), x, y).astype(float)
             vals[zero_mask] = 0.0
             out[p] = vals
             continue
 
         xf, yf = _build_interp_curve(blocks_full.get(p, []))
-        v_f = np.interp(lr_full[p].to_numpy(dtype=float), xf, yf).astype(float)
-        if use_split:
-            xh, yh = _build_interp_curve(blocks_nc.get(p, []))
-            v_h = np.interp(lr_nc[p].to_numpy(dtype=float), xh, yh).astype(float)
-            vals = np.where(heating_b, v_h, v_f).astype(float)
-        else:
-            vals = v_f
+        vals = np.interp(lr_full[p].to_numpy(dtype=float), xf, yf).astype(float)
         vals[zero_mask] = 0.0
         out[p] = vals
 
     return out.fillna(0.0).clip(lower=0.0)
-
-
-def _is_uncongested(link_row: pd.Series, p0_t: pd.Series, eps_mw: float) -> pd.Series:
-    p_nom = float(pd.to_numeric(link_row.get("p_nom", 0.0), errors="coerce") or 0.0)
-    if p_nom <= 0:
-        return pd.Series(False, index=p0_t.index)
-    loading = pd.to_numeric(p0_t, errors="coerce").abs()
-    return (loading <= max(p_nom - float(eps_mw), 0.0)).fillna(False)
 
 
 def _province_marginal_prices(
@@ -1068,70 +982,6 @@ def _province_marginal_prices(
     mp = n.buses_t.marginal_price.reindex(index=snapshots, columns=cols)
     mp = mp.apply(pd.to_numeric, errors="coerce").fillna(0.0).astype(float)
     return out.add(mp, fill_value=0.0)
-
-
-def _apply_cross_border_exports(
-    n: pypsa.Network,
-    local_prices: pd.DataFrame,
-    marginal_prices: pd.DataFrame,
-    *,
-    import_agg: str,
-    line_cong_eps_mw: float,
-    min_inflow_mw: float,
-) -> pd.DataFrame:
-    provinces = list(local_prices.columns)
-    prov_set = set(provinces)
-    local = local_prices.copy().astype(float)
-    marginal = marginal_prices.reindex(index=local.index, columns=local.columns).fillna(0.0).astype(float)
-    export_price_candidates: dict[str, list[pd.Series]] = {p: [] for p in provinces}
-
-    if not hasattr(n, "links") or n.links.empty or not hasattr(n, "links_t") or not hasattr(n.links_t, "p0"):
-        return local
-
-    for l, row in n.links.iterrows():
-        b0 = str(row.get("bus0", ""))
-        b1 = str(row.get("bus1", ""))
-        if b0 not in prov_set or b1 not in prov_set:
-            continue
-
-        p0 = _safe_series(n.links_t.p0, str(l), local.index)
-        uncong = _is_uncongested(row, p0, float(line_cong_eps_mw))
-        if not uncong.any():
-            continue
-
-        eta_fwd = float(pd.to_numeric(row.get("efficiency", 1.0), errors="coerce") or 1.0)
-        eta_rev = float(pd.to_numeric(row.get("efficiency2", np.nan), errors="coerce"))
-        if np.isnan(eta_rev):
-            eta_rev = eta_fwd
-        eta_fwd = max(eta_fwd, 1e-6)
-        eta_rev = max(eta_rev, 1e-6)
-
-        # Forward flow: b0 -> b1 if p0 > 0.
-        # Exporting province b0 references receiving province b1 price,
-        # mapped back with distance/loss correction.
-        fwd_mask = uncong & (p0 > float(min_inflow_mw))
-        if fwd_mask.any():
-            ref_fwd = (marginal[b1] * eta_fwd).where(fwd_mask)
-            export_price_candidates[b0].append(ref_fwd)
-
-        # Reverse flow: b1 -> b0 if p0 < 0.
-        rev_mask = uncong & (p0 < -float(min_inflow_mw))
-        if rev_mask.any():
-            ref_rev = (marginal[b0] * eta_rev).where(rev_mask)
-            export_price_candidates[b1].append(ref_rev)
-
-    out = local.copy()
-    for p in provinces:
-        if not export_price_candidates[p]:
-            continue
-        mat = pd.concat(export_price_candidates[p], axis=1)
-        # For exporting province, use the highest receiving-side reference price.
-        # Keep import_agg argument for backward-compatible interfaces.
-        _ = import_agg
-        agg_ref = mat.max(axis=1, skipna=True)
-        out[p] = np.maximum(local[p], agg_ref.fillna(local[p]))
-
-    return out.fillna(0.0).clip(lower=0.0)
 
 
 def mapped_retail_prices(
@@ -1151,24 +1001,16 @@ def mapped_retail_prices(
         link_carrier_to_bus1_carrier=link_carrier_to_bus1_carrier,
         config_path=config_path,
     )
-    marginal = _province_marginal_prices(
+    coal_1x = _province_coal_power_1x_prices(
         n,
         provinces=pd.Index(local.columns),
         snapshots=pd.Index(local.index),
     )
-    local_for_exports = local.copy()
+    zero_price_mask = local.astype(float) <= 1e-9
+    local_mapped = local.copy()
     floor_enabled, floor_ratio = _load_thermal_load_floor_config(config_path=config_path)
     if floor_enabled:
         thermal, _, _ = _weekly_lr_and_blocks(
-            n,
-            provinces=pd.Index(local.columns),
-            snapshots=pd.Index(local.index),
-            week_freq=str(week_freq),
-            generator_carriers=generator_carriers,
-            link_carrier_to_bus1_carrier=link_carrier_to_bus1_carrier,
-            config_path=config_path,
-        )
-        fuel_price = _province_ref_fuel_prices(
             n,
             provinces=pd.Index(local.columns),
             snapshots=pd.Index(local.index),
@@ -1185,27 +1027,11 @@ def mapped_retail_prices(
             ratio=float(floor_ratio),
             multiplier=1.5,
         )
-        fuel_price = fuel_price.reindex(index=local_for_exports.index, columns=local_for_exports.columns).fillna(0.0)
-        local_for_exports = local_for_exports.mask(
-            near_floor_mask & (local_for_exports > fuel_price), fuel_price
-        )
-        floor_mask = _thermal_load_floor_mask(
-            thermal,
-            n,
-            provinces=pd.Index(local.columns),
-            snapshots=pd.Index(local.index),
-            ratio=float(floor_ratio),
-        )
-        local_for_exports = local_for_exports.mask(floor_mask, marginal)
-    out = _apply_cross_border_exports(
-        n,
-        local_for_exports,
-        marginal,
-        import_agg=str(import_agg),
-        line_cong_eps_mw=float(line_cong_eps_mw),
-        min_inflow_mw=float(min_inflow_mw),
-    )
-    out = out.mask(out < marginal, marginal)
+        zero_price_mask = zero_price_mask | near_floor_mask
+        local_mapped = local_mapped.mask(near_floor_mask, 0.0)
+    out = local_mapped
+    out = out.mask((out < coal_1x) & ~zero_price_mask, coal_1x)
+    out = out.mask(zero_price_mask, 0.0)
     return out.fillna(0.0).clip(lower=0.0)
 
 
@@ -1275,8 +1101,15 @@ def export_prices(
         baseline = baseline.reindex(index=prices.index, columns=prices.columns).fillna(0.0).astype(float)
         prices_f = prices.astype(float)
         prices = prices_f.mask(prices_f < baseline, baseline)
+        mapped_baseline = _province_coal_power_1x_prices(
+            n,
+            provinces=pd.Index(mapped_prices.columns),
+            snapshots=pd.Index(mapped_prices.index),
+        ).reindex(index=mapped_prices.index, columns=mapped_prices.columns).fillna(0.0).astype(float)
         mapped_f = mapped_prices.astype(float)
-        mapped_prices = mapped_f.mask(mapped_f < baseline, baseline)
+        mapped_zero_mask = mapped_f <= 1e-9
+        mapped_prices = mapped_f.mask((mapped_f < mapped_baseline) & ~mapped_zero_mask, mapped_baseline)
+        mapped_prices = mapped_prices.mask(mapped_zero_mask, 0.0)
         nodal_marginal = _calibrate_nodal_with_baseline(nodal_marginal, n0)
 
     cur = str(currency).upper()
@@ -1356,11 +1189,21 @@ def main() -> None:
         choices=["min_offer", "max_offer"],
         help=(
             "Deprecated compatibility argument. "
-            "Current mapped export adjustment always uses highest receiving-side reference."
+            "Mapped sidecar prices are now mapped independently by province."
         ),
     )
-    ap.add_argument("--line-cong-eps-mw", type=float, default=1e-3, help="Congestion slack in MW (default: 1e-3)")
-    ap.add_argument("--min-inflow-mw", type=float, default=1e-3, help="Ignore smaller line flows (default: 1e-3)")
+    ap.add_argument(
+        "--line-cong-eps-mw",
+        type=float,
+        default=1e-3,
+        help="Deprecated compatibility argument; mapped sidecar ignores line-flow adjustment.",
+    )
+    ap.add_argument(
+        "--min-inflow-mw",
+        type=float,
+        default=1e-3,
+        help="Deprecated compatibility argument; mapped sidecar ignores line-flow adjustment.",
+    )
     ap.add_argument(
         "--price-mode",
         default="marginal",
@@ -1374,7 +1217,8 @@ def main() -> None:
         action="store_true",
         help=(
             "When exporting, take elementwise max between dispatch LMPs (--network) and "
-            "baseline LMPs (--baseline-network)."
+            "baseline LMPs (--baseline-network). Mapped sidecar uses 1x coal-power "
+            "generation cost as its floor instead of baseline LMPs."
         ),
     )
     ap.add_argument(

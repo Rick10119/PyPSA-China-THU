@@ -1,6 +1,3 @@
-<!-- SPDX-FileCopyrightText: 2026 Ruike Lyu -->
-<!-- SPDX-License-Identifier: CC-BY-4.0 -->
-
 # PyPSA-China: An Open Optimization Model of the Chinese Energy System
 
 PyPSA-China is an open-source capacity expansion and operational optimization model for the Chinese energy system, built on the [PyPSA](https://pypsa.org/) framework. It covers electricity, heating, gas, and hydrogen carriers at provincial resolution and features a dedicated module for modeling aluminum smelter flexibility as a demand-side resource in high-renewable grids.
@@ -18,15 +15,6 @@ China's power system is undergoing a rapid transition toward variable renewable 
 - **Three-dimensional scenario framework**: smelter flexibility × primary demand × grid-interaction market opportunity, each at low / mid / high levels (27 combinations).
 - **Configurable capacity ratios**: aluminum smelter capacity can be scaled from 5 % to 100 % of the installed base to explore overcapacity effects.
 - **HPC support**: automated SLURM job generation for large-scale scenario sweeps across 1 000+ configurations.
-
-## Main Contributions
-
-This branch prepares the model for publication and focuses on four reproducibility-oriented extensions:
-
-1. **Realistic renewable capacity constraints**: add national-to-provincial guardrails for wind and solar expansion, with target bands and physical potential ceilings to avoid unrealistic VRE build-out.
-2. **2025 base-year update**: update base-year installed capacity and technology-cost inputs to a 2025 reference year, including cleaned existing-infrastructure file names and updated planning trajectories.
-3. **Electricity-price reconstruction and simulation**: add a fixed-capacity dispatch stage with segmented thermal bids and price export sidecars for marginal prices, mapped prices, and solar value-factor analysis.
-4. **Iterative aluminum smelter optimization**: add a nodal-price-based decomposition loop that solves aluminum potline operation as a sub-problem and feeds the resulting load profile back into the system model.
 
 ## Workflow
 
@@ -77,17 +65,13 @@ this order:
    `max(biweekly_max_thermal_output, biweekly_min_thermal_output / lr_threshold_first)`.
    With the default `lr_threshold_first: 0.4`, a stable must-run floor maps to the first supply
    band instead of being normalized to the peak band.
-2. Apply the local must-run floor price rule before any cross-province transmission adjustment:
-   - at or below `10 %` of local AC load, use the province's marginal price;
-   - within `1.5 x` the floor (`15 %` of local AC load by default), cap mapped prices at the
-     `1.0 x` reference fuel price.
-3. Apply cross-province export adjustment. Only province-to-province links are considered
-   (`bus0` and `bus1` both provincial AC buses). If province A exports to province B on an
-   uncongested link, A's mapped price can be lifted to the receiving-side marginal price adjusted by
-   link efficiency. The receiving province keeps its own local/floor-adjusted price; import flows do
-   not lower or raise the receiving province's price.
-4. Enforce a final province-local marginal-price floor: the mapped sidecar is never lower than that
-   province's solved marginal price in the same snapshot.
+2. Apply the local must-run floor price rule:
+   - at or near `10 %` of local AC load, treat synchronous output as must-run rather than marginal;
+   - within `1.5 x` the floor (`15 %` of local AC load by default), keep the mapped sidecar price at
+     `0` and protect it from later coal-price floors.
+3. Do not apply a separate cross-province transmission price adjustment. Each province keeps its
+   own mapped price based on local synchronous/thermal output; transmission effects are already
+   reflected in the solved dispatch and marginal-price output.
 
 Related configuration lives under `dispatch_segmented_prices.price_export`:
 

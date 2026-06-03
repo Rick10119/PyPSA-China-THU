@@ -223,8 +223,9 @@ def freeze_capacities_and_zero_capex(n: pypsa.Network, zero_capital_cost: bool =
 
     if zero_capital_cost:
         for component in n.iterate_components():
-            if "capital_cost" in component.df.columns:
-                component.df["capital_cost"] = 0.0
+            static = component.static if hasattr(component, "static") else component.df
+            if "capital_cost" in static.columns:
+                static["capital_cost"] = 0.0
 
 
 def _add_kwargs_filtered(n: pypsa.Network, component: str, name: str, attrs: dict) -> None:
@@ -469,8 +470,8 @@ def run(
         config=config,
         planning_horizon=planning_year,
     )
-    # If we truncate snapshots for a smoke-test (nhours), keep global annual constraints
-    # (e.g. `co2_limit`) but scale them to the truncated horizon to avoid artificial
+    # If we truncate snapshots for a smoke-test (nhours), scale any remaining
+    # annual global constraints to the truncated horizon to avoid artificial
     # infeasibility caused by repeating the first hours across the year.
     if solve_opts.get("nhours"):
         nh = int(solve_opts["nhours"])
@@ -479,7 +480,7 @@ def run(
             if "constant" in n.global_constraints.columns:
                 n.global_constraints["constant"] = n.global_constraints["constant"].astype(float) * scale
             logger.warning(
-                "solve_opts nhours=%s: scaled GlobalConstraint.constant by %s (keep co2_limit active).",
+                "solve_opts nhours=%s: scaled remaining GlobalConstraint.constant by %s.",
                 nh,
                 scale,
             )
