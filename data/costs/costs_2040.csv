@@ -164,9 +164,9 @@ OCGT,2040,efficiency,0.42,per unit,"Danish Energy Agency, technology_data_for_el
 OCGT,2040,investment,423.54,EUR/kW,"Danish Energy Agency, technology_data_for_el_and_dh.xlsx",52 OCGT - Natural gas:  Specific investment
 OCGT,2040,lifetime,25.0,years,"Danish Energy Agency, technology_data_for_el_and_dh.xlsx",52 OCGT - Natural gas:  Technical lifetime
 PHS,2040,FOM,1.0,%/year,DIW DataDoc http://hdl.handle.net/10419/80348, from old pypsa cost assumptions
-PHS,2040,efficiency,0.75,per unit,DIW DataDoc http://hdl.handle.net/10419/80348, from old pypsa cost assumptions
-PHS,2040,investment,2208.16,EUR/kWel,DIW DataDoc http://hdl.handle.net/10419/80348, from old pypsa cost assumptions
-PHS,2040,lifetime,80.0,years,IEA2010, from old pypsa cost assumptions
+PHS,2040,efficiency,0.78,per unit,China engineering range 75–80%; parameter review 2026-06-04, from old pypsa cost assumptions
+PHS,2040,investment,865.384615,EUR/kWel,NEA pumped-storage project approvals 2024 (~6884 CNY/kW mean); parameter review 2026-06-04, from old pypsa cost assumptions
+PHS,2040,lifetime,60.0,years,Parameter review 2026-06-04, from old pypsa cost assumptions
 SMR,2040,FOM,5.0,%/year,Danish Energy Agency,"Technology data for renewable fuels, in pdf on table 3 p.311"
 SMR,2040,efficiency,0.76,per unit (in LHV),"IEA Global average levelised cost of hydrogen production by energy source and technology, 2019 and 2050 (2020), https://www.iea.org/data-and-statistics/charts/global-average-levelised-cost-of-hydrogen-production-by-energy-source-and-technology-2019-and-2050",
 SMR,2040,investment,493470.4,EUR/MW_CH4,Danish Energy Agency,"Technology data for renewable fuels, in pdf on table 3 p.311"
@@ -184,9 +184,9 @@ air separation unit,2040,investment,596501.02,EUR/t_N2/h,"Danish Energy Agency, 
 air separation unit,2040,lifetime,30.0,years,"Danish Energy Agency, data_sheets_for_renewable_fuels.xlsx",103 Hydrogen to Ammonia:  Technical lifetime
 battery inverter,2040,FOM,0.54,%/year,"Danish Energy Agency, technology_data_catalogue_for_energy_storage.xlsx",:  Fixed O&M
 battery inverter,2040,efficiency,0.96,per unit,"Danish Energy Agency, technology_data_catalogue_for_energy_storage.xlsx",:  Round trip efficiency DC
-battery inverter,2040,investment,17.88908765652952,EUR/kW,"Danish Energy Agency, technology_data_catalogue_for_energy_storage.xlsx",:  Output capacity expansion cost investment
+battery inverter,2040,investment,28.044872,EUR/kW,"UCSB China power system template (2700 CNY/kW, 4h); NEA new-type storage reports; parameter review 2026-06-04",:  Output capacity expansion cost investment
 battery inverter,2040,lifetime,10.0,years,"Danish Energy Agency, technology_data_catalogue_for_energy_storage.xlsx, Note K.",:  Technical lifetime
-battery storage,2040,investment,16.75579322638146,EUR/kWh,"Danish Energy Agency, technology_data_catalogue_for_energy_storage.xlsx",:  Energy storage expansion cost investment
+battery storage,2040,investment,49.860058,EUR/kWh,"UCSB China power system template (2700 CNY/kW, 4h); NEA new-type storage reports; parameter review 2026-06-04",:  Energy storage expansion cost investment
 battery storage,2040,lifetime,30.0,years,"Danish Energy Agency, technology_data_catalogue_for_energy_storage.xlsx",:  Technical lifetime
 biogas,2040,CO2 stored,0.09,tCO2/MWh_th,"Stoichiometric calculation, doi:10.1016/j.apenergy.2022.120016",
 biogas,2040,FOM,13.45,%/year,"Danish Energy Agency, data_sheets_for_renewable_fuels.xlsx","81 Biogas Plant, Basic conf.:  Total O&M"
@@ -347,7 +347,7 @@ coal,2040,CO2 intensity,0.34,tCO2/MWh_th,Entwicklung der spezifischen Kohlendiox
 coal,2040,FOM,1.6,%/year,Lazard s Levelized Cost of Energy Analysis - Version 13.0,
 coal,2040,VOM,3.5,EUR/MWh_e,Lazard s Levelized Cost of Energy Analysis - Version 13.0,
 coal,2040,efficiency,0.4798545945945945,per unit,Linear increase from Xiang et al nat energy 2023 to DKEA catalogue 2023 value for 2060,
-coal,2040,fuel,13.93,EUR/MWh_th,"Scaled from 2025 China 5500kcal coal proxy; https://www.hangyan.co/charts/3838782537304376716","Future-year coal fuel cost scaled by factor (2025 real proxy / legacy BP2019). 2025 uses 694 CNY/t (5500kcal) -> 13.93 EUR/MWh_th under 23.0 GJ/t, 3.6 GJ/MWh, 7.8 CNY/EUR."
+coal,2040,fuel,13.93,EUR/MWh_th,Scaled from 2025 China 5500kcal coal proxy; https://www.hangyan.co/charts/3838782537304376716,"Future-year coal fuel cost scaled by factor (2025 real proxy / legacy BP2019). 2025 uses 694 CNY/t (5500kcal) -> 13.93 EUR/MWh_th under 23.0 GJ/t, 3.6 GJ/MWh, 7.8 CNY/EUR."
 coal,2040,investment,505.3,EUR/kW_e,"https://www.cctd.com.cn/show-19-203452-1.html ""China Power Industry Annual Development Report 2020"" in Chinese",
 coal,2040,lifetime,40.0,years,Lazard s Levelized Cost of Energy Analysis - Version 13.0,
 csp-tower,2040,FOM,1.3,%/year,ATB CSP data (https://atb.nrel.gov/electricity/2021/concentrating_solar_power),
@@ -360,29 +360,29 @@ csp-tower power block,2040,FOM,1.3,%/year,see solar-tower.,
 csp-tower power block,2040,investment,634.32,EUR/kW_e,ATB CSP data (https://atb.nrel.gov/electricity/2021/concentrating_solar_power) and NREL SAM v2021.12.2 (https://sam.nrel.gov/).,
 csp-tower power block,2040,lifetime,30.0,years,see solar-tower.,
 decentral CHP,2040,FOM,3.0,%/year,HP, from old pypsa cost assumptions
-decentral CHP,2040,discount rate,0.04,per unit,Palzer thesis, from old pypsa cost assumptions
+decentral CHP,2040,discount rate,0.07,per unit,Unified market WACC; parameter review 2026-06-04, from old pypsa cost assumptions
 decentral CHP,2040,investment,1400.0,EUR/kWel,HP, from old pypsa cost assumptions
 decentral CHP,2040,lifetime,25.0,years,HP, from old pypsa cost assumptions
 decentral air-sourced heat pump,2040,FOM,3.07,%/year,"Danish Energy Agency, technologydatafor_heating_installations_marts_2018.xlsx",207.3 Air to water existing:  Fixed O&M
-decentral air-sourced heat pump,2040,discount rate,0.04,per unit,Palzer thesis, from old pypsa cost assumptions
+decentral air-sourced heat pump,2040,discount rate,0.07,per unit,Unified market WACC; parameter review 2026-06-04, from old pypsa cost assumptions
 decentral air-sourced heat pump,2040,efficiency,3.7,per unit,"Danish Energy Agency, technologydatafor_heating_installations_marts_2018.xlsx","207.3 Air to water existing:  Heat efficiency, annual average, net, radiators, existing one family house"
 decentral air-sourced heat pump,2040,investment,805.0,EUR/kW_th,"Danish Energy Agency, technologydatafor_heating_installations_marts_2018.xlsx",207.3 Air to water existing:  Specific investment
 decentral air-sourced heat pump,2040,lifetime,18.0,years,"Danish Energy Agency, technologydatafor_heating_installations_marts_2018.xlsx",207.3 Air to water existing:  Technical lifetime
 decentral coal boiler,2040,FOM,3.49,%/year,IRENA_Remap_2030_technology_cost,
-decentral coal boiler,2040,discount rate,0.04,per unit,same as gas boiler,
+decentral coal boiler,2040,discount rate,0.07,per unit,Unified market WACC; parameter review 2026-06-04,
 decentral coal boiler,2040,efficiency,0.9,per unit,IRENA_Remap_2030_technology_cost,
 decentral coal boiler,2040,investment,168.0,USD/kW_th,IRENA_Remap_2030_technology_cost,
 decentral coal boiler,2040,lifetime,20.0,years,same as gas boiler,
 decentral coal boiler,2040,hist_efficiency,0.78,p.u.,expert guess for brownfield,OPOP H4EKO class C
 decentral gas boiler,2040,FOM,6.71,%/year,"Danish Energy Agency, technologydatafor_heating_installations_marts_2018.xlsx",202 Natural gas boiler:  Fixed O&M
-decentral gas boiler,2040,discount rate,0.04,per unit,Palzer thesis, from old pypsa cost assumptions
+decentral gas boiler,2040,discount rate,0.07,per unit,Unified market WACC; parameter review 2026-06-04, from old pypsa cost assumptions
 decentral gas boiler,2040,efficiency,0.98,per unit,"Danish Energy Agency, technologydatafor_heating_installations_marts_2018.xlsx","202 Natural gas boiler:  Total efficiency, annual average, net"
 decentral gas boiler,2040,investment,282.67,EUR/kW_th,"Danish Energy Agency, technologydatafor_heating_installations_marts_2018.xlsx",202 Natural gas boiler:  Specific investment
 decentral gas boiler,2040,lifetime,20.0,years,"Danish Energy Agency, technologydatafor_heating_installations_marts_2018.xlsx",202 Natural gas boiler:  Technical lifetime
 decentral gas boiler connection,2040,investment,176.67,EUR/kW_th,"Danish Energy Agency, technologydatafor_heating_installations_marts_2018.xlsx",:  Possible additional specific investment
 decentral gas boiler connection,2040,lifetime,50.0,years,"Danish Energy Agency, technologydatafor_heating_installations_marts_2018.xlsx",:  Technical lifetime
 decentral ground-sourced heat pump,2040,FOM,1.9,%/year,"Danish Energy Agency, technologydatafor_heating_installations_marts_2018.xlsx",207.7 Ground source existing:  Fixed O&M
-decentral ground-sourced heat pump,2040,discount rate,0.04,per unit,Palzer thesis, from old pypsa cost assumptions
+decentral ground-sourced heat pump,2040,discount rate,0.07,per unit,Unified market WACC; parameter review 2026-06-04, from old pypsa cost assumptions
 decentral ground-sourced heat pump,2040,efficiency,3.98,per unit,"Danish Energy Agency, technologydatafor_heating_installations_marts_2018.xlsx","207.7 Ground source existing:  Heat efficiency, annual average, net, radiators, existing one family house"
 decentral ground-sourced heat pump,2040,investment,1300.0,EUR/kW_th,"Danish Energy Agency, technologydatafor_heating_installations_marts_2018.xlsx",207.7 Ground source existing:  Specific investment
 decentral ground-sourced heat pump,2040,lifetime,20.0,years,"Danish Energy Agency, technologydatafor_heating_installations_marts_2018.xlsx",207.7 Ground source existing:  Technical lifetime
@@ -391,16 +391,16 @@ decentral oil boiler,2040,efficiency,0.9,per unit,Palzer thesis (https://energie
 decentral oil boiler,2040,investment,156.01,EUR/kWth,Palzer thesis (https://energiesysteme-zukunft.de/fileadmin/user_upload/Publikationen/PDFs/ESYS_Materialien_Optimierungsmodell_REMod-D.pdf) (+eigene Berechnung), from old pypsa cost assumptions
 decentral oil boiler,2040,lifetime,20.0,years,Palzer thesis (https://energiesysteme-zukunft.de/fileadmin/user_upload/Publikationen/PDFs/ESYS_Materialien_Optimierungsmodell_REMod-D.pdf), from old pypsa cost assumptions
 decentral resistive heater,2040,FOM,2.0,%/year,Schaber thesis, from old pypsa cost assumptions
-decentral resistive heater,2040,discount rate,0.04,per unit,Palzer thesis, from old pypsa cost assumptions
+decentral resistive heater,2040,discount rate,0.07,per unit,Unified market WACC; parameter review 2026-06-04, from old pypsa cost assumptions
 decentral resistive heater,2040,efficiency,0.9,per unit,Schaber thesis, from old pypsa cost assumptions
 decentral resistive heater,2040,investment,100.0,EUR/kWhth,Schaber thesis, from old pypsa cost assumptions
 decentral resistive heater,2040,lifetime,20.0,years,Schaber thesis, from old pypsa cost assumptions
 decentral solar thermal,2040,FOM,1.3,%/year,HP, from old pypsa cost assumptions
-decentral solar thermal,2040,discount rate,0.04,per unit,Palzer thesis, from old pypsa cost assumptions
+decentral solar thermal,2040,discount rate,0.07,per unit,Unified market WACC; parameter review 2026-06-04, from old pypsa cost assumptions
 decentral solar thermal,2040,investment,270000.0,EUR/1000m2,HP, from old pypsa cost assumptions
 decentral solar thermal,2040,lifetime,20.0,years,HP, from old pypsa cost assumptions
 decentral water tank storage,2040,FOM,1.0,%/year,HP, from old pypsa cost assumptions
-decentral water tank storage,2040,discount rate,0.04,per unit,Palzer thesis, from old pypsa cost assumptions
+decentral water tank storage,2040,discount rate,0.07,per unit,Unified market WACC; parameter review 2026-06-04, from old pypsa cost assumptions
 decentral water tank storage,2040,investment,18.38,EUR/kWh,IWES Interaktion, from old pypsa cost assumptions
 decentral water tank storage,2040,lifetime,20.0,years,HP, from old pypsa cost assumptions
 digestible biomass,2040,fuel,15.0,EUR/MWh_th,"JRC ENSPRESO ca avg for MINBIOAGRW1, ENS_Ref for 2040",
@@ -459,14 +459,14 @@ electrolysis,2040,FOM,2.0,%/year,"Danish Energy Agency, data_sheets_for_renewabl
 electrolysis,2040,efficiency,0.72,per unit,"Danish Energy Agency, data_sheets_for_renewable_fuels.xlsx",86 AEC 100MW:  Hydrogen
 electrolysis,2040,efficiency-heat,0.12,per unit,"Danish Energy Agency, data_sheets_for_renewable_fuels.xlsx",86 AEC 100MW:   - hereof recoverable for district heating
 electrolysis,2040,investment,300.0,EUR/kW_e,"Danish Energy Agency, data_sheets_for_renewable_fuels.xlsx",86 AEC 100MW:  Specific investment
-electrolysis,2040,lifetime,32.0,years,"Danish Energy Agency, data_sheets_for_renewable_fuels.xlsx",86 AEC 100MW:  Technical lifetime
+electrolysis,2040,lifetime,20.0,years,Parameter review 2026-06-04,86 AEC 100MW:  Technical lifetime
 fuel cell,2040,FOM,5.0,%/year,"Danish Energy Agency, technology_data_for_el_and_dh.xlsx",12 LT-PEMFC CHP:  Fixed O&M
 fuel cell,2040,c_b,1.25,50oC/100oC,"Danish Energy Agency, technology_data_for_el_and_dh.xlsx",12 LT-PEMFC CHP:  Cb coefficient
 fuel cell,2040,efficiency,0.5,per unit,"Danish Energy Agency, technology_data_for_el_and_dh.xlsx","12 LT-PEMFC CHP:  Electricity efficiency, annual average"
 fuel cell,2040,investment,950.0,EUR/kW_e,"Danish Energy Agency, technology_data_for_el_and_dh.xlsx",12 LT-PEMFC CHP:  Nominal investment
 fuel cell,2040,lifetime,10.0,years,"Danish Energy Agency, technology_data_for_el_and_dh.xlsx",12 LT-PEMFC CHP:  Technical lifetime
 gas,2040,CO2 intensity,0.2,tCO2/MWh_th,Stoichiometric calculation with 50 GJ/t CH4,
-gas,2040,fuel,40.87,EUR/MWh_th,"Scaled from 2025 SHPGX pipeline gas spot proxy; https://finance.sina.com.cn/money/future/roll/2025-04-18/doc-inetqzhr2253621.shtml","Future-year gas fuel cost scaled by factor (2025 real proxy / legacy BP2019). 2025 uses 3.17 CNY/m3 -> 40.87 EUR/MWh_th under LHV 35.8 MJ/m3 and 7.8 CNY/EUR."
+gas,2040,fuel,40.87,EUR/MWh_th,Scaled from 2025 SHPGX pipeline gas spot proxy; https://finance.sina.com.cn/money/future/roll/2025-04-18/doc-inetqzhr2253621.shtml,Future-year gas fuel cost scaled by factor (2025 real proxy / legacy BP2019). 2025 uses 3.17 CNY/m3 -> 40.87 EUR/MWh_th under LHV 35.8 MJ/m3 and 7.8 CNY/EUR.
 gas boiler steam,2040,FOM,3.96,%/year,"Danish Energy Agency, technology_data_for_industrial_process_heat.xlsx",311.1c Steam boiler Gas:  Fixed O&M
 gas boiler steam,2040,VOM,1.0,EUR/MWh,"Danish Energy Agency, technology_data_for_industrial_process_heat.xlsx",311.1c Steam boiler Gas:  Variable O&M
 gas boiler steam,2040,efficiency,0.93,per unit,"Danish Energy Agency, technology_data_for_industrial_process_heat.xlsx","311.1c Steam boiler Gas:  Total efficiency, net, annual average"
@@ -494,7 +494,7 @@ home battery storage,2040,investment,136.17,EUR/kWh,"Global Energy System based 
 home battery storage,2040,lifetime,30.0,years,"Global Energy System based on 100% Renewable Energy, Energywatchgroup/LTU University, 2019, Danish Energy Agency, technology_data_catalogue_for_energy_storage.xlsx",:  Technical lifetime
 hydro,2040,FOM,1.0,%/year,DIW DataDoc http://hdl.handle.net/10419/80348, from old pypsa cost assumptions
 hydro,2040,efficiency,0.9,per unit,DIW DataDoc http://hdl.handle.net/10419/80348, from old pypsa cost assumptions
-hydro,2040,investment,2208.16,EUR/kWel,DIW DataDoc http://hdl.handle.net/10419/80348, from old pypsa cost assumptions
+hydro,2040,investment,1602.564103,EUR/kWel,China Renewable Energy Engineering Cost Report 2024 (水电水利规划设计总院); parameter review 2026-06-04, from old pypsa cost assumptions
 hydro,2040,lifetime,80.0,years,IEA2010, from old pypsa cost assumptions
 hydrogen storage compressor,2040,FOM,4.0,%/year,"Based on Stöckl et al (2021): https://doi.org/10.48550/arXiv.2005.03464, table SI.4.",
 hydrogen storage compressor,2040,compression-electricity-input,0.05,MWh_el/MWh_H2,"Based on Stöckl et al (2021): https://doi.org/10.48550/arXiv.2005.03464, table SI.4.",
@@ -550,11 +550,11 @@ nuclear,2040,VOM,3.5,EUR/MWh_e,Lazard s Levelized Cost of Energy Analysis - Vers
 nuclear,2040,efficiency,0.33,per unit,Lazard s Levelized Cost of Energy Analysis - Version 13.0,
 nuclear,2040,fuel,2.6,EUR/MWh_th,Lazard s Levelized Cost of Energy Analysis - Version 13.0,
 nuclear,2040,investment,2520.0,USD/kW_e,"https://www.energypolicy.columbia.edu/wp-content/uploads/2023/12/QCFNuclearCosts-CGEP_Report_112923.pdf""The Uncertain Costs of New Nuclear Reactors: What Study Estimates Reveal about the Potential for Nuclear in a Decarbonizing World""",
-nuclear,2040,lifetime,40.0,years,Lazard s Levelized Cost of Energy Analysis - Version 13.0,
+nuclear,2040,lifetime,60.0,years,Parameter review 2026-06-04,
 offwind,2040,FOM,2.18,%/year,"Danish Energy Agency, technology_data_for_el_and_dh.xlsx","21 Offshore turbines:  Fixed O&M [EUR/MW_e/y, 2020]"
 offwind,2040,VOM,0.017,EUR/MWhel,RES costs made up to fix curtailment order, from old pypsa cost assumptions
 offwind,2040,investment,896.7333022712312,"EUR/kW_e, 2020","“Cost values for 2020–2030 are taken from the Danish Energy Agency dataset technology_data_for_el_and_dh.xlsx. Cost projections for 2030–2060 follow Sun et al. (Prediction of Power System Cost and Price Level Under the Goal of Carbon Peak and Carbon Neutralization, in Chinese).”","21 Offshore turbines:  Nominal investment [MEUR/MW_e, 2020] grid connection costs substracted from investment costs"
-offwind,2040,lifetime,30.0,years,"Danish Energy Agency, technology_data_for_el_and_dh.xlsx",21 Offshore turbines:  Technical lifetime [years]
+offwind,2040,lifetime,25.0,years,Parameter review 2026-06-04,21 Offshore turbines:  Technical lifetime [years]
 offwind-ac-connection-submarine,2040,investment,2685.0,EUR/MW/km,DEA https://ens.dk/en/our-services/projections-and-models/technology-data, from old pypsa cost assumptions
 offwind-ac-connection-underground,2040,investment,1342.0,EUR/MW/km,DEA https://ens.dk/en/our-services/projections-and-models/technology-data, from old pypsa cost assumptions
 offwind-ac-station,2040,investment,250.0,EUR/kWel,DEA https://ens.dk/en/our-services/projections-and-models/technology-data, from old pypsa cost assumptions
@@ -571,7 +571,7 @@ oil,2040,lifetime,25.0,years,"Danish Energy Agency, technology_data_for_el_and_d
 onwind,2040,FOM,1.19,%/year,"Danish Energy Agency, technology_data_for_el_and_dh.xlsx",20 Onshore turbines:  Fixed O&M
 onwind,2040,VOM,0.005,EUR/MWh,"Danish Energy Agency, technology_data_for_el_and_dh.xlsx",20 Onshore turbines:  Variable O&M
 onwind,2040,investment,374.57854717673735,EUR/kW,"Baseline 2020 cost values are taken from the China Power Industry Annual Development Report 2020, supplemented by CCTD data (https://www.cctd.com.cn) for cross-checks. Future cost reduction trends (2020–2050) follow NREL ATB data (https://atb.nrel.gov) and the NREL ATB TRENDS 2022–2050 report.",20 Onshore turbines:  Nominal investment
-onwind,2040,lifetime,30.0,years,"Danish Energy Agency, technology_data_for_el_and_dh.xlsx",20 Onshore turbines:  Technical lifetime
+onwind,2040,lifetime,25.0,years,Parameter review 2026-06-04,20 Onshore turbines:  Technical lifetime
 retrofit,2040,VOM,69.0,USD/tCO2,"Lockwood T. A compararitive review of next-generation carbon capture technologies for coal-fired power plant[J]. Energy procedia, 2017, 114: 2658-2670.",
 retrofit,2040,investment,180.0,USD/kW,"Fan J L, Xu M, Li F, et al. Carbon capture and storage (CCS) retrofit potential of coal-fired power plants in China: the technology lock-in and cost optimization perspective[J]. Applied energy, 2018, 229: 326-334.",
 retrofit,2040,lifetime,40.0,years,same as coal power plants,
@@ -586,20 +586,20 @@ seawater desalination,2040,lifetime,30.0,years,"Caldera et al 2016: Local cost o
 solar,2040,FOM,2.04,%/year,"Danish Energy Agency, technology_data_for_el_and_dh.xlsx",22 Rooftop PV residential:  Fixed O&M [2020-EUR/MW_e/y]
 solar,2040,VOM,0.01,EUR/MWhel,RES costs made up to fix curtailment order, from old pypsa cost assumptions
 solar,2040,investment,252.0,EUR/kW_e,"The 2020 baseline cost values are taken from the study Prediction of Power System Cost and Price Level Under the Goal of Carbon Peak and Carbon Neutralization (in Chinese). Future cost reduction trends for 2020–2060 follow Qixing Sun, Chao Zhang, Chengren Li, Peipei You, Xiao Gao, Qian Zhao, Zhao Xu, Sijia Liu, and Li Yanlin. Prediction of Power System Cost and Price Level Under the Goal of Carbon Peak and Carbon Neutralization�� (in Chinese).",
-solar,2040,lifetime,40.0,years,"Danish Energy Agency, technology_data_for_el_and_dh.xlsx",22 Rooftop PV residential:  Technical lifetime [years]
+solar,2040,lifetime,25.0,years,Parameter review 2026-06-04,22 Rooftop PV residential:  Technical lifetime [years]
 solar-rooftop,2040,FOM,1.56,%/year,"Danish Energy Agency, technology_data_for_el_and_dh.xlsx",22 Rooftop PV residential:  Fixed O&M [2020-EUR/MW_e/y]
-solar-rooftop,2040,discount rate,0.04,per unit,standard for decentral, from old pypsa cost assumptions
+solar-rooftop,2040,discount rate,0.07,per unit,Unified market WACC; parameter review 2026-06-04, from old pypsa cost assumptions
 solar-rooftop,2040,investment,295.6436924595304,EUR/kW_e,"Danish Energy Agency, technology_data_for_el_and_dh.xlsx",22 Rooftop PV residential:  Nominal investment [2020-MEUR/MW_e]
-solar-rooftop,2040,lifetime,40.0,years,"Danish Energy Agency, technology_data_for_el_and_dh.xlsx",22 Rooftop PV residential:  Technical lifetime [years]
+solar-rooftop,2040,lifetime,25.0,years,Parameter review 2026-06-04,22 Rooftop PV residential:  Technical lifetime [years]
 solar-rooftop commercial,2040,FOM,1.74,%/year,"Danish Energy Agency, technology_data_for_el_and_dh.xlsx",22 Rooftop PV commercial:  Fixed O&M [2020-EUR/MW_e/y]
 solar-rooftop commercial,2040,investment,417.1,EUR/kW_e,"Danish Energy Agency, technology_data_for_el_and_dh.xlsx",22 Rooftop PV commercial:  Nominal investment [2020-MEUR/MW_e]
-solar-rooftop commercial,2040,lifetime,40.0,years,"Danish Energy Agency, technology_data_for_el_and_dh.xlsx",22 Rooftop PV commercial:  Technical lifetime [years]
+solar-rooftop commercial,2040,lifetime,25.0,years,Parameter review 2026-06-04,22 Rooftop PV commercial:  Technical lifetime [years]
 solar-rooftop residential,2040,FOM,1.37,%/year,"Danish Energy Agency, technology_data_for_el_and_dh.xlsx",22 Rooftop PV residential:  Fixed O&M [2020-EUR/MW_e/y]
 solar-rooftop residential,2040,investment,633.22,EUR/kW_e,"Danish Energy Agency, technology_data_for_el_and_dh.xlsx",22 Rooftop PV residential:  Nominal investment [2020-MEUR/MW_e]
-solar-rooftop residential,2040,lifetime,40.0,years,"Danish Energy Agency, technology_data_for_el_and_dh.xlsx",22 Rooftop PV residential:  Technical lifetime [years]
+solar-rooftop residential,2040,lifetime,25.0,years,Parameter review 2026-06-04,22 Rooftop PV residential:  Technical lifetime [years]
 solar-utility,2040,FOM,2.52,%/year,"Danish Energy Agency, technology_data_for_el_and_dh.xlsx",22 Utility-scale PV:  Fixed O&M [2020-EUR/MW_e/y]
 solar-utility,2040,investment,307.69230769230774,EUR/kW_e,"Danish Energy Agency, technology_data_for_el_and_dh.xlsx",22 Utility-scale PV:  Nominal investment [2020-MEUR/MW_e]
-solar-utility,2040,lifetime,40.0,years,"Danish Energy Agency, technology_data_for_el_and_dh.xlsx",22 Utility-scale PV:  Technical lifetime [years]
+solar-utility,2040,lifetime,25.0,years,Parameter review 2026-06-04,22 Utility-scale PV:  Technical lifetime [years]
 solid biomass,2040,CO2 intensity,0.37,tCO2/MWh_th,Stoichiometric calculation with 18 GJ/t_DM LHV and 50% C-content for solid biomass,
 solid biomass,2040,fuel,12.0,EUR/MWh_th,"JRC ENSPRESO ca avg for MINBIOWOOW1 (secondary forest residue wood chips), ENS_Ref for 2040",
 solid biomass boiler steam,2040,FOM,6.17,%/year,"Danish Energy Agency, technology_data_for_industrial_process_heat.xlsx",311.1e Steam boiler Wood:  Fixed O&M

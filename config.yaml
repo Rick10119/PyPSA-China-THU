@@ -515,12 +515,12 @@ electricity:
 
 hydro:
   hydro_capital_cost: True
-  PHS_max_hours: 24.
+  PHS_max_hours: 8.
 
 costs:
   year: 2030
   lifetime: 25
-  discountrate: 0.02 # social discountrate
+  discountrate: 0.07 # market WACC benchmark for China power sector
   USD2013_to_EUR2013: 0.9189 # [EUR/USD] ECB: https://www.ecb.europa.eu/stats/exchange/eurofxref/html/eurofxref-graph-usd.en.html
   marginal_cost: # EUR/MWh
     solar: 0.01
