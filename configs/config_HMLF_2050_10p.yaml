@@ -314,11 +314,11 @@ electricity:
   renewable_capacities_from_OPSD: []
 hydro:
   hydro_capital_cost: true
-  PHS_max_hours: 24.0
+  PHS_max_hours: 8.0
 costs:
   year: 2050
   lifetime: 25
-  discountrate: 0.02
+  discountrate: 0.07
   USD2013_to_EUR2013: 0.9189
   marginal_cost:
     solar: 0.01
