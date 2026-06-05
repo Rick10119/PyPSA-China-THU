@@ -1,0 +1,10 @@
+parameter,value,unit,source_ids,notes
+fx_cny_per_eur,7.8,CNY/EUR,local_costs_2025,Matches local PyPSA-China cost conversion convention.
+fx_cny_per_usd,7.2,CNY/USD,local_costs_2025,Matches local parameter-update documentation.
+discount_rate,0.07,per unit,local_costs_2025,Unified market WACC used in local cost table.
+charge_electricity_price_for_losses,0.3,CNY/kWh,rmi_china_power_market_2025,Conservative Chinese spot-market spread anchor used to price storage conversion losses.
+aluminium_electricity_intensity,13300,kWh/t-Al,aluminium_local_docs,Model documentation uses 13.3 MWh/t.
+aluminium_new_capacity_capex,7922,CNY/(t-Al/year),aluminium_project_capex,Project-level capex proxy for electrolytic-aluminium capacity.
+steel_eaf_electricity_intensity,440,kWh/t-steel,steel_capex_intensity,Representative EAF steel electricity intensity.
+steel_eaf_new_capacity_capex,1029.6,CNY/(t-steel/year),steel_capex_intensity,143 USD/(t/year) converted at 7.2 CNY/USD.
+data_center_capex,77040,CNY/kW IT load,data_center_capex,10.7 million USD/MW IT load converted at 7.2 CNY/USD.
