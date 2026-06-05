@@ -8,3 +8,8 @@ aluminium_new_capacity_capex,7922,CNY/(t-Al/year),aluminium_project_capex,Projec
 steel_eaf_electricity_intensity,440,kWh/t-steel,steel_capex_intensity,Representative EAF steel electricity intensity.
 steel_eaf_new_capacity_capex,1029.6,CNY/(t-steel/year),steel_capex_intensity,143 USD/(t/year) converted at 7.2 CNY/USD.
 data_center_capex,77040,CNY/kW IT load,data_center_capex,10.7 million USD/MW IT load converted at 7.2 CNY/USD.
+working_capital_lock_years,"max(duration_h / 8760, 0.5 / cycles_per_year)",years,seasonal_working_capital,Cash locked in inventory follows the seasonal-production WCR area method; the triangular WCR term is half the cycle interval.
+aluminium_warehousing_cost,6.9,CNY/(t-Al month),aluminium_warehousing_cost,"Conservative physical warehousing upper bound equivalent to 1 USD/t/month for finished aluminium plus alumina, excluding transport and WACC."
+aluminium_warehousing_months,"min(duration_h / 720, 2)",months,aluminium_warehousing_cost,"Cross-timescale approximation; seasonal/year is capped at about 2 months, giving about 14 CNY/t-Al or 0.00105 CNY/kWh at 13.3 MWh/t."
+steel_warehousing_cost,2,CNY/(t-steel month),steel_warehousing_cost,"Conservative physical warehousing estimate for finished steel based on the same inventory-area method, excluding transport and WACC."
+steel_warehousing_months,"min(duration_h / 720, 2)",months,steel_warehousing_cost,"Cross-timescale approximation; seasonal/year is capped at about 2 months, giving about 4 CNY/t-steel or 0.00909 CNY/kWh at 440 kWh/t."

@@ -50,6 +50,10 @@ FX_CNY_PER_EUR = 7.8
 FX_CNY_PER_USD = 7.2
 DISCOUNT_RATE = 0.07
 CHARGE_ELECTRICITY_CNY_PER_KWH = 0.30
+ALUMINIUM_WAREHOUSING_CNY_PER_TONNE_MONTH = 6.9
+ALUMINIUM_WAREHOUSING_MAX_MONTHS = 2.0
+STEEL_WAREHOUSING_CNY_PER_TONNE_MONTH = 2.0
+STEEL_WAREHOUSING_MAX_MONTHS = 2.0
 
 
 @dataclass(frozen=True)
@@ -179,6 +183,21 @@ SOURCES = {
         "source": "JLL data-centre cost estimates and IEA/Uptime Institute efficiency context",
         "url": "https://www.us.jll.com/en/trends-and-insights/research/data-center-outlook",
         "notes": "Hyperscale data centre capex proxy: 10.7 million USD/MW IT load; PUE/flexibility context from IEA and Uptime Institute public reporting.",
+    },
+    "seasonal_working_capital": {
+        "source": "docs/季节性生产资金成本计算.md",
+        "url": "local file",
+        "notes": "Working-capital carrying cost follows the incremental WCR area method: compare seasonal/cyclical production with balanced production and apply the funding rate to the extra inventory-value time integral.",
+    },
+    "aluminium_warehousing_cost": {
+        "source": "User-provided warehousing cost note: 仓储成本计算说明（供迁移）",
+        "url": "conversation note",
+        "notes": "Physical warehousing for aluminium and alumina is modeled separately from WACC: conservative upper bound 1 USD/t/month for about 2 months, or about 14 CNY/t-Al, excluding transport and locked-cash costs.",
+    },
+    "steel_warehousing_cost": {
+        "source": "Warehouse-area method adapted from user-provided 仓储成本计算说明（供迁移）",
+        "url": "conversation note",
+        "notes": "Physical warehousing for steel is modeled separately from WACC using the same inventory-area method. Assumes denser finished steel storage, approximated at 2 CNY/t-steel/month and capped at about 2 months, excluding transport and locked-cash costs.",
     },
 }
 
@@ -367,6 +386,8 @@ def load_no_excess_costs(
     capex_cny_per_kw_load: float | None = None,
     lifetime_years: float,
     product_value_cny_per_tonne: float | None = None,
+    warehousing_cny_per_tonne_month: float | None = None,
+    warehousing_max_months: float | None = None,
 ) -> list[float]:
     if capex_cny_per_kw_load is None:
         if capex_cny_per_annual_tonne is None or electricity_kwh_per_tonne is None:
@@ -378,14 +399,64 @@ def load_no_excess_costs(
         capacity_cost = capex_cny_per_kw_load * crf(lifetime_years) / scale.cycles_per_year
         inventory_cost = 0.0
         if product_value_cny_per_tonne is not None and electricity_kwh_per_tonne is not None:
-            inventory_cost = (
-                product_value_cny_per_tonne
-                * DISCOUNT_RATE
-                * (scale.duration_h / 8760.0)
-                / electricity_kwh_per_tonne
+            inventory_cost = working_capital_cost(
+                product_value_cny_per_tonne=product_value_cny_per_tonne,
+                electricity_kwh_per_tonne=electricity_kwh_per_tonne,
+                scale=scale,
             )
-        out.append(capacity_cost + inventory_cost)
+        warehousing_cost = 0.0
+        if warehousing_cny_per_tonne_month is not None and electricity_kwh_per_tonne is not None:
+            warehousing_cost = physical_warehousing_cost(
+                warehousing_cny_per_tonne_month=warehousing_cny_per_tonne_month,
+                electricity_kwh_per_tonne=electricity_kwh_per_tonne,
+                scale=scale,
+                max_months=warehousing_max_months,
+            )
+        out.append(capacity_cost + inventory_cost + warehousing_cost)
     return out
+
+
+def working_capital_lock_years(scale: TimeScale) -> float:
+    """Cash-locking time from the seasonal-production WCR area method."""
+    direct_deferral_years = scale.duration_h / 8760.0
+    cycle_interval_years = 1.0 / scale.cycles_per_year
+    triangular_wcr_years = 0.5 * cycle_interval_years
+    return max(direct_deferral_years, triangular_wcr_years)
+
+
+def working_capital_cost(
+    *,
+    product_value_cny_per_tonne: float,
+    electricity_kwh_per_tonne: float,
+    scale: TimeScale,
+) -> float:
+    return (
+        product_value_cny_per_tonne
+        * DISCOUNT_RATE
+        * working_capital_lock_years(scale)
+        / electricity_kwh_per_tonne
+    )
+
+
+def physical_warehousing_months(scale: TimeScale, max_months: float | None = None) -> float:
+    months = scale.duration_h / (24.0 * 30.0)
+    if max_months is not None:
+        months = min(months, max_months)
+    return months
+
+
+def physical_warehousing_cost(
+    *,
+    warehousing_cny_per_tonne_month: float,
+    electricity_kwh_per_tonne: float,
+    scale: TimeScale,
+    max_months: float | None = None,
+) -> float:
+    return (
+        warehousing_cny_per_tonne_month
+        * physical_warehousing_months(scale, max_months=max_months)
+        / electricity_kwh_per_tonne
+    )
 
 
 def load_sunk_excess_costs(
@@ -394,19 +465,28 @@ def load_sunk_excess_costs(
     electricity_kwh_per_tonne: float | None = None,
     fixed_floor_cny_per_kwh: float,
     duration_penalty_cny_per_kwh_sqrt_day: float,
+    warehousing_cny_per_tonne_month: float | None = None,
+    warehousing_max_months: float | None = None,
 ) -> list[float]:
     out: list[float] = []
     for scale in SCALES:
         working_capital = 0.0
         if product_value_cny_per_tonne is not None and electricity_kwh_per_tonne is not None:
-            working_capital = (
-                product_value_cny_per_tonne
-                * DISCOUNT_RATE
-                * (scale.duration_h / 8760.0)
-                / electricity_kwh_per_tonne
+            working_capital = working_capital_cost(
+                product_value_cny_per_tonne=product_value_cny_per_tonne,
+                electricity_kwh_per_tonne=electricity_kwh_per_tonne,
+                scale=scale,
+            )
+        warehousing_cost = 0.0
+        if warehousing_cny_per_tonne_month is not None and electricity_kwh_per_tonne is not None:
+            warehousing_cost = physical_warehousing_cost(
+                warehousing_cny_per_tonne_month=warehousing_cny_per_tonne_month,
+                electricity_kwh_per_tonne=electricity_kwh_per_tonne,
+                scale=scale,
+                max_months=warehousing_max_months,
             )
         delay_proxy = duration_penalty_cny_per_kwh_sqrt_day * math.sqrt(scale.duration_h / 24.0)
-        out.append(fixed_floor_cny_per_kwh + working_capital + delay_proxy)
+        out.append(fixed_floor_cny_per_kwh + working_capital + warehousing_cost + delay_proxy)
     return out
 
 
@@ -472,9 +552,11 @@ def build_series() -> tuple[dict[str, dict[str, object]], list[dict[str, str]]]:
                 electricity_kwh_per_tonne=aluminium_intensity,
                 lifetime_years=30.0,
                 product_value_cny_per_tonne=aluminium_price,
+                warehousing_cny_per_tonne_month=ALUMINIUM_WAREHOUSING_CNY_PER_TONNE_MONTH,
+                warehousing_max_months=ALUMINIUM_WAREHOUSING_MAX_MONTHS,
             ),
-            "source_ids": "aluminium_local_docs;aluminium_project_capex",
-            "notes": "New smelter-capacity opportunity cost plus inventory carrying cost; direct process, restart, communication, and transaction costs excluded.",
+            "source_ids": "aluminium_local_docs;aluminium_project_capex;seasonal_working_capital;aluminium_warehousing_cost",
+            "notes": "New smelter-capacity opportunity cost plus WCR-area working-capital carrying cost and conservative physical warehousing for aluminium/alumina; direct process, restart, communication, and transaction costs excluded.",
         },
         "steel_no_excess": {
             "resource": "steel",
@@ -486,9 +568,11 @@ def build_series() -> tuple[dict[str, dict[str, object]], list[dict[str, str]]]:
                 electricity_kwh_per_tonne=steel_intensity,
                 lifetime_years=25.0,
                 product_value_cny_per_tonne=steel_price,
+                warehousing_cny_per_tonne_month=STEEL_WAREHOUSING_CNY_PER_TONNE_MONTH,
+                warehousing_max_months=STEEL_WAREHOUSING_MAX_MONTHS,
             ),
-            "source_ids": "steel_capex_intensity",
-            "notes": "EAF capacity opportunity cost plus inventory carrying cost; direct process, restart, communication, and transaction costs excluded.",
+            "source_ids": "steel_capex_intensity;seasonal_working_capital;steel_warehousing_cost",
+            "notes": "EAF capacity opportunity cost plus WCR-area working-capital carrying cost and conservative physical warehousing; direct process, restart, communication, and transaction costs excluded.",
         },
         "data_center_no_excess": {
             "resource": "data_center",
@@ -512,9 +596,11 @@ def build_series() -> tuple[dict[str, dict[str, object]], list[dict[str, str]]]:
                 electricity_kwh_per_tonne=aluminium_intensity,
                 fixed_floor_cny_per_kwh=0.01,
                 duration_penalty_cny_per_kwh_sqrt_day=0.005,
+                warehousing_cny_per_tonne_month=ALUMINIUM_WAREHOUSING_CNY_PER_TONNE_MONTH,
+                warehousing_max_months=ALUMINIUM_WAREHOUSING_MAX_MONTHS,
             ),
-            "source_ids": "aluminium_local_docs;aluminium_project_capex",
-            "notes": "Existing excess capacity treated as sunk; only working-capital and scheduling proxy costs retained.",
+            "source_ids": "aluminium_local_docs;aluminium_project_capex;seasonal_working_capital;aluminium_warehousing_cost",
+            "notes": "Existing excess capacity treated as sunk; working-capital, physical warehousing, and scheduling proxy costs retained.",
         },
         "steel_sunk": {
             "resource": "steel",
@@ -526,9 +612,11 @@ def build_series() -> tuple[dict[str, dict[str, object]], list[dict[str, str]]]:
                 electricity_kwh_per_tonne=steel_intensity,
                 fixed_floor_cny_per_kwh=0.02,
                 duration_penalty_cny_per_kwh_sqrt_day=0.01,
+                warehousing_cny_per_tonne_month=STEEL_WAREHOUSING_CNY_PER_TONNE_MONTH,
+                warehousing_max_months=STEEL_WAREHOUSING_MAX_MONTHS,
             ),
-            "source_ids": "steel_capex_intensity",
-            "notes": "Existing excess EAF capacity treated as sunk; only working-capital and scheduling proxy costs retained.",
+            "source_ids": "steel_capex_intensity;seasonal_working_capital;steel_warehousing_cost",
+            "notes": "Existing excess EAF capacity treated as sunk; working-capital, physical warehousing, and scheduling proxy costs retained.",
         },
         "data_center_sunk": {
             "resource": "data_center",
@@ -607,6 +695,41 @@ def build_series() -> tuple[dict[str, dict[str, object]], list[dict[str, str]]]:
             "unit": "CNY/kW IT load",
             "source_ids": "data_center_capex",
             "notes": "10.7 million USD/MW IT load converted at 7.2 CNY/USD.",
+        },
+        {
+            "parameter": "working_capital_lock_years",
+            "value": "max(duration_h / 8760, 0.5 / cycles_per_year)",
+            "unit": "years",
+            "source_ids": "seasonal_working_capital",
+            "notes": "Cash locked in inventory follows the seasonal-production WCR area method; the triangular WCR term is half the cycle interval.",
+        },
+        {
+            "parameter": "aluminium_warehousing_cost",
+            "value": f"{ALUMINIUM_WAREHOUSING_CNY_PER_TONNE_MONTH:g}",
+            "unit": "CNY/(t-Al month)",
+            "source_ids": "aluminium_warehousing_cost",
+            "notes": "Conservative physical warehousing upper bound equivalent to 1 USD/t/month for finished aluminium plus alumina, excluding transport and WACC.",
+        },
+        {
+            "parameter": "aluminium_warehousing_months",
+            "value": "min(duration_h / 720, 2)",
+            "unit": "months",
+            "source_ids": "aluminium_warehousing_cost",
+            "notes": "Cross-timescale approximation; seasonal/year is capped at about 2 months, giving about 14 CNY/t-Al or 0.00105 CNY/kWh at 13.3 MWh/t.",
+        },
+        {
+            "parameter": "steel_warehousing_cost",
+            "value": f"{STEEL_WAREHOUSING_CNY_PER_TONNE_MONTH:g}",
+            "unit": "CNY/(t-steel month)",
+            "source_ids": "steel_warehousing_cost",
+            "notes": "Conservative physical warehousing estimate for finished steel based on the same inventory-area method, excluding transport and WACC.",
+        },
+        {
+            "parameter": "steel_warehousing_months",
+            "value": "min(duration_h / 720, 2)",
+            "unit": "months",
+            "source_ids": "steel_warehousing_cost",
+            "notes": "Cross-timescale approximation; seasonal/year is capped at about 2 months, giving about 4 CNY/t-steel or 0.00909 CNY/kWh at 440 kWh/t.",
         },
     ]
     return series, assumptions
