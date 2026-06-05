@@ -50,6 +50,7 @@ FX_CNY_PER_EUR = 7.8
 FX_CNY_PER_USD = 7.2
 DISCOUNT_RATE = 0.07
 CHARGE_ELECTRICITY_CNY_PER_KWH = 0.30
+CHINA_2025_TYPICAL_INTRADAY_SPREAD_CNY_PER_KWH = 0.45
 ALUMINIUM_WAREHOUSING_CNY_PER_TONNE_MONTH = 6.9
 ALUMINIUM_WAREHOUSING_MAX_MONTHS = 2.0
 STEEL_WAREHOUSING_CNY_PER_TONNE_MONTH = 2.0
@@ -66,11 +67,11 @@ class TimeScale:
 
 
 SCALES = [
-    TimeScale("Intraday\n(hours)", "intraday_hours", 6.0, 365.0, "6 h storage/deferral, daily cycling"),
-    TimeScale("Daily", "daily", 24.0, 182.5, "24 h shift, every two days"),
-    TimeScale("Weekly", "weekly", 168.0, 52.0, "7 d shift, weekly cycling"),
-    TimeScale("Monthly", "monthly", 720.0, 12.0, "30 d shift, monthly cycling"),
-    TimeScale("Seasonal\n/year", "seasonal_year", 2160.0, 1.0, "3 month shift, annual cycling"),
+    TimeScale("Daily", "daily", 24.0, 365.0, "24 h window, daily cycling"),
+    TimeScale("Weekly", "weekly", 168.0, 365.0 / 7.0, "7 d window, 365/7 cycles per year"),
+    TimeScale("Monthly", "monthly", 730.0, 8760.0 / 730.0, "730 h window, about 12 cycles per year"),
+    TimeScale("Seasonal", "seasonal", 2160.0, 8760.0 / 2160.0, "3 month window, about 4 cycles per year"),
+    TimeScale("Annual", "annual", 8760.0, 1.0, "8760 h window, annual cycling"),
 ]
 
 
@@ -154,10 +155,10 @@ SOURCES = {
         "url": "local file",
         "notes": "Battery, electrolysis, fuel cell, and underground hydrogen storage costs used in the PyPSA-China cost table.",
     },
-    "dispatch_segmented_2025": {
-        "source": "results/version-0602.1H.2/prices/dispatch_segmented/positive/dispatch_segmented_prices-ll-current+FCG-linear2050-2025_nodal_marginal.csv",
-        "url": "local file",
-        "notes": "2025 dispatch-segmented nodal marginal price result in CNY/MWh. Current file contains Shandong hourly prices.",
+    "china_2025_intraday_spread": {
+        "source": "CESC, 谁在深夜为电费买单：2025年现货电价峰谷差的12省密码",
+        "url": "https://www.cescexpo.cn/%E8%B0%81%E5%9C%A8%E6%B7%B1%E5%A4%9C%E4%B8%BA%E7%94%B5%E8%B4%B9%E4%B9%B0%E5%8D%95-2025%E5%B9%B4%E7%8E%B0%E8%B4%A7%E7%94%B5%E4%BB%B7%E5%B3%B0%E8%B0%B7%E5%B7%AE%E7%9A%8412%E7%9C%81%E5%AF%86%E7%A0%81",
+        "notes": "Uses annual average daily intraday spot spread from China provincial spot markets: Shandong is about 449 CNY/MWh and the medium-volatility provinces are about 300-500 CNY/MWh. Rounded proxy used here: 0.45 CNY/kWh across cycle periods.",
     },
     "dispatch_segmented_2050": {
         "source": "results/version-0120.1H.1-MMMF-2050-15p/postnetworks/positive/postnetwork-ll-current+FCG-linear2050-2050.nc",
@@ -251,6 +252,25 @@ def weighted_top_h_mean(values: list[float], h_hours: float) -> float:
     return weighted_sum / weight
 
 
+def weighted_bottom_h_mean(values: list[float], h_hours: float) -> float:
+    if h_hours <= 0:
+        raise ValueError(f"h_hours must be positive, got {h_hours}")
+    clean = sorted(v for v in values if math.isfinite(v))
+    if not clean:
+        return math.nan
+
+    h_floor = int(math.floor(h_hours))
+    h_frac = float(h_hours - h_floor)
+    weighted_sum = sum(clean[:h_floor])
+    weight = min(float(h_floor), float(len(clean)))
+    if h_frac > 1e-12 and h_floor < len(clean):
+        weighted_sum += clean[h_floor] * h_frac
+        weight += h_frac
+    if weight <= 0:
+        return math.nan
+    return weighted_sum / weight
+
+
 def load_wide_price_csv(path: Path, *, cny_per_mwh: bool) -> dict[str, list[float]]:
     prices: dict[str, list[float]] = {}
     with path.open(newline="", encoding="utf-8-sig") as fh:
@@ -285,7 +305,7 @@ def load_network_marginal_prices(path: Path) -> dict[str, list[float]]:
 
 
 def value_h_hours_for_scale(scale: TimeScale) -> float:
-    if scale.key in {"intraday_hours", "daily"}:
+    if scale.key == "daily":
         return 2.6
     if scale.key == "weekly":
         return 24.0
@@ -293,15 +313,11 @@ def value_h_hours_for_scale(scale: TimeScale) -> float:
 
 
 def value_window_hours_for_scale(scale: TimeScale) -> int:
-    if scale.key == "seasonal_year":
-        return 8760
-    if scale.key == "monthly":
-        return 730
     return int(scale.duration_h)
 
 
 def system_values_from_marginal_prices(path: Path, *, cny_per_mwh: bool = True) -> list[float]:
-    """Top-H nodal marginal price value by scale, following evaluate_storage_cycles.py."""
+    """Top-H minus Bottom-H nodal marginal price spread by scale."""
     if not path.exists():
         raise FileNotFoundError(f"Missing nodal marginal price file: {path}")
     if path.suffix.lower() == ".nc":
@@ -318,11 +334,16 @@ def system_values_from_marginal_prices(path: Path, *, cny_per_mwh: bool = True) 
             for start in range(0, len(series), window):
                 block = series[start : start + window]
                 if len(block) >= max(1, int(math.ceil(h_hours))):
-                    chunk_mean = weighted_top_h_mean(block, h_hours)
-                    if math.isfinite(chunk_mean):
-                        chunk_means.append(chunk_mean)
+                    top_mean = weighted_top_h_mean(block, h_hours)
+                    bottom_mean = weighted_bottom_h_mean(block, h_hours)
+                    if math.isfinite(top_mean) and math.isfinite(bottom_mean):
+                        chunk_means.append(top_mean - bottom_mean)
         values.append(sum(chunk_means) / len(chunk_means))
     return values
+
+
+def china_2025_intraday_spread_values() -> list[float]:
+    return [CHINA_2025_TYPICAL_INTRADAY_SPREAD_CNY_PER_KWH for _ in SCALES]
 
 
 def battery_costs(costs: dict[tuple[str, str], dict[str, str]]) -> list[float]:
@@ -396,7 +417,7 @@ def load_no_excess_costs(
 
     out: list[float] = []
     for scale in SCALES:
-        capacity_cost = capex_cny_per_kw_load * crf(lifetime_years) / scale.cycles_per_year
+        capacity_cost = capex_cny_per_kw_load * crf(lifetime_years) / shifted_hours_per_year(scale)
         inventory_cost = 0.0
         if product_value_cny_per_tonne is not None and electricity_kwh_per_tonne is not None:
             inventory_cost = working_capital_cost(
@@ -414,6 +435,10 @@ def load_no_excess_costs(
             )
         out.append(capacity_cost + inventory_cost + warehousing_cost)
     return out
+
+
+def shifted_hours_per_year(scale: TimeScale) -> float:
+    return scale.cycles_per_year * scale.duration_h
 
 
 def working_capital_lock_years(scale: TimeScale) -> float:
@@ -492,7 +517,7 @@ def load_sunk_excess_costs(
 
 def build_series() -> tuple[dict[str, dict[str, object]], list[dict[str, str]]]:
     costs = load_cost_table()
-    system_2025_values = system_values_from_marginal_prices(SYSTEM_2025_PRICE_FILE, cny_per_mwh=True)
+    system_2025_values = china_2025_intraday_spread_values()
     system_2050_values = system_values_from_marginal_prices(SYSTEM_2050_PRICE_FILE, cny_per_mwh=False)
 
     aluminium_intensity = 13_300.0
@@ -512,8 +537,8 @@ def build_series() -> tuple[dict[str, dict[str, object]], list[dict[str, str]]]:
             "type": "value",
             "includes_direct_cost": "NA",
             "values": system_2025_values,
-            "source_ids": "dispatch_segmented_2025",
-            "notes": "Nodal marginal price value calculated with evaluate_storage_cycles.py Top-H method: chunk-level weighted top-H mean, then average across chunks. Current price file contains Shandong only.",
+            "source_ids": "china_2025_intraday_spread",
+            "notes": "China 2025 typical intraday spot price spread proxy, rounded to 0.45 CNY/kWh from public provincial spot-market spread reporting. Applied across cycle periods because this is an observed intraday-market proxy rather than a long-duration model result.",
         },
         "system_2050_carbon_neutral": {
             "resource": "system",
@@ -522,7 +547,7 @@ def build_series() -> tuple[dict[str, dict[str, object]], list[dict[str, str]]]:
             "includes_direct_cost": "NA",
             "values": system_2050_values,
             "source_ids": "dispatch_segmented_2050",
-            "notes": "2050 MMMF carbon-neutral AC-bus marginal price value calculated with evaluate_storage_cycles.py Top-H method: chunk-level weighted top-H mean, then average across chunks and 31 provincial AC buses.",
+            "notes": "2050 MMMF carbon-neutral AC-bus marginal price spread calculated with evaluate_storage_cycles.py Top-H/Bottom-H method: chunk-level weighted top-H minus bottom-H mean, then average across chunks and 31 provincial AC buses.",
         },
         "battery": {
             "resource": "battery",
@@ -556,7 +581,7 @@ def build_series() -> tuple[dict[str, dict[str, object]], list[dict[str, str]]]:
                 warehousing_max_months=ALUMINIUM_WAREHOUSING_MAX_MONTHS,
             ),
             "source_ids": "aluminium_local_docs;aluminium_project_capex;seasonal_working_capital;aluminium_warehousing_cost",
-            "notes": "New smelter-capacity opportunity cost plus WCR-area working-capital carrying cost and conservative physical warehousing for aluminium/alumina; direct process, restart, communication, and transaction costs excluded.",
+            "notes": "New smelter-capacity opportunity cost divided by annual shifted kWh, plus WCR-area working-capital carrying cost and conservative physical warehousing for aluminium/alumina; direct process, restart, communication, and transaction costs excluded.",
         },
         "steel_no_excess": {
             "resource": "steel",
@@ -572,7 +597,7 @@ def build_series() -> tuple[dict[str, dict[str, object]], list[dict[str, str]]]:
                 warehousing_max_months=STEEL_WAREHOUSING_MAX_MONTHS,
             ),
             "source_ids": "steel_capex_intensity;seasonal_working_capital;steel_warehousing_cost",
-            "notes": "EAF capacity opportunity cost plus WCR-area working-capital carrying cost and conservative physical warehousing; direct process, restart, communication, and transaction costs excluded.",
+            "notes": "EAF capacity opportunity cost divided by annual shifted kWh, plus WCR-area working-capital carrying cost and conservative physical warehousing; direct process, restart, communication, and transaction costs excluded.",
         },
         "data_center_no_excess": {
             "resource": "data_center",
@@ -584,7 +609,7 @@ def build_series() -> tuple[dict[str, dict[str, object]], list[dict[str, str]]]:
                 lifetime_years=15.0,
             ),
             "source_ids": "data_center_capex",
-            "notes": "Additional IT-load capacity needed when no idle server capacity exists; direct SLA, network, and transaction costs excluded.",
+            "notes": "Additional IT-load capacity divided by annual shifted kWh when no idle server capacity exists; direct SLA, network, and transaction costs excluded.",
         },
         "aluminium_sunk": {
             "resource": "aluminium",
@@ -662,6 +687,13 @@ def build_series() -> tuple[dict[str, dict[str, object]], list[dict[str, str]]]:
             "notes": "Conservative Chinese spot-market spread anchor used to price storage conversion losses.",
         },
         {
+            "parameter": "china_2025_typical_intraday_spread",
+            "value": f"{CHINA_2025_TYPICAL_INTRADAY_SPREAD_CNY_PER_KWH:g}",
+            "unit": "CNY/kWh",
+            "source_ids": "china_2025_intraday_spread",
+            "notes": "Observed China spot-market daily intraday spread proxy used for the 2025 system-value line.",
+        },
+        {
             "parameter": "aluminium_electricity_intensity",
             "value": f"{aluminium_intensity:g}",
             "unit": "kWh/t-Al",
@@ -704,6 +736,13 @@ def build_series() -> tuple[dict[str, dict[str, object]], list[dict[str, str]]]:
             "notes": "Cash locked in inventory follows the seasonal-production WCR area method; the triangular WCR term is half the cycle interval.",
         },
         {
+            "parameter": "annual_shifted_hours_per_kw_no_excess",
+            "value": "cycles_per_year * duration_h",
+            "unit": "kWh shifted per kW flexible capacity per year",
+            "source_ids": "seasonal_working_capital",
+            "notes": "No-excess-capacity fixed costs are normalized by annual shifted energy, not by cycles alone.",
+        },
+        {
             "parameter": "aluminium_warehousing_cost",
             "value": f"{ALUMINIUM_WAREHOUSING_CNY_PER_TONNE_MONTH:g}",
             "unit": "CNY/(t-Al month)",
@@ -715,7 +754,7 @@ def build_series() -> tuple[dict[str, dict[str, object]], list[dict[str, str]]]:
             "value": "min(duration_h / 720, 2)",
             "unit": "months",
             "source_ids": "aluminium_warehousing_cost",
-            "notes": "Cross-timescale approximation; seasonal/year is capped at about 2 months, giving about 14 CNY/t-Al or 0.00105 CNY/kWh at 13.3 MWh/t.",
+            "notes": "Cross-timescale approximation; seasonal is capped at about 2 months, giving about 14 CNY/t-Al or 0.00105 CNY/kWh at 13.3 MWh/t.",
         },
         {
             "parameter": "steel_warehousing_cost",
@@ -729,7 +768,7 @@ def build_series() -> tuple[dict[str, dict[str, object]], list[dict[str, str]]]:
             "value": "min(duration_h / 720, 2)",
             "unit": "months",
             "source_ids": "steel_warehousing_cost",
-            "notes": "Cross-timescale approximation; seasonal/year is capped at about 2 months, giving about 4 CNY/t-steel or 0.00909 CNY/kWh at 440 kWh/t.",
+            "notes": "Cross-timescale approximation; seasonal is capped at about 2 months, giving about 4 CNY/t-steel or 0.00909 CNY/kWh at 440 kWh/t.",
         },
     ]
     return series, assumptions
@@ -912,7 +951,7 @@ def plot_figure(path_stem: Path, series: dict[str, dict[str, object]]) -> None:
     ax.set_xticks(x)
     ax.set_xticklabels([scale.label for scale in SCALES])
 
-    ax.set_xlabel("Shifting time scale", fontsize=14, labelpad=14)
+    ax.set_xlabel("Cycle period", fontsize=14, labelpad=14)
     ax.set_ylabel("CNY per kWh shifted or made available", fontsize=14, labelpad=18)
 
     ax.grid(axis="y", which="major", color="#d7d7d7", lw=0.8)
