@@ -24,6 +24,7 @@ Snakemake rule: `run_dispatch_segmented`.
 
 import logging
 import os
+import shutil
 import sys
 from pathlib import Path
 
@@ -559,6 +560,17 @@ if __name__ == "__main__":
     configure_logging(snakemake)
     cfg_root = snakemake.config
     dseg = cfg_root.get("dispatch_segmented_prices") or {}
+    if dseg.get("copy_planning_postnetwork", False):
+        network_out = Path(snakemake.output.network)
+        network_out.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(snakemake.input.network, network_out)
+        logger.info(
+            "Skipped segmented dispatch solve; copied planning postnetwork %s to %s.",
+            snakemake.input.network,
+            network_out,
+        )
+        sys.exit(0)
+
     solve_opts = cfg_root.get("solving", {}).get("options", {})
     overrides = getattr(snakemake.input, "overrides", None)
     py = getattr(snakemake.wildcards, "planning_horizons", None)

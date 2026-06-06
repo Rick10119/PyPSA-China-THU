@@ -191,6 +191,9 @@ storage_capacity_guard:
 # For CSV from this stage use marginal LMPs (`export_reconstructed_prices --price-mode marginal`).
 dispatch_segmented_prices:
   enabled: true
+  # If true, skip the second-stage dispatch solve and copy the planning
+  # postnetwork to the dispatch output path instead.
+  copy_planning_postnetwork: true
   # Fuel-only EUR/MWh_el from costs CSV; first block = 1× fuel, or every block = fuel × mult if list matches segments.
   first_segment_from_fuel_cost: true
   # Dispatch SRMC tiers vs fuel-only baseline: 40% / 30% / 15% / 10% / 5% nameplate shares.
