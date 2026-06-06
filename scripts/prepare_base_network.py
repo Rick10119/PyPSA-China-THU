@@ -204,12 +204,21 @@ def prepare_network(config):
             # 60% CHP efficiency 0.468 40% coal boiler efficiency 0.97
             # (((791+286) * 0.6 /0.468) + ((791+286) * 0.4 /0.97))  * 0.34 * 1e6 = 0.62 * 1e9 # 2020
 
-            co2_base = float(
-                config.get("electricity", {}).get(
-                    "co2base",
-                    (5.288987673 + 0.628275682) * 1e9,
-                )
+            electricity_config = config.get("electricity", {})
+            co2_base = electricity_config.get(
+                "co2base",
+                (5.288987673 + 0.628275682) * 1e9,
             )
+            if config.get("using_single_node", False):
+                province = config.get("single_node_province")
+                single_node_co2base = electricity_config.get(
+                    "co2base_single_node", {}
+                )
+                if isinstance(single_node_co2base, dict):
+                    co2_base = single_node_co2base.get(province, co2_base)
+                elif single_node_co2base is not None:
+                    co2_base = single_node_co2base
+            co2_base = float(co2_base)
             co2_limit = co2_base * (
                 1 - config['scenario']['co2_reduction'][pathway][planning_horizons]
             )
