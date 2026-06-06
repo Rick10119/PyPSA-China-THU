@@ -177,11 +177,13 @@ def prepare_network(config):
             network.add("Carrier", carrier)
     for carrier in config["Techs"]["conv_techs"]:
         if "gas" in carrier:
-            network.add("Carrier", carrier, co2_emissions=costs.at['gas', 'co2_emissions'])  # in t_CO2/MWht
+            # Gas combustion emits CO2 through explicit links to the atmosphere bus.
+            network.add("Carrier", carrier, co2_emissions=0.0)
         if "coal" in carrier:
             network.add("Carrier", carrier, co2_emissions=costs.at['coal', 'co2_emissions'])
     if config["add_gas"]:
-        network.add("Carrier", "gas", co2_emissions=costs.at['gas', 'co2_emissions'])  # in t_CO2/MWht
+        # Avoid double-counting fossil gas: emissions are booked at combustion.
+        network.add("Carrier", "gas", co2_emissions=0.0)
     if config["add_coal"]:
         network.add("Carrier", "coal", co2_emissions=costs.at['coal', 'co2_emissions'])  # only count when boiler is used
     if config["add_aluminum"]:
@@ -997,8 +999,10 @@ def prepare_network(config):
                          p_nom_extendable=True,
                          bus0=nodes + " gas",
                          bus1=nodes + cat + "heat",
+                         bus2=nodes + " co2 atmosphere",
                          carrier="gas boiler",
                          efficiency=costs.at[cat.lstrip()+'gas boiler','efficiency'],
+                         efficiency2=costs.at["gas", "co2_emissions"],
                          marginal_cost=costs.at[cat.lstrip()+'gas boiler','efficiency']*costs.at[cat.lstrip() + 'gas boiler', 'VOM'],
                          capital_cost=costs.at[cat.lstrip()+'gas boiler','efficiency']*costs.at[cat.lstrip()+'gas boiler','capital_cost'],
                          lifetime=costs.at[cat.lstrip()+'gas boiler','lifetime'])
@@ -1009,11 +1013,13 @@ def prepare_network(config):
                      suffix=" OCGT",
                      bus0=nodes + " gas",
                      bus1=nodes,
+                     bus2=nodes + " co2 atmosphere",
                      carrier="OCGT gas",
                      marginal_cost=costs.at["OCGT",'efficiency'] * costs.at["OCGT", 'VOM'], #NB: VOM is per MWel
                      capital_cost=costs.at["OCGT",'efficiency'] * costs.at["OCGT", 'capital_cost'], #NB: capital cost is per MWel
                      p_nom_extendable=True,
                      efficiency=costs.at["OCGT", 'efficiency'],
+                     efficiency2=costs.at["gas", "co2_emissions"],
                      lifetime=costs.at["OCGT", 'lifetime'])
 
     if "CHP gas" in config["Techs"]["conv_techs"]:
@@ -1022,6 +1028,7 @@ def prepare_network(config):
                      suffix=" central CHP gas generator",
                      bus0=nodes + " gas",
                      bus1=nodes,
+                     bus2=nodes + " co2 atmosphere",
                      carrier="CHP gas",
                      p_nom_extendable=True,
                      marginal_cost=costs.at['central gas CHP', 'efficiency'] * costs.at[
@@ -1029,6 +1036,7 @@ def prepare_network(config):
                      capital_cost=costs.at['central gas CHP', 'efficiency'] * costs.at[
                          'central gas CHP', 'capital_cost'],  # NB: capital cost is per MWel
                      efficiency=costs.at['central gas CHP', 'efficiency'],
+                     efficiency2=costs.at["gas", "co2_emissions"],
                      p_nom_ratio=1.0,
                      c_b=costs.at['central gas CHP', 'c_b'],
                      lifetime=costs.at['central gas CHP', 'lifetime'])
@@ -1038,11 +1046,13 @@ def prepare_network(config):
                      suffix=" central CHP gas boiler",
                      bus0=nodes + " gas",
                      bus1=nodes + " central heat",
+                     bus2=nodes + " co2 atmosphere",
                      carrier="CHP gas",
                      p_nom_extendable=True,
                      marginal_cost=costs.at['central gas CHP', 'efficiency'] * costs.at[
                          'central gas CHP', 'VOM'],  # NB: VOM is per MWel
                      efficiency=costs.at['central gas CHP', 'efficiency']/costs.at['central gas CHP', 'c_v'],
+                     efficiency2=costs.at["gas", "co2_emissions"],
                      lifetime=costs.at['central gas CHP', 'lifetime'])
 
     if "coal power plant" in config["Techs"]["conv_techs"]:
