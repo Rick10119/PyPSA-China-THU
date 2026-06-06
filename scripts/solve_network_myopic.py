@@ -414,7 +414,7 @@ def _sync_link_groups(n, floor_cfg: dict, provinces: set[str]) -> dict[str, list
     return groups
 
 
-def add_synchronous_generation_floor_constraints(n, snapshots) -> None:
+def add_synchronous_generation_floor_constraints(n, snapshots, rhs_slack_mw: float = 0.0) -> None:
     """Require configured synchronous generators/links to cover a share of local AC load."""
     cfg = getattr(n, "config", {}) or {}
     floor_cfg = cfg.get("synchronous_generation_floor") or {}
@@ -425,6 +425,7 @@ def add_synchronous_generation_floor_constraints(n, snapshots) -> None:
         return
     if ratio >= 1.0:
         raise ValueError(f"synchronous_generation_floor.ratio must be < 1, got {ratio}")
+    rhs_slack_mw = max(float(rhs_slack_mw or 0.0), 0.0)
 
     ac_buses = n.buses.index[n.buses.carrier.astype(str) == "AC"] if "carrier" in n.buses.columns else n.buses.index
     provinces = set(map(str, ac_buses))
@@ -441,7 +442,8 @@ def add_synchronous_generation_floor_constraints(n, snapshots) -> None:
     added = 0
 
     for province in sorted(provinces):
-        rhs = (load_by_province[province].astype(float) * ratio * scale).rename("snapshot")
+        rhs_mw = (load_by_province[province].astype(float) * ratio - rhs_slack_mw).clip(lower=0.0)
+        rhs = (rhs_mw * scale).rename("snapshot")
         if float(rhs.max()) <= 0.0:
             continue
 
@@ -470,7 +472,12 @@ def add_synchronous_generation_floor_constraints(n, snapshots) -> None:
         n.model.add_constraints(lhs >= rhs, name=f"sync-generation-floor-{province}")
         added += 1
 
-    logger.info("Added synchronous_generation_floor constraints for %s provinces at ratio %.3f.", added, ratio)
+    logger.info(
+        "Added synchronous_generation_floor constraints for %s provinces at ratio %.3f, rhs_slack_mw=%.6f.",
+        added,
+        ratio,
+        rhs_slack_mw,
+    )
 
 
 def extra_functionality(n, snapshots, fixed_aluminum_usage=None):

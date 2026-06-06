@@ -144,7 +144,9 @@ def extra_functionality_dispatch(n, snapshots):
     """CHP + asymmetric transmission pairs + synchronous floor; no planning-year retrofit constraints."""
     add_chp_constraints(n)
     add_transimission_constraints(n)
-    add_synchronous_generation_floor_constraints(n, snapshots)
+    dispatch_cfg = (getattr(n, "config", {}) or {}).get("dispatch_segmented_prices") or {}
+    sync_floor_slack_mw = float(dispatch_cfg.get("sync_floor_slack_mw", 1.0) or 0.0)
+    add_synchronous_generation_floor_constraints(n, snapshots, rhs_slack_mw=sync_floor_slack_mw)
 
 
 def _energy_balance_series(n: pypsa.Network) -> pd.Series:

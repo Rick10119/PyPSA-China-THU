@@ -215,6 +215,7 @@ def main() -> None:
     pdf = out_dir / "solar_value_factor_yearly_generation_weighted.pdf"
     fig.savefig(png, dpi=160, bbox_inches="tight")
     fig.savefig(pdf, bbox_inches="tight")
+    fig.show()
     plt.close(fig)
     print(f"Wrote {png}\nWrote {pdf}")
 

@@ -2,6 +2,8 @@
 
 snakemake --configfile config.yaml --cores 12 --resources mem_mb=112000
 
+python scripts/fill_solar_value_dataset_2025.py --planning-marginal
+
 ## 1) Environment setup (first run or env update)
 
 ```bash

@@ -15,11 +15,16 @@ Inputs per year:
 Capacity adjustment rule:
 - 2025: apply real-capacity correction from `solar_capacity.csv`
 - 2030 and later: no capacity correction (use model capacity directly)
+
+System value-factor denominator (`solar_value_dataset.include_solar_in_system_value` in
+`config.yaml`, default false): optionally include solar generator dispatch in the weighted
+supply sum; penetration metrics still use total supply including solar.
 """
 
 from __future__ import annotations
 
 import argparse
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from shutil import copy2
@@ -67,6 +72,7 @@ class SolarValueFillConfig:
     cap_compare_path: Path
     real_solar_cap_path: Path
     real_solar_year_columns: tuple[str, ...]
+    include_solar_in_system_value: bool
 
 
 def load_solar_value_fill_config(config_path: Path) -> SolarValueFillConfig:
@@ -109,6 +115,9 @@ def load_solar_value_fill_config(config_path: Path) -> SolarValueFillConfig:
     real_solar_year_columns = tuple(str(c) for c in year_cols)
     real_solar_cap_path = (root / hist_csv).resolve()
 
+    svd = cfg.get("solar_value_dataset") or {}
+    include_solar_in_system_value = bool(svd.get("include_solar_in_system_value", False))
+
     return SolarValueFillConfig(
         root=root,
         version_dir=version_dir,
@@ -121,6 +130,7 @@ def load_solar_value_fill_config(config_path: Path) -> SolarValueFillConfig:
         cap_compare_path=version_dir / "solar_capacity_compare_by_year.csv",
         real_solar_cap_path=real_solar_cap_path,
         real_solar_year_columns=real_solar_year_columns,
+        include_solar_in_system_value=include_solar_in_system_value,
     )
 
 # Workbook province -> source province names
@@ -180,12 +190,20 @@ def _solar_dispatch_after_thermal_floor(
     return corrected, extra_curtail
 
 
-def _electric_supply_by_bus(n: pypsa.Network, ac_buses: pd.Index) -> pd.DataFrame:
+def _is_solar_carrier(carrier: pd.Series) -> pd.Series:
+    return carrier.astype(str).str.contains("solar", case=False, regex=False)
+
+
+def _electric_supply_by_bus(
+    n: pypsa.Network, ac_buses: pd.Index, *, exclude_solar: bool = False
+) -> pd.DataFrame:
     """Electricity supplied to AC buses by generators, conversion links, and storage discharge."""
     snapshots = n.snapshots
     total = pd.DataFrame(0.0, index=snapshots, columns=ac_buses, dtype=float)
 
     gen_mask = n.generators.bus.isin(ac_buses)
+    if exclude_solar:
+        gen_mask = gen_mask & ~_is_solar_carrier(n.generators.carrier)
     gen_cols = n.generators.index[gen_mask]
     if len(gen_cols):
         gen_dispatch = n.generators_t.p[gen_cols].clip(lower=0.0)
@@ -313,8 +331,7 @@ def _compute_metrics_for_year(
     price_col_set = set(prices.columns.astype(str))
 
     # Select solar generators (include all carriers containing 'solar').
-    solar_mask = n.generators.carrier.astype(str).str.contains("solar", case=False, regex=False)
-    solar_gens = n.generators.index[solar_mask]
+    solar_gens = n.generators.index[_is_solar_carrier(n.generators.carrier)]
 
     if len(solar_gens) == 0:
         raise ValueError("No solar generators found in network.")
@@ -333,9 +350,13 @@ def _compute_metrics_for_year(
 
     ac_buses = n.buses.index[n.buses.carrier.astype(str) == "AC"]
 
-    # System total electricity supply by AC bus/hour:
-    # generators, conversion-link outputs to AC buses, and storage-unit discharge.
+    # System total electricity supply by AC bus/hour (all sources; used for penetration).
     total_gen_bus = _electric_supply_by_bus(n, ac_buses)
+
+    # Supply series for value-factor denominator (optionally excludes solar generators).
+    system_gen_bus = _electric_supply_by_bus(
+        n, ac_buses, exclude_solar=not cfg.include_solar_in_system_value
+    )
 
     # Thermal units constrained by daily minimum loading.
     all_ac_gen_mask = n.generators.bus.isin(ac_buses)
@@ -346,14 +367,14 @@ def _compute_metrics_for_year(
     thermal_dispatch_bus = _group_sum_by_bus(thermal_dispatch, thermal_bus)
 
     # Standard value-factor denominator:
-    # system weighted-average market value = sum(total_gen * nodal_price) / sum(total_gen)
+    # system weighted-average market value = sum(gen * nodal_price) / sum(gen)
     system_value_num = 0.0
     system_gen_sum = 0.0
-    for b in total_gen_bus.columns:
+    for b in system_gen_bus.columns:
         pc = _price_column_for_bus(str(b), price_col_set)
         if pc is None:
             continue
-        g = total_gen_bus[b]
+        g = system_gen_bus[b]
         p = prices[pc].astype(float)
         system_value_num += float((g * p).sum())
         system_gen_sum += float(g.sum())
@@ -528,8 +549,26 @@ def main() -> None:
         help="Use planning postnetwork LMPs instead of mapped CSV prices.",
     )
     ap.set_defaults(price_source="mapped_csv")
+    solar_group = ap.add_mutually_exclusive_group()
+    solar_group.add_argument(
+        "--include-solar-in-system-value",
+        dest="include_solar_in_system_value",
+        action="store_true",
+        default=None,
+        help="Count solar in the system value-factor denominator (overrides config).",
+    )
+    solar_group.add_argument(
+        "--exclude-solar-in-system-value",
+        dest="include_solar_in_system_value",
+        action="store_false",
+        help="Exclude solar from the system value-factor denominator (overrides config).",
+    )
     args = ap.parse_args()
     cfg = load_solar_value_fill_config(args.config.resolve())
+    if args.include_solar_in_system_value is not None:
+        cfg = SolarValueFillConfig(
+            **{**cfg.__dict__, "include_solar_in_system_value": args.include_solar_in_system_value}
+        )
     price_source = str(args.price_source)
 
     metrics_by_year: dict[int, pd.DataFrame] = {}
@@ -564,9 +603,17 @@ def main() -> None:
     print(f"Config: {args.config.resolve()}")
     print(f"Results tree: {cfg.version_dir} (stem {cfg.scenario_stem!r}, heating {cfg.heating_demand!r})")
     print(f"Price source: {price_source}")
+    print(f"Include solar in system value denominator: {cfg.include_solar_in_system_value}")
     print(f"Filled years: {sorted(metrics_by_year.keys())}")
     print(f"Target years: {list(cfg.target_years)}")
     print(f"Backup created: {cfg.backup_path}")
+
+    plot_script = _SCRIPTS / "plot_solar_value_factor_yearly.py"
+    print(f"Running {plot_script.name}...")
+    subprocess.run(
+        [sys.executable, str(plot_script), "--config", str(args.config.resolve())],
+        check=True,
+    )
 
 
 if __name__ == "__main__":
