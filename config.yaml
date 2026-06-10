@@ -2,13 +2,13 @@
 #
 # SPDX-License-Identifier: CC0-1.0
 
-version: 0605.1H.1
+version: 0609.1H.1
 logging_level: INFO
 foresight: "myopic"
 baseyear: 2025
 
 # Single-node mode – if true, keep only one target province in the network
-using_single_node: false
+using_single_node: true
 single_node_province: "Shandong"  # Target province when single-node mode is enabled
 
 results_dir: 'results/'
@@ -38,7 +38,7 @@ time_sampling:
     ranges: []
 # Uniform electric-load multiplier (applied to all snapshots/provinces).
 # This scales level only and preserves the hourly shape.
-load_scale: 1.0
+load_scale: 1.2
 
 add_aluminum: False
 only_other_load: False
@@ -58,11 +58,6 @@ scenario:
     - 2025
     - 2030
     - 2035
-    - 2040
-    - 2045
-    - 2050
-    - 2055
-    - 2060
   co2_reduction:
     # linear2060:
     #   '2025': -1.
@@ -75,8 +70,8 @@ scenario:
     #   '2060': 1.0
     linear2050:
       '2025': -1.
-      '2030': 0.315
-      '2035': 0.431
+      '2030': 0.115
+      '2035': 0.231
       '2040': 0.547
       '2045': 0.663
       '2050': 0.779
@@ -193,7 +188,7 @@ dispatch_segmented_prices:
   enabled: true
   # If true, skip the second-stage dispatch solve and copy the planning
   # postnetwork to the dispatch output path instead.
-  copy_planning_postnetwork: true
+  copy_planning_postnetwork: false
   # Fuel-only EUR/MWh_el from costs CSV; first block = 1× fuel, or every block = fuel × mult if list matches segments.
   first_segment_from_fuel_cost: true
   # Dispatch SRMC tiers vs fuel-only baseline: 40% / 30% / 15% / 10% / 5% nameplate shares.

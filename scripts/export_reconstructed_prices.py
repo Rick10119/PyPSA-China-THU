@@ -34,6 +34,7 @@ if str(_THIS_DIR) not in sys.path:
 
 from reconstruct_market_prices import (  # noqa: E402
     ReconstructPriceConfig,
+    _apply_price_bounds,
     marginal_retail_prices,
 )
 from plot_shandong_price_vs_thermal import (  # noqa: E402
@@ -424,14 +425,18 @@ def _province_elec_buses(n: pypsa.Network) -> pd.Index:
     return elec_buses
 
 
-def _all_bus_marginal_prices(n: pypsa.Network) -> pd.DataFrame:
+def _all_bus_marginal_prices(
+    n: pypsa.Network,
+    *,
+    config: ReconstructPriceConfig | None = None,
+) -> pd.DataFrame:
     """Every column in `buses_t.marginal_price`, numeric and clipped like `marginal_retail_prices`."""
     if not hasattr(n, "buses_t") or not hasattr(n.buses_t, "marginal_price"):
         raise ValueError(
             "Network has no `buses_t.marginal_price` (run an economic dispatch solve first)."
         )
     mp = n.buses_t.marginal_price
-    return mp.apply(pd.to_numeric, errors="coerce").fillna(0.0).clip(lower=0.0).astype(float)
+    return _apply_price_bounds(mp, config)
 
 
 def _select_nodal_marginal(nodal: pd.DataFrame, provinces: list[str] | None) -> pd.DataFrame:
@@ -446,8 +451,13 @@ def _select_nodal_marginal(nodal: pd.DataFrame, provinces: list[str] | None) -> 
     return nodal[prov]
 
 
-def _calibrate_nodal_with_baseline(nodal: pd.DataFrame, n_baseline: pypsa.Network) -> pd.DataFrame:
-    base = _all_bus_marginal_prices(n_baseline)
+def _calibrate_nodal_with_baseline(
+    nodal: pd.DataFrame,
+    n_baseline: pypsa.Network,
+    *,
+    config: ReconstructPriceConfig | None = None,
+) -> pd.DataFrame:
+    base = _all_bus_marginal_prices(n_baseline, config=config)
     base = base.reindex(index=nodal.index, columns=nodal.columns).fillna(0.0).astype(float)
     disp = nodal.astype(float)
     return disp.mask(disp < base, base)
@@ -808,21 +818,24 @@ def _weekly_lr_and_blocks(
 def _daily_low_output_zero_mask(
     thermal_series: pd.Series,
     threshold: float | pd.Series = 0.4,
+    freq: str = "D",
+    reserve_margin: float = 0.0,
 ) -> pd.Series:
-    """Mask snapshots below threshold * daily thermal maximum for one province."""
+    """Mask snapshots below threshold * grouped thermal max * reserve multiplier."""
     if not isinstance(thermal_series.index, pd.DatetimeIndex):
         raise TypeError(
-            "daily low-output zeroing requires DatetimeIndex snapshots; "
+            "low-output zeroing requires DatetimeIndex snapshots; "
             f"got {type(thermal_series.index).__name__}"
         )
     th = pd.to_numeric(thermal_series, errors="coerce").fillna(0.0).astype(float)
-    day_max = th.groupby(pd.Grouper(freq="D")).transform("max")
+    group_max = th.groupby(pd.Grouper(freq=str(freq))).transform("max")
     if isinstance(threshold, pd.Series):
         thr = pd.to_numeric(threshold, errors="coerce").reindex(th.index).fillna(0.4).astype(float)
     else:
         thr = pd.Series(float(threshold), index=th.index, dtype=float)
-    cutoff = day_max * thr
-    return (th < cutoff) | (day_max <= 0.0)
+    reserve_multiplier = 1.0 + max(float(reserve_margin), 0.0)
+    cutoff = group_max * reserve_multiplier * thr
+    return (th < cutoff) | (group_max <= 0.0)
 
 
 def _daily_low_output_zero_threshold(snapshots: pd.Index, config_path: str | Path | None = None) -> pd.Series:
@@ -865,6 +878,48 @@ def _daily_low_output_zero_threshold(snapshots: pd.Index, config_path: str | Pat
         for y, thr in by_year.items():
             out.loc[years == int(y)] = float(thr)
     return out.clip(lower=0.0, upper=1.0)
+
+
+def _low_output_reference_freq(config_path: str | Path | None = None) -> str:
+    """Frequency used for low-output reference maximum. Default keeps legacy daily behavior."""
+    cfg_path = Path(config_path) if config_path is not None else _default_config_path()
+    if cfg_path.exists():
+        with cfg_path.open("r", encoding="utf-8") as f:
+            cfg = yaml.safe_load(f) or {}
+        pe = ((cfg.get("dispatch_segmented_prices") or {}).get("price_export") or {})
+        return str(pe.get("low_output_reference_freq") or pe.get("daily_low_output_reference_freq") or "D")
+    return "D"
+
+
+def _low_output_reserve_margin(config_path: str | Path | None = None) -> float:
+    """Reserve margin applied to the grouped thermal maximum before thresholding."""
+    cfg_path = Path(config_path) if config_path is not None else _default_config_path()
+    if cfg_path.exists():
+        with cfg_path.open("r", encoding="utf-8") as f:
+            cfg = yaml.safe_load(f) or {}
+        pe = ((cfg.get("dispatch_segmented_prices") or {}).get("price_export") or {})
+        return max(float(pe.get("low_output_reserve_margin", 0.0) or 0.0), 0.0)
+    return 0.0
+
+
+def _mapped_low_output_price(config_path: str | Path | None = None) -> float:
+    """Mapped-price value for low-output hours, in internal EUR/MWh units."""
+    cfg_path = Path(config_path) if config_path is not None else _default_config_path()
+    if not cfg_path.exists():
+        return 0.0
+    with cfg_path.open("r", encoding="utf-8") as f:
+        cfg = yaml.safe_load(f) or {}
+    pe = ((cfg.get("dispatch_segmented_prices") or {}).get("price_export") or {})
+    if not bool(pe.get("allow_negative_prices", False)):
+        return 0.0
+    floor = pe.get("price_floor")
+    if floor is None:
+        return 0.0
+    currency = str(pe.get("currency", "EUR") or "EUR").upper()
+    val = float(floor)
+    if currency in {"CNY", "RMB"}:
+        return val / float(pe.get("fx_cny_per_eur", 7.8) or 7.8)
+    return val
 
 
 def _build_interp_curve(blocks: list[tuple[float, float]]) -> tuple[np.ndarray, np.ndarray]:
@@ -931,10 +986,18 @@ def _local_mapped_prices(
     )
 
     zero_threshold = _daily_low_output_zero_threshold(out.index, config_path=config_path)
+    low_output_freq = _low_output_reference_freq(config_path=config_path)
+    low_output_reserve_margin = _low_output_reserve_margin(config_path=config_path)
+    low_output_price = _mapped_low_output_price(config_path=config_path)
 
     for p in out.columns:
         th_active = pd.to_numeric(thermal_full[p], errors="coerce").fillna(0.0).astype(float)
-        zero_mask = _daily_low_output_zero_mask(th_active, threshold=zero_threshold).to_numpy(dtype=bool)
+        zero_mask = _daily_low_output_zero_mask(
+            th_active,
+            threshold=zero_threshold,
+            freq=low_output_freq,
+            reserve_margin=low_output_reserve_margin,
+        ).to_numpy(dtype=bool)
 
         if supply_settings is not None:
             fuel_f = _province_ref_fuel_eur_from_seg0_network(
@@ -951,23 +1014,23 @@ def _local_mapped_prices(
                     lr_full[p].to_numpy(dtype=float), supply_settings
                 )
                 vals = (mult_f * float(fuel_f)).astype(float)
-                vals[zero_mask] = 0.0
+                vals[zero_mask] = low_output_price
                 out[p] = vals
                 continue
 
         if cfg_curve is not None:
             x, y = cfg_curve
             vals = np.interp(lr_full[p].to_numpy(dtype=float), x, y).astype(float)
-            vals[zero_mask] = 0.0
+            vals[zero_mask] = low_output_price
             out[p] = vals
             continue
 
         xf, yf = _build_interp_curve(blocks_full.get(p, []))
         vals = np.interp(lr_full[p].to_numpy(dtype=float), xf, yf).astype(float)
-        vals[zero_mask] = 0.0
+        vals[zero_mask] = low_output_price
         out[p] = vals
 
-    return out.fillna(0.0).clip(lower=0.0)
+    return out.fillna(0.0)
 
 
 def _province_marginal_prices(
@@ -1006,7 +1069,8 @@ def mapped_retail_prices(
         provinces=pd.Index(local.columns),
         snapshots=pd.Index(local.index),
     )
-    zero_price_mask = local.astype(float) <= 1e-9
+    low_output_price = _mapped_low_output_price(config_path=config_path)
+    zero_price_mask = local.astype(float) <= 1e-9 if low_output_price >= 0.0 else local.astype(float) == low_output_price
     local_mapped = local.copy()
     floor_enabled, floor_ratio = _load_thermal_load_floor_config(config_path=config_path)
     if floor_enabled:
@@ -1028,11 +1092,11 @@ def mapped_retail_prices(
             multiplier=1.5,
         )
         zero_price_mask = zero_price_mask | near_floor_mask
-        local_mapped = local_mapped.mask(near_floor_mask, 0.0)
+        local_mapped = local_mapped.mask(near_floor_mask, low_output_price)
     out = local_mapped
     out = out.mask((out < coal_1x) & ~zero_price_mask, coal_1x)
-    out = out.mask(zero_price_mask, 0.0)
-    return out.fillna(0.0).clip(lower=0.0)
+    out = out.mask(zero_price_mask, low_output_price)
+    return out.fillna(0.0)
 
 
 def _select_provinces(prices: pd.DataFrame, provinces: Iterable[str] | None) -> pd.DataFrame:
@@ -1066,18 +1130,37 @@ def export_prices(
     shandong_plot_sample: int = 0,
     shandong_seasonal_random_day_seed: int | None = 42,
     config_path: str | None = None,
+    allow_negative_prices: bool = False,
+    price_floor: float | None = None,
+    price_cap: float | None = None,
 ) -> None:
     n = pypsa.Network(network_path)
     # Parameters below are used by mapped sidecar reconstruction.
     _ = (week_freq, import_agg, line_cong_eps_mw, min_inflow_mw)
-    cfg = ReconstructPriceConfig(week_freq=week_freq)
+    cur = str(currency).upper()
+    if cur in {"CNY", "RMB"}:
+        fx = float(fx_cny_per_eur)
+        floor_internal = None if price_floor is None else float(price_floor) / fx
+        cap_internal = None if price_cap is None else float(price_cap) / fx
+    elif cur in {"EUR"}:
+        fx = 1.0
+        floor_internal = price_floor
+        cap_internal = price_cap
+    else:
+        raise ValueError("currency must be EUR or CNY (RMB accepted as alias)")
+    cfg = ReconstructPriceConfig(
+        week_freq=week_freq,
+        allow_negative_prices=bool(allow_negative_prices),
+        price_floor=floor_internal,
+        price_cap=cap_internal,
+    )
     if price_mode == "marginal":
         prices = marginal_retail_prices(n, config=cfg)
     else:
         raise ValueError("price_mode must be 'marginal'")
     prices = _select_provinces(prices, provinces)
 
-    nodal_marginal = _all_bus_marginal_prices(n)
+    nodal_marginal = _all_bus_marginal_prices(n, config=cfg)
     nodal_marginal = nodal_marginal.reindex(index=prices.index)
     nodal_marginal = _select_nodal_marginal(nodal_marginal, provinces)
 
@@ -1110,11 +1193,9 @@ def export_prices(
         mapped_zero_mask = mapped_f <= 1e-9
         mapped_prices = mapped_f.mask((mapped_f < mapped_baseline) & ~mapped_zero_mask, mapped_baseline)
         mapped_prices = mapped_prices.mask(mapped_zero_mask, 0.0)
-        nodal_marginal = _calibrate_nodal_with_baseline(nodal_marginal, n0)
+        nodal_marginal = _calibrate_nodal_with_baseline(nodal_marginal, n0, config=cfg)
 
-    cur = str(currency).upper()
     if cur in {"CNY", "RMB"}:
-        fx = float(fx_cny_per_eur)
         prices = prices.astype(float) * fx
         mapped_prices = mapped_prices.astype(float) * fx
         nodal_marginal = nodal_marginal.astype(float) * fx
@@ -1234,6 +1315,23 @@ def main() -> None:
         help="FX rate used when --currency CNY/RMB (default: 7.8).",
     )
     ap.add_argument(
+        "--allow-negative-prices",
+        action="store_true",
+        help="Retain negative marginal prices instead of clipping them to zero.",
+    )
+    ap.add_argument(
+        "--price-floor",
+        type=float,
+        default=None,
+        help="Optional output price floor in the selected --currency unit.",
+    )
+    ap.add_argument(
+        "--price-cap",
+        type=float,
+        default=None,
+        help="Optional output price cap in the selected --currency unit.",
+    )
+    ap.add_argument(
         "--skip-shandong-plot",
         action="store_true",
         help="Skip exporting Shandong price-vs-thermal scatter/time-series figures.",
@@ -1290,6 +1388,9 @@ def main() -> None:
             else None
         ),
         config_path=(str(args.config) if args.config else None),
+        allow_negative_prices=bool(args.allow_negative_prices),
+        price_floor=args.price_floor,
+        price_cap=args.price_cap,
     )
 
 

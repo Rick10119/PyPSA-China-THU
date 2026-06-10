@@ -1,0 +1,109 @@
+province,component,carrier,group,year,capacity_mw
+Shandong,Generator,coal cc,generator,2027,17883.926190992708
+Shandong,Generator,coal cc,generator,2028,26825.848315251842
+Shandong,Generator,coal cc,generator,2029,35767.770439510976
+Shandong,Generator,coal cc,generator,2030,44709.692563770106
+Shandong,Generator,coal cc,generator,2031,44709.79091609901
+Shandong,Generator,coal cc,generator,2032,44709.889268427905
+Shandong,Generator,coal cc,generator,2033,44709.98762075681
+Shandong,Generator,coal cc,generator,2034,44710.085973085705
+Shandong,Generator,coal cc,generator,2035,44710.18432541461
+Shandong,Generator,coal power plant,generator,2027,91257.5839783747
+Shandong,Generator,coal power plant,generator,2028,82004.46776677054
+Shandong,Generator,coal power plant,generator,2029,72751.35155516636
+Shandong,Generator,coal power plant,generator,2030,63498.23534356219
+Shandong,Generator,coal power plant,generator,2031,65741.31801913616
+Shandong,Generator,coal power plant,generator,2032,67984.40069471013
+Shandong,Generator,coal power plant,generator,2033,70227.48337028408
+Shandong,Generator,coal power plant,generator,2034,72470.56604585805
+Shandong,Generator,coal power plant,generator,2035,74713.64872143202
+Shandong,Generator,hydroelectricity,generator,2027,1080.0
+Shandong,Generator,hydroelectricity,generator,2028,1080.0
+Shandong,Generator,hydroelectricity,generator,2029,1080.0
+Shandong,Generator,hydroelectricity,generator,2030,1080.0
+Shandong,Generator,hydroelectricity,generator,2031,1080.0
+Shandong,Generator,hydroelectricity,generator,2032,1080.0
+Shandong,Generator,hydroelectricity,generator,2033,1080.0
+Shandong,Generator,hydroelectricity,generator,2034,1080.0
+Shandong,Generator,hydroelectricity,generator,2035,1080.0
+Shandong,Generator,nuclear,generator,2027,4393.451333653667
+Shandong,Generator,nuclear,generator,2028,4917.7320004805
+Shandong,Generator,nuclear,generator,2029,5442.012667307334
+Shandong,Generator,nuclear,generator,2030,5966.293334134167
+Shandong,Generator,nuclear,generator,2031,6364.046209008555
+Shandong,Generator,nuclear,generator,2032,6761.799083882943
+Shandong,Generator,nuclear,generator,2033,7159.551958757332
+Shandong,Generator,nuclear,generator,2034,7557.30483363172
+Shandong,Generator,nuclear,generator,2035,7955.057708506108
+Shandong,Generator,offwind,renewable,2027,7071.698424157625
+Shandong,Generator,offwind,renewable,2028,8593.446293690824
+Shandong,Generator,offwind,renewable,2029,10115.194163224023
+Shandong,Generator,offwind,renewable,2030,11636.942032757222
+Shandong,Generator,offwind,renewable,2031,14880.471311403127
+Shandong,Generator,offwind,renewable,2032,18124.000590049032
+Shandong,Generator,offwind,renewable,2033,21367.529868694935
+Shandong,Generator,offwind,renewable,2034,24611.059147340842
+Shandong,Generator,offwind,renewable,2035,27854.588425986745
+Shandong,Generator,onwind,renewable,2027,38063.54254280878
+Shandong,Generator,onwind,renewable,2028,45197.56631421317
+Shandong,Generator,onwind,renewable,2029,52331.59008561756
+Shandong,Generator,onwind,renewable,2030,59465.61385702195
+Shandong,Generator,onwind,renewable,2031,65745.34431983001
+Shandong,Generator,onwind,renewable,2032,72025.07478263808
+Shandong,Generator,onwind,renewable,2033,78304.80524544614
+Shandong,Generator,onwind,renewable,2034,84584.5357082542
+Shandong,Generator,onwind,renewable,2035,90864.26617106228
+Shandong,Generator,solar,renewable,2027,156379.82832469387
+Shandong,Generator,solar,renewable,2028,188705.74248704078
+Shandong,Generator,solar,renewable,2029,221031.65664938773
+Shandong,Generator,solar,renewable,2030,253357.57081173465
+Shandong,Generator,solar,renewable,2031,268828.6052697267
+Shandong,Generator,solar,renewable,2032,284299.6397277188
+Shandong,Generator,solar,renewable,2033,299770.6741857108
+Shandong,Generator,solar,renewable,2034,315241.70864370285
+Shandong,Generator,solar,renewable,2035,330712.7431016949
+Shandong,Link,CHP coal,link_capacity,2027,153480.47144795235
+Shandong,Link,CHP coal,link_capacity,2028,153098.8419225833
+Shandong,Link,CHP coal,link_capacity,2029,152717.2123972142
+Shandong,Link,CHP coal,link_capacity,2030,152335.5828718451
+Shandong,Link,CHP coal,link_capacity,2031,150001.32403802016
+Shandong,Link,CHP coal,link_capacity,2032,147667.0652041952
+Shandong,Link,CHP coal,link_capacity,2033,145332.8063703703
+Shandong,Link,CHP coal,link_capacity,2034,142998.54753654535
+Shandong,Link,CHP coal,link_capacity,2035,140664.2887027204
+Shandong,Link,CHP gas,link_capacity,2027,0.59972854287199
+Shandong,Link,CHP gas,link_capacity,2028,0.6574414650287285
+Shandong,Link,CHP gas,link_capacity,2029,0.715154387185467
+Shandong,Link,CHP gas,link_capacity,2030,0.7728673093422055
+Shandong,Link,CHP gas,link_capacity,2031,0.8750028469302025
+Shandong,Link,CHP gas,link_capacity,2032,0.9771383845181993
+Shandong,Link,CHP gas,link_capacity,2033,1.0792739221061962
+Shandong,Link,CHP gas,link_capacity,2034,1.1814094596941933
+Shandong,Link,CHP gas,link_capacity,2035,1.2835449972821902
+Shandong,Link,OCGT gas,link_capacity,2027,0.4985296606241808
+Shandong,Link,OCGT gas,link_capacity,2028,0.5190203237959262
+Shandong,Link,OCGT gas,link_capacity,2029,0.5395109869676716
+Shandong,Link,OCGT gas,link_capacity,2030,0.560001650139417
+Shandong,Link,OCGT gas,link_capacity,2031,0.568877623330768
+Shandong,Link,OCGT gas,link_capacity,2032,0.5777535965221189
+Shandong,Link,OCGT gas,link_capacity,2033,0.5866295697134698
+Shandong,Link,OCGT gas,link_capacity,2034,0.5955055429048207
+Shandong,Link,OCGT gas,link_capacity,2035,0.6043815160961716
+Shandong,Link,battery,link_capacity,2027,37704.13933150198
+Shandong,Link,battery,link_capacity,2028,45346.208997252965
+Shandong,Link,battery,link_capacity,2029,52988.278663003955
+Shandong,Link,battery,link_capacity,2030,60630.348328754946
+Shandong,Link,battery,link_capacity,2031,64257.11559378785
+Shandong,Link,battery,link_capacity,2032,67883.88285882075
+Shandong,Link,battery,link_capacity,2033,71510.65012385364
+Shandong,Link,battery,link_capacity,2034,75137.41738888655
+Shandong,Link,battery,link_capacity,2035,78764.18465391945
+Shandong,StorageUnit,PHS,storage,2027,3339.5548
+Shandong,StorageUnit,PHS,storage,2028,2759.7032
+Shandong,StorageUnit,PHS,storage,2029,2179.8516
+Shandong,StorageUnit,PHS,storage,2030,1600.0
+Shandong,StorageUnit,PHS,storage,2031,1600.0
+Shandong,StorageUnit,PHS,storage,2032,1600.0
+Shandong,StorageUnit,PHS,storage,2033,1600.0
+Shandong,StorageUnit,PHS,storage,2034,1600.0
+Shandong,StorageUnit,PHS,storage,2035,1600.0

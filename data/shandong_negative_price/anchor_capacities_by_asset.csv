@@ -1,0 +1,154 @@
+year,province,component,name,carrier,group,capacity_mw
+2025,Shandong,Generator,Shandong hydroelectricity,hydroelectricity,generator,1080.0
+2025,Shandong,Generator,Shandong onwind,onwind,renewable,0.0
+2025,Shandong,Generator,Shandong offwind,offwind,renewable,1133.6976850912247
+2025,Shandong,Generator,Shandong solar,solar,renewable,0.0
+2025,Shandong,Generator,Shandong nuclear,nuclear,generator,0.0
+2025,Shandong,Generator,Shandong coal power plant,coal power plant,generator,32506.50740158305
+2025,Shandong,Generator,Shandong coal cc,coal cc,generator,0.08194247444125792
+2025,Shandong,Generator,Shandong coal-1985,coal power plant,generator,475.0
+2025,Shandong,Generator,Shandong coal-1990,coal power plant,generator,3320.0
+2025,Shandong,Generator,Shandong coal-1995,coal power plant,generator,2315.0
+2025,Shandong,Generator,Shandong coal-2000,coal power plant,generator,5915.0
+2025,Shandong,Generator,Shandong coal-2005,coal power plant,generator,6665.0
+2025,Shandong,Generator,Shandong coal-2010,coal power plant,generator,17865.0
+2025,Shandong,Generator,Shandong onwind-2010,onwind,renewable,1246.0
+2025,Shandong,Generator,Shandong coal-2015,coal power plant,generator,9770.0
+2025,Shandong,Generator,Shandong onwind-2015,onwind,renewable,6467.0
+2025,Shandong,Generator,Shandong solar-2015,solar,renewable,1327.0
+2025,Shandong,Generator,Shandong coal-2020,coal power plant,generator,10410.0
+2025,Shandong,Generator,Shandong nuclear-2020,nuclear,generator,2717.0
+2025,Shandong,Generator,Shandong offwind-2020,offwind,renewable,2046.0
+2025,Shandong,Generator,Shandong onwind-2020,onwind,renewable,9107.0
+2025,Shandong,Generator,Shandong solar-2020,solar,renewable,21393.0
+2025,Shandong,Generator,Shandong coal-2025,coal power plant,generator,20522.309
+2025,Shandong,Generator,Shandong nuclear-2025,nuclear,generator,627.89
+2025,Shandong,Generator,Shandong offwind-2025,offwind,renewable,848.505
+2025,Shandong,Generator,Shandong onwind-2025,onwind,renewable,6975.495
+2025,Shandong,Generator,Shandong solar-2025,solar,renewable,69008.0
+2025,Shandong,Link,Shandong OCGT,OCGT gas,link_capacity,0.45754833428069
+2025,Shandong,Link,Shandong central CHP gas generator,CHP gas,link_capacity,0.41393393039189136
+2025,Shandong,Link,Shandong central CHP gas boiler,CHP gas,link_capacity,0.07036876816662152
+2025,Shandong,Link,Shandong central CHP coal generator,CHP coal,link_capacity,0.3668261233701223
+2025,Shandong,Link,Shandong central CHP coal boiler,CHP coal,link_capacity,0.05502391850551835
+2025,Shandong,Link,Shandong battery charger,battery,link_capacity,11210.0
+2025,Shandong,Link,Shandong battery discharger,battery,link_capacity,11210.0
+2025,Shandong,Link,Shandong CHP coal generator-1995,CHP coal,link_capacity,335.13513513513516
+2025,Shandong,Link,Shandong CHP coal boiler-1995,CHP coal,link_capacity,50.270270270270274
+2025,Shandong,Link,Shandong CHP coal generator-2000,CHP coal,link_capacity,1324.3243243243244
+2025,Shandong,Link,Shandong CHP coal boiler-2000,CHP coal,link_capacity,198.64864864864865
+2025,Shandong,Link,Shandong CHP coal generator-2005,CHP coal,link_capacity,10148.648648648648
+2025,Shandong,Link,Shandong CHP coal boiler-2005,CHP coal,link_capacity,1522.2972972972973
+2025,Shandong,Link,Shandong CHP coal generator-2010,CHP coal,link_capacity,11740.54054054054
+2025,Shandong,Link,Shandong CHP coal boiler-2010,CHP coal,link_capacity,1761.081081081081
+2025,Shandong,Link,Shandong CHP coal generator-2015,CHP coal,link_capacity,50772.97297297297
+2025,Shandong,Link,Shandong CHP coal boiler-2015,CHP coal,link_capacity,7615.945945945946
+2025,Shandong,Link,Shandong CHP coal generator-2020,CHP coal,link_capacity,25300.0
+2025,Shandong,Link,Shandong CHP coal boiler-2020,CHP coal,link_capacity,3795.0
+2025,Shandong,Link,Shandong CHP coal generator-2025,CHP coal,link_capacity,34502.994594594595
+2025,Shandong,Link,Shandong CHP coal boiler-2025,CHP coal,link_capacity,5175.449189189189
+2025,Shandong,StorageUnit,Shandong PHS,PHS,storage,1600.0
+2025,Shandong,StorageUnit,Shandong PHS-2025,PHS,storage,2899.258
+2030,Shandong,Generator,Shandong hydroelectricity,hydroelectricity,generator,1080.0
+2030,Shandong,Generator,Shandong onwind-2030,onwind,renewable,35670.118857021946
+2030,Shandong,Generator,Shandong offwind-2030,offwind,renewable,8742.437032757223
+2030,Shandong,Generator,Shandong solar-2030,solar,renewable,161629.57081173465
+2030,Shandong,Generator,Shandong nuclear-2030,nuclear,generator,2621.4033341341665
+2030,Shandong,Generator,Shandong coal power plant-2030,coal power plant,generator,63494.305036157304
+2030,Shandong,Generator,Shandong coal cc-2030,coal cc,generator,0.34571127703778526
+2030,Shandong,Generator,Shandong coal-2005-retrofit-2030,coal cc,generator,6664.864638662877
+2030,Shandong,Generator,Shandong coal-2010-retrofit-2030,coal cc,generator,17864.79906168118
+2030,Shandong,Generator,Shandong coal-2015-retrofit-2030,coal cc,generator,9769.843595177896
+2030,Shandong,Generator,Shandong coal-2020-retrofit-2030,coal cc,generator,10409.83955697111
+2030,Shandong,Generator,Shandong coal-1990,coal power plant,generator,0.789166908004339
+2030,Shandong,Generator,Shandong coal-1995,coal power plant,generator,0.7327464531485008
+2030,Shandong,Generator,Shandong coal-2000,coal power plant,generator,0.7989614616156823
+2030,Shandong,Generator,Shandong coal-2005,coal power plant,generator,0.07231101412182156
+2030,Shandong,Generator,Shandong coal-2010,coal power plant,generator,0.09717951588640109
+2030,Shandong,Generator,Shandong onwind-2010,onwind,renewable,1246.0
+2030,Shandong,Generator,Shandong coal-2015,coal power plant,generator,0.08051578472818464
+2030,Shandong,Generator,Shandong onwind-2015,onwind,renewable,6467.0
+2030,Shandong,Generator,Shandong solar-2015,solar,renewable,1327.0
+2030,Shandong,Generator,Shandong coal-2020,coal power plant,generator,0.08208117262577479
+2030,Shandong,Generator,Shandong nuclear-2020,nuclear,generator,2717.0
+2030,Shandong,Generator,Shandong offwind-2020,offwind,renewable,2046.0
+2030,Shandong,Generator,Shandong onwind-2020,onwind,renewable,9107.0
+2030,Shandong,Generator,Shandong solar-2020,solar,renewable,21393.0
+2030,Shandong,Generator,Shandong coal-2025,coal power plant,generator,1.2773450947540639
+2030,Shandong,Generator,Shandong nuclear-2025,nuclear,generator,627.89
+2030,Shandong,Generator,Shandong offwind-2025,offwind,renewable,848.505
+2030,Shandong,Generator,Shandong onwind-2025,onwind,renewable,6975.495
+2030,Shandong,Generator,Shandong solar-2025,solar,renewable,69008.0
+2030,Shandong,Link,Shandong OCGT-2030,OCGT gas,link_capacity,0.560001650139417
+2030,Shandong,Link,Shandong central CHP gas generator-2030,CHP gas,link_capacity,0.6605703498651329
+2030,Shandong,Link,Shandong central CHP gas boiler-2030,CHP gas,link_capacity,0.11229695947707259
+2030,Shandong,Link,Shandong central CHP coal generator-2030,CHP coal,link_capacity,0.5674796302852088
+2030,Shandong,Link,Shandong central CHP coal boiler-2030,CHP coal,link_capacity,0.0851219445427813
+2030,Shandong,Link,Shandong battery charger-2030,battery,link_capacity,18922.56622892651
+2030,Shandong,Link,Shandong battery discharger-2030,battery,link_capacity,19287.78209982844
+2030,Shandong,Link,Shandong battery charger,battery,link_capacity,11210.0
+2030,Shandong,Link,Shandong battery discharger,battery,link_capacity,11210.0
+2030,Shandong,Link,Shandong CHP coal generator-2005,CHP coal,link_capacity,10148.648648648648
+2030,Shandong,Link,Shandong CHP coal boiler-2005,CHP coal,link_capacity,1522.2972972972973
+2030,Shandong,Link,Shandong CHP coal generator-2010,CHP coal,link_capacity,11740.54054054054
+2030,Shandong,Link,Shandong CHP coal boiler-2010,CHP coal,link_capacity,1761.081081081081
+2030,Shandong,Link,Shandong CHP coal generator-2015,CHP coal,link_capacity,50772.97297297297
+2030,Shandong,Link,Shandong CHP coal boiler-2015,CHP coal,link_capacity,7615.945945945946
+2030,Shandong,Link,Shandong CHP coal generator-2020,CHP coal,link_capacity,25300.0
+2030,Shandong,Link,Shandong CHP coal boiler-2020,CHP coal,link_capacity,3795.0
+2030,Shandong,Link,Shandong CHP coal generator-2025,CHP coal,link_capacity,34502.994594594595
+2030,Shandong,Link,Shandong CHP coal boiler-2025,CHP coal,link_capacity,5175.449189189189
+2030,Shandong,StorageUnit,Shandong PHS,PHS,storage,1600.0
+2035,Shandong,Generator,Shandong hydroelectricity,hydroelectricity,generator,1080.0
+2035,Shandong,Generator,Shandong onwind-2035,onwind,renewable,31398.652314040326
+2035,Shandong,Generator,Shandong offwind-2035,offwind,renewable,16217.646393229523
+2035,Shandong,Generator,Shandong solar-2035,solar,renewable,77355.17228996026
+2035,Shandong,Generator,Shandong nuclear-2035,nuclear,generator,1988.764374371941
+2035,Shandong,Generator,Shandong coal power plant-2035,coal power plant,generator,74711.66971917113
+2035,Shandong,Generator,Shandong coal cc-2035,coal cc,generator,0.32046873949416327
+2035,Shandong,Generator,Shandong coal-2010-retrofit-2035,coal cc,generator,0.20068857492800893
+2035,Shandong,Generator,Shandong coal-2015-retrofit-2035,coal cc,generator,0.15613797781428324
+2035,Shandong,Generator,Shandong coal-2020-retrofit-2035,coal cc,generator,0.16017762931062376
+2035,Shandong,Generator,Shandong onwind-2030,onwind,renewable,35670.118857021946
+2035,Shandong,Generator,Shandong offwind-2030,offwind,renewable,8742.437032757223
+2035,Shandong,Generator,Shandong solar-2030,solar,renewable,161629.57081173465
+2035,Shandong,Generator,Shandong nuclear-2030,nuclear,generator,2621.4033341341665
+2035,Shandong,Generator,Shandong coal power plant-2030,coal power plant,generator,1.2686130600817624
+2035,Shandong,Generator,Shandong coal-2005-retrofit-2030,coal cc,generator,6664.864638662877
+2035,Shandong,Generator,Shandong coal-2010-retrofit-2030,coal cc,generator,17864.79906168118
+2035,Shandong,Generator,Shandong coal-2015-retrofit-2030,coal cc,generator,9769.843595177896
+2035,Shandong,Generator,Shandong coal-2020-retrofit-2030,coal cc,generator,10409.83955697111
+2035,Shandong,Generator,Shandong onwind-2010,onwind,renewable,1246.0
+2035,Shandong,Generator,Shandong onwind-2015,onwind,renewable,6467.0
+2035,Shandong,Generator,Shandong solar-2015,solar,renewable,1327.0
+2035,Shandong,Generator,Shandong nuclear-2020,nuclear,generator,2717.0
+2035,Shandong,Generator,Shandong offwind-2020,offwind,renewable,2046.0
+2035,Shandong,Generator,Shandong onwind-2020,onwind,renewable,9107.0
+2035,Shandong,Generator,Shandong solar-2020,solar,renewable,21393.0
+2035,Shandong,Generator,Shandong coal-2025,coal power plant,generator,0.7103892008095062
+2035,Shandong,Generator,Shandong nuclear-2025,nuclear,generator,627.89
+2035,Shandong,Generator,Shandong offwind-2025,offwind,renewable,848.505
+2035,Shandong,Generator,Shandong onwind-2025,onwind,renewable,6975.495
+2035,Shandong,Generator,Shandong solar-2025,solar,renewable,69008.0
+2035,Shandong,Link,Shandong OCGT-2035,OCGT gas,link_capacity,0.6043815160961716
+2035,Shandong,Link,Shandong central CHP gas generator-2035,CHP gas,link_capacity,0.4364766563589613
+2035,Shandong,Link,Shandong central CHP gas boiler-2035,CHP gas,link_capacity,0.07420103158102344
+2035,Shandong,Link,Shandong central CHP coal generator-2035,CHP coal,link_capacity,0.2646768661517049
+2035,Shandong,Link,Shandong central CHP coal boiler-2035,CHP coal,link_capacity,0.03970152992275574
+2035,Shandong,Link,Shandong battery charger-2035,battery,link_capacity,9066.913210538407
+2035,Shandong,Link,Shandong battery discharger-2035,battery,link_capacity,9066.923114626097
+2035,Shandong,Link,Shandong central CHP gas generator-2030,CHP gas,link_capacity,0.6605703498651329
+2035,Shandong,Link,Shandong central CHP gas boiler-2030,CHP gas,link_capacity,0.11229695947707259
+2035,Shandong,Link,Shandong battery charger-2030,battery,link_capacity,18922.56622892651
+2035,Shandong,Link,Shandong battery discharger-2030,battery,link_capacity,19287.78209982844
+2035,Shandong,Link,Shandong battery charger,battery,link_capacity,11210.0
+2035,Shandong,Link,Shandong battery discharger,battery,link_capacity,11210.0
+2035,Shandong,Link,Shandong CHP coal generator-2010,CHP coal,link_capacity,11740.54054054054
+2035,Shandong,Link,Shandong CHP coal boiler-2010,CHP coal,link_capacity,1761.081081081081
+2035,Shandong,Link,Shandong CHP coal generator-2015,CHP coal,link_capacity,50772.97297297297
+2035,Shandong,Link,Shandong CHP coal boiler-2015,CHP coal,link_capacity,7615.945945945946
+2035,Shandong,Link,Shandong CHP coal generator-2020,CHP coal,link_capacity,25300.0
+2035,Shandong,Link,Shandong CHP coal boiler-2020,CHP coal,link_capacity,3795.0
+2035,Shandong,Link,Shandong CHP coal generator-2025,CHP coal,link_capacity,34502.994594594595
+2035,Shandong,Link,Shandong CHP coal boiler-2025,CHP coal,link_capacity,5175.449189189189
+2035,Shandong,StorageUnit,Shandong PHS,PHS,storage,1600.0

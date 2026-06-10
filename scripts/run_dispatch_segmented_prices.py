@@ -141,6 +141,303 @@ def patch_first_segment_marginal_from_fuel_cost(
                 )
 
 
+def _price_to_eur_per_mwh(value: float, spec: dict, dispatch_cfg: dict) -> float:
+    """Convert configured bid prices to the model's EUR/MWh convention."""
+    currency = str(spec.get("currency") or dispatch_cfg.get("bid_price_limits", {}).get("currency") or "EUR").upper()
+    v = float(value)
+    if currency == "CNY":
+        fx = float(spec.get("fx_cny_per_eur") or dispatch_cfg.get("bid_price_limits", {}).get("fx_cny_per_eur") or 7.8)
+        return v / fx
+    if currency == "EUR":
+        return v
+    raise ValueError(f"Unsupported bid currency: {currency}")
+
+
+def _clip_bid(value: float, dispatch_cfg: dict) -> float:
+    limits = dispatch_cfg.get("bid_price_limits") or {}
+    if not limits.get("enabled", False):
+        return float(value)
+    lower = _price_to_eur_per_mwh(float(limits.get("lower", -np.inf)), limits, dispatch_cfg)
+    upper = _price_to_eur_per_mwh(float(limits.get("upper", np.inf)), limits, dispatch_cfg)
+    return float(np.clip(float(value), lower, upper))
+
+
+def apply_negative_bid_overrides_to_config(carriers_cfg: dict, dispatch_cfg: dict) -> None:
+    """Apply configured negative bids to segment specs before components are split."""
+    nb = dispatch_cfg.get("negative_bids") or {}
+    thermal = nb.get("thermal_min_output") or {}
+    if thermal.get("enabled", False):
+        seg_idx = int(thermal.get("segment_index", 0))
+        mc = _clip_bid(_price_to_eur_per_mwh(float(thermal.get("marginal_cost", -80.0)), thermal, dispatch_cfg), dispatch_cfg)
+        carrier_sel = thermal.get("carriers") or {}
+        for comp_name in ("Generator", "Link"):
+            wanted = set(map(str, carrier_sel.get(comp_name, []) if isinstance(carrier_sel, dict) else []))
+            cmap = carriers_cfg.get(comp_name) or {}
+            if not isinstance(cmap, dict):
+                continue
+            for carrier, spec in cmap.items():
+                if wanted and str(carrier) not in wanted:
+                    continue
+                vals = list(spec.get("marginal_cost") or [])
+                if 0 <= seg_idx < len(vals):
+                    vals[seg_idx] = mc
+                    spec["marginal_cost"] = vals
+
+    if (dispatch_cfg.get("bid_price_limits") or {}).get("enabled", False):
+        for comp_name in ("Generator", "Link"):
+            cmap = carriers_cfg.get(comp_name) or {}
+            if not isinstance(cmap, dict):
+                continue
+            for spec in cmap.values():
+                if not isinstance(spec, dict):
+                    continue
+                vals = spec.get("marginal_cost")
+                if isinstance(vals, (list, tuple)):
+                    spec["marginal_cost"] = [_clip_bid(float(v), dispatch_cfg) for v in vals]
+
+
+def apply_negative_renewable_bids(n: pypsa.Network, dispatch_cfg: dict) -> None:
+    """Set wind/PV static marginal costs to the configured market-floor bid."""
+    nb = dispatch_cfg.get("negative_bids") or {}
+    spec = nb.get("renewable") or {}
+    if not spec.get("enabled", False):
+        return
+    carriers = set(map(str, spec.get("carriers") or []))
+    if not carriers or not hasattr(n, "generators") or n.generators.empty:
+        return
+    bid = _clip_bid(_price_to_eur_per_mwh(float(spec.get("marginal_cost", -80.0)), spec, dispatch_cfg), dispatch_cfg)
+    mask = n.generators["carrier"].astype(str).isin(carriers)
+    if mask.any():
+        n.generators.loc[mask, "marginal_cost"] = bid
+        logger.info("Applied renewable negative bid %.4f EUR/MWh to carriers=%s", bid, sorted(carriers))
+
+
+def _vre_available_profile(n: pypsa.Network, province: str, carriers: set[str]) -> pd.Series:
+    """Wind/PV available generation before curtailment, used as an hourly allocation key."""
+    out = pd.Series(0.0, index=n.snapshots, dtype=float)
+    if not carriers or not hasattr(n, "generators") or n.generators.empty:
+        return out
+    gens = n.generators
+    idx = gens.index[
+        gens["carrier"].astype(str).isin(carriers)
+        & gens["bus"].astype(str).map(lambda b: str(b).split(" ", 1)[0] == province)
+    ].tolist()
+    if not idx:
+        return out
+    p_nom = gens.loc[idx].apply(lambda r: _nom_opt_value(r, "p_nom", "p_nom_opt"), axis=1).astype(float)
+    if hasattr(n, "generators_t") and hasattr(n.generators_t, "p_max_pu"):
+        p_max_pu = n.generators_t.p_max_pu.reindex(index=n.snapshots, columns=idx).fillna(1.0).astype(float)
+    else:
+        p_max_pu = pd.DataFrame(1.0, index=n.snapshots, columns=idx)
+    available = p_max_pu.mul(p_nom, axis=1).clip(lower=0.0).sum(axis=1)
+    return available.reindex(n.snapshots).fillna(0.0).astype(float)
+
+
+def _select_annual_net_receiving_twh(
+    n: pypsa.Network,
+    ded_cfg: dict,
+    planning_year: str | int | None = None,
+) -> float:
+    """Select annual net-receiving electricity, allowing year-specific values."""
+    default = float(ded_cfg.get("annual_net_receiving_twh", 0.0) or 0.0)
+    by_year = ded_cfg.get("annual_net_receiving_twh_by_year") or {}
+    if not isinstance(by_year, dict) or not by_year:
+        return default
+    if planning_year is not None:
+        try:
+            year = int(planning_year)
+            return float(by_year.get(str(year), by_year.get(year, default)) or 0.0)
+        except (TypeError, ValueError):
+            pass
+    try:
+        years = pd.DatetimeIndex(n.snapshots).year
+    except (TypeError, ValueError):
+        return default
+    if len(years) == 0:
+        return default
+    year = int(pd.Series(years).mode().iloc[0])
+    return float(by_year.get(str(year), by_year.get(year, default)) or 0.0)
+
+
+def _select_year_value(
+    n: pypsa.Network,
+    cfg: dict,
+    key: str,
+    default: float | None = None,
+    planning_year: str | int | None = None,
+) -> float | None:
+    """Select a scalar config value with optional `{key}_by_year` override."""
+    if default is None:
+        raw_default = cfg.get(key)
+        default_value = None if raw_default is None else float(raw_default)
+    else:
+        default_value = float(default)
+    by_year = cfg.get(f"{key}_by_year") or {}
+    if not isinstance(by_year, dict) or not by_year:
+        return default_value
+    if planning_year is not None:
+        try:
+            year = int(planning_year)
+            return float(by_year.get(str(year), by_year.get(year, default_value)))
+        except (TypeError, ValueError):
+            return default_value
+    try:
+        years = pd.DatetimeIndex(n.snapshots).year
+    except (TypeError, ValueError):
+        return default_value
+    if len(years) == 0:
+        return default_value
+    year = int(pd.Series(years).mode().iloc[0])
+    return float(by_year.get(str(year), by_year.get(year, default_value)))
+
+
+def _allocate_energy_by_profile_with_caps(
+    profile: pd.Series,
+    weights: pd.Series,
+    target_mwh: float,
+    cap_mw: pd.Series | None = None,
+    *,
+    max_iter: int = 100,
+) -> tuple[pd.Series, float]:
+    """Allocate annual energy by hourly profile while respecting per-hour MW caps."""
+    profile = pd.to_numeric(profile, errors="coerce").reindex(weights.index).fillna(0.0).clip(lower=0.0)
+    weights = pd.to_numeric(weights, errors="coerce").reindex(profile.index).fillna(1.0).astype(float)
+    if cap_mw is None:
+        cap = pd.Series(np.inf, index=profile.index, dtype=float)
+    else:
+        cap = pd.to_numeric(cap_mw, errors="coerce").reindex(profile.index).fillna(np.inf).clip(lower=0.0)
+
+    allocated = pd.Series(0.0, index=profile.index, dtype=float)
+    remaining = float(target_mwh)
+    active = (profile > 0.0) & (cap > 1e-9) & (weights > 0.0)
+
+    for _ in range(max_iter):
+        if remaining <= 1e-6 or not bool(active.any()):
+            break
+        denom = float((profile[active] * weights[active]).sum())
+        if denom <= 1e-9:
+            break
+        proposal = profile[active] * (remaining / denom)
+        room = (cap[active] - allocated[active]).clip(lower=0.0)
+        capped = proposal >= (room - 1e-9)
+        if not bool(capped.any()):
+            allocated.loc[active] += proposal
+            remaining = 0.0
+            break
+        capped_idx = proposal.index[capped]
+        allocated.loc[capped_idx] += room.loc[capped_idx]
+        remaining -= float((room.loc[capped_idx] * weights.loc[capped_idx]).sum())
+        active.loc[capped_idx] = False
+
+    delivered_mwh = float((allocated * weights).sum())
+    return allocated, max(float(target_mwh) - delivered_mwh, 0.0)
+
+
+def apply_net_receiving_load_deduction(
+    n: pypsa.Network,
+    config: dict,
+    planning_year: str | int | None = None,
+) -> None:
+    """Subtract configured Shandong net received electricity from AC load."""
+    study_cfg = config.get("shandong_negative_price_study") or {}
+    ext_cfg = study_cfg.get("external_exchange_scenarios") or {}
+    ded_cfg = ext_cfg.get("net_receiving_load_deduction") or {}
+    if not isinstance(ded_cfg, dict) or not ded_cfg.get("enabled", False):
+        return
+    province = str(study_cfg.get("province") or config.get("single_node_province") or "Shandong")
+    annual_twh = _select_annual_net_receiving_twh(n, ded_cfg, planning_year=planning_year)
+    if annual_twh <= 0.0:
+        return
+    if not hasattr(n, "loads") or n.loads.empty or not hasattr(n, "loads_t") or not hasattr(n.loads_t, "p_set"):
+        logger.warning("net_receiving_load_deduction enabled but network has no load p_set.")
+        return
+
+    ac_bus = province
+    if ac_bus not in n.buses.index:
+        logger.warning("net_receiving_load_deduction: AC bus %s not found.", ac_bus)
+        return
+    loads = n.loads.index[n.loads["bus"].astype(str) == ac_bus].tolist()
+    if not loads:
+        logger.warning("net_receiving_load_deduction: no loads found at %s.", ac_bus)
+        return
+
+    weights = n.snapshot_weightings.generators if "generators" in n.snapshot_weightings else n.snapshot_weightings.objective
+    weights = pd.to_numeric(weights, errors="coerce").reindex(n.snapshots).fillna(1.0).astype(float)
+    target_mwh = annual_twh * 1e6
+    allocation = str(ded_cfg.get("allocation", "flat") or "flat")
+    vre_carriers = set(map(str, ded_cfg.get("allocation_vre_carriers") or ["onwind", "offwind", "solar"]))
+    p_set = n.loads_t.p_set.reindex(index=n.snapshots, columns=loads).fillna(0.0).astype(float)
+    total = p_set.sum(axis=1)
+    cap = pd.Series(np.inf, index=n.snapshots, dtype=float)
+    max_hourly_mw = _select_year_value(
+        n,
+        ded_cfg,
+        "max_hourly_receiving_mw",
+        planning_year=planning_year,
+    )
+    if max_hourly_mw is not None:
+        cap = cap.clip(upper=float(max_hourly_mw))
+    min_net_load_ratio = ded_cfg.get("min_net_load_ratio")
+    if min_net_load_ratio is not None:
+        ratio = min(max(float(min_net_load_ratio), 0.0), 1.0)
+        cap = pd.concat([cap, (total * (1.0 - ratio)).clip(lower=0.0)], axis=1).min(axis=1)
+
+    unmet_mwh = 0.0
+    if allocation in {"vre_available", "vre_pre_curtailment", "vre"}:
+        profile = _vre_available_profile(n, province, vre_carriers)
+        exponent = float(ded_cfg.get("allocation_exponent", 1.0) or 1.0)
+        if exponent != 1.0:
+            profile = profile.clip(lower=0.0) ** exponent
+        profile_energy = float((profile * weights).sum())
+        if profile_energy > 1e-9:
+            deduction_mw_by_snapshot, unmet_mwh = _allocate_energy_by_profile_with_caps(
+                profile,
+                weights,
+                target_mwh,
+                cap,
+            )
+        else:
+            logger.warning(
+                "net_receiving_load_deduction allocation=%s but no VRE availability found; fallback to flat.",
+                allocation,
+            )
+            deduction_mw_by_snapshot, unmet_mwh = _allocate_energy_by_profile_with_caps(
+                pd.Series(1.0, index=n.snapshots),
+                weights,
+                target_mwh,
+                cap,
+            )
+    else:
+        deduction_mw_by_snapshot, unmet_mwh = _allocate_energy_by_profile_with_caps(
+            pd.Series(1.0, index=n.snapshots),
+            weights,
+            target_mwh,
+            cap,
+        )
+    shares = p_set.divide(total.where(total > 0.0), axis=0).fillna(1.0 / len(loads))
+    deduction = shares.mul(deduction_mw_by_snapshot, axis=0)
+    adjusted = (p_set - deduction).clip(lower=0.0)
+    n.loads_t.p_set.loc[:, loads] = adjusted
+    logger.info(
+        "Applied %s net receiving load deduction: %.3f TWh/year, allocation=%s, avg=%.3f MW, max=%.3f MW across %s load(s).",
+        province,
+        annual_twh,
+        allocation,
+        float((deduction_mw_by_snapshot * weights).sum() / max(float(weights.sum()), 1e-9)),
+        float(deduction_mw_by_snapshot.max()),
+        len(loads),
+    )
+    if unmet_mwh > 1e-3:
+        logger.warning(
+            "%s net receiving cap prevented %.3f TWh/year from being allocated "
+            "(target %.3f TWh/year, allocation=%s).",
+            province,
+            unmet_mwh / 1e6,
+            annual_twh,
+            allocation,
+        )
+
+
 def extra_functionality_dispatch(n, snapshots):
     """CHP + asymmetric transmission pairs + synchronous floor; no planning-year retrofit constraints."""
     add_chp_constraints(n)
@@ -493,6 +790,7 @@ def run(
             n.snapshot_weightings[:] = 1.0
         except Exception:
             pass
+    apply_net_receiving_load_deduction(n, config, planning_year=planning_year)
     freeze_capacities_and_zero_capex(n, zero_capital_cost=True)
     carriers_cfg = dispatch_cfg.get("carriers") or {}
     if dispatch_cfg.get("first_segment_from_fuel_cost", True):
@@ -521,6 +819,8 @@ def run(
                     )
                 except Exception as e:
                     logger.warning("first_segment_from_fuel_cost failed (%s); using config marginal_cost.", e)
+    apply_negative_bid_overrides_to_config(carriers_cfg, dispatch_cfg)
+    apply_negative_renewable_bids(n, dispatch_cfg)
     apply_segmented_carriers(n, carriers_cfg)
     if dispatch_cfg.get("zero_gas_fuel_marginal_cost", True) and "OCGT gas" in (carriers_cfg.get("Link") or {}):
         zero_gas_fuel_marginal_cost(n)

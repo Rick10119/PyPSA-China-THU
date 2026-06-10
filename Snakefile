@@ -22,6 +22,10 @@ configfile: "config.yaml"
 
 ATLITE_NPROCESSES = config['atlite'].get('nprocesses', 4)
 FIRST_PLANNING_HORIZON = str(config["scenario"]["planning_horizons"][0])
+try:
+    ACTIVE_CONFIGFILE = str(workflow.configfiles[0]) if workflow.configfiles else "config.yaml"
+except Exception:
+    ACTIVE_CONFIGFILE = "config.yaml"
 
 
 def all_rule_inputs(wildcards):
@@ -342,6 +346,17 @@ if config["foresight"] == "myopic":
             fx_cny_per_eur=lambda wc: float(
                 (config.get("dispatch_segmented_prices") or {}).get("price_export", {}).get("fx_cny_per_eur", 7.8)
             ),
+            allow_negative_prices=lambda wc: bool(
+                (config.get("dispatch_segmented_prices") or {}).get("price_export", {}).get(
+                    "allow_negative_prices", False
+                )
+            ),
+            price_floor=lambda wc: (config.get("dispatch_segmented_prices") or {}).get("price_export", {}).get(
+                "price_floor"
+            ),
+            price_cap=lambda wc: (config.get("dispatch_segmented_prices") or {}).get("price_export", {}).get(
+                "price_cap"
+            ),
             provinces=lambda wc: (
                 [config["single_node_province"]]
                 if bool(config.get("using_single_node", False))
@@ -375,7 +390,15 @@ if config["foresight"] == "myopic":
                 str(params.currency),
                 "--fx-cny-per-eur",
                 str(params.fx_cny_per_eur),
+                "--config",
+                ACTIVE_CONFIGFILE,
             ]
+            if params.allow_negative_prices:
+                cmd += ["--allow-negative-prices"]
+            if params.price_floor is not None:
+                cmd += ["--price-floor", str(params.price_floor)]
+            if params.price_cap is not None:
+                cmd += ["--price-cap", str(params.price_cap)]
             if params.provinces:
                 for p in params.provinces:
                     cmd += ["--province", str(p)]

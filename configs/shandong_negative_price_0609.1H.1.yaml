@@ -1,0 +1,148 @@
+# Scenario overlay for the Shandong negative-price study.
+#
+# This file is intentionally separate from config.yaml. Review and merge/copy the
+# relevant blocks into the active config before running Snakemake.
+
+version: 0609.1H.1
+using_single_node: true
+single_node_province: Shandong
+
+scenario:
+  planning_horizons:
+    - 2025
+    - 2030
+    - 2035
+
+dispatch_segmented_prices:
+  enabled: true
+  copy_planning_postnetwork: false
+  export_prices: true
+
+  # Shandong spot-market bid bounds, in CNY/MWh.
+  bid_price_limits:
+    enabled: true
+    currency: CNY
+    lower: -80.0
+    upper: 1300.0
+    fx_cny_per_eur: 7.8
+
+  negative_bids:
+    # Default assumption for the study: all wind/PV bid at the market floor.
+    renewable:
+      enabled: true
+      carriers:
+        - onwind
+        - offwind
+        - solar
+      marginal_cost: -80.0
+      currency: CNY
+
+    # Approximate the thermal minimum-output tranche as the first bid segment.
+    # Per updated method: stage-1 thermal minimum-output bid is zero. A separate
+    # two-stage postprocessor then identifies minimum-output violations and
+    # replaces wind/PV dispatch with thermal output.
+    thermal_min_output:
+      enabled: true
+      segment_index: 0
+      marginal_cost: 0.0
+      currency: CNY
+      carriers:
+        Generator:
+          - coal power plant
+          - coal cc
+        Link:
+          - OCGT gas
+
+  # Existing segmented-bid shape. Segment 0 will be overwritten to 0 CNY/MWh
+  # by the negative_bids.thermal_min_output block above.
+  first_segment_from_fuel_cost: true
+  segment_mc_fuel_mult: [1.0, 1.3, 1.5, 1.7, 2.0]
+  carriers:
+    Generator:
+      coal power plant:
+        shares: [0.40, 0.30, 0.15, 0.10, 0.05]
+        marginal_cost: [1.0, 1.0, 1.0, 1.0, 1.0]
+      coal cc:
+        shares: [0.40, 0.30, 0.15, 0.10, 0.05]
+        marginal_cost: [1.0, 1.0, 1.0, 0.88, 0.75]
+    Link:
+      OCGT gas:
+        shares: [0.10, 0.45, 0.225, 0.15, 0.075]
+        marginal_cost: [1.0, 1.0, 1.0, 1.0, 1.0]
+        only_bus1_carrier: AC
+
+  price_export:
+    currency: CNY
+    fx_cny_per_eur: 7.8
+    allow_negative_prices: true
+    price_floor: -80.0
+    price_cap: 1300.0
+    daily_low_output_zero_threshold_by_year:
+      "2025": 0.40
+      "2030": 0.40
+      "2035": 0.40
+    low_output_reference_freq: "W-SUN"
+    low_output_reserve_margin: 0.10
+
+shandong_negative_price_study:
+  version_source: 0609.1H.1
+  province: Shandong
+  anchor_years: [2025, 2030, 2035]
+  target_years: [2027, 2028, 2029, 2030, 2031, 2032, 2033, 2034, 2035]
+  interpolation: linear
+  mechanism_prices_cny_per_kwh:
+    stock_wind: 0.3949
+    stock_solar: 0.319
+    incremental_wind: 0.225
+    incremental_solar: 0.225
+  mechanism_volume_share:
+    stock_wind: 0.80
+    stock_solar: 0.70
+    incremental_wind: 0.80
+    incremental_solar: 0.80
+  external_exchange_scenarios:
+    net_receiving_load_deduction:
+      enabled: true
+      annual_net_receiving_twh: 150.0
+      annual_net_receiving_twh_by_year:
+        "2025": 150.0
+        "2030": 220.0
+        "2035": 260.0
+      allocation: vre_available
+      allocation_vre_carriers:
+        - onwind
+        - offwind
+        - solar
+      allocation_exponent: 2.0
+      max_hourly_receiving_mw: 33000.0
+      max_hourly_receiving_mw_by_year:
+        "2025": 33000.0
+        "2030": 48400.0
+        "2035": 57200.0
+      min_net_load_ratio: 0.10
+      note: "Subtract Shandong net received power from local load by hourly wind/PV pre-curtailment available output squared, capped by hourly receiving capability and minimum local net-load headroom."
+
+  two_stage_thermal_min_output_adjustment:
+    enabled: true
+    province: Shandong
+    stage1_thermal_min_output_bid_cny_per_mwh: 0.0
+    min_output_ratio: 0.10
+    thermal_carriers:
+      Generator:
+        - coal power plant
+        - coal cc
+        - nuclear
+      Link:
+        OCGT gas:
+          only_bus1_carrier: AC
+        CHP gas:
+          only_bus1_carrier: AC
+        CHP coal:
+          only_bus1_carrier: AC
+        biomass:
+          only_bus1_carrier: AC
+    vre_carriers:
+      - onwind
+      - offwind
+      - solar
+    curtailment_allocation: proportional_to_original_vre_dispatch

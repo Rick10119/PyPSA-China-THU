@@ -1,0 +1,2 @@
+province,annual_net_receiving_twh,annual_net_receiving_100m_kwh,flat_load_deduction_mw,allocation,note
+Shandong,150.0,1500.0,17123.287671232876,flat,Subtract from Shandong AC load before dispatch solve.

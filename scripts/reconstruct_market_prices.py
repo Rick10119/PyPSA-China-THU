@@ -19,8 +19,10 @@ import pandas as pd
 
 @dataclass(frozen=True)
 class ReconstructPriceConfig:
-    # Kept for API compatibility; currently unused.
     week_freq: str = "W-SUN"
+    allow_negative_prices: bool = False
+    price_floor: float | None = None
+    price_cap: float | None = None
 
 
 def _removed_mapping(*_args, **_kwargs):
@@ -52,6 +54,18 @@ _apply_cross_border_imports = _removed_mapping
 reconstruct_market_prices = _removed_mapping
 
 
+def _apply_price_bounds(df: pd.DataFrame, config: ReconstructPriceConfig | None) -> pd.DataFrame:
+    cfg = config or ReconstructPriceConfig()
+    out = df.apply(pd.to_numeric, errors="coerce").fillna(0.0).astype(float)
+    if cfg.price_floor is not None:
+        out = out.clip(lower=float(cfg.price_floor))
+    elif not cfg.allow_negative_prices:
+        out = out.clip(lower=0.0)
+    if cfg.price_cap is not None:
+        out = out.clip(upper=float(cfg.price_cap))
+    return out
+
+
 def marginal_retail_prices(n, *, config: ReconstructPriceConfig | None = None) -> pd.DataFrame:
     """
     Provincial prices from PyPSA energy-balance duals (`buses_t.marginal_price`).
@@ -79,4 +93,4 @@ def marginal_retail_prices(n, *, config: ReconstructPriceConfig | None = None) -
             f"Expected a subset of: {list(provinces)[:5]}..."
         )
     snapshots = mp.index
-    return mp[cols].reindex(snapshots).fillna(0.0).clip(lower=0.0)
+    return _apply_price_bounds(mp[cols].reindex(snapshots), config)

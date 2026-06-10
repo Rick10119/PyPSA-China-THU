@@ -1,0 +1,18 @@
+parameter,region,value,unit,source_note
+bid_floor,Shandong,-80,CNY/MWh,User-specified Shandong market bid lower bound
+bid_cap,Shandong,1300,CNY/MWh,User-specified Shandong market bid upper bound
+renewable_bid,Shandong,-80,CNY/MWh,Study assumption: all wind and solar bid at floor
+thermal_min_output_bid_stage1,Shandong,0,CNY/MWh,Updated method: first-stage thermal minimum-output tranche bids at zero
+stock_wind_mechanism_share,Shandong,0.80,fraction,User-provided 2025 first-round parameter
+stock_solar_mechanism_share,Shandong,0.70,fraction,User-provided 2025 first-round parameter
+incremental_wind_mechanism_share,Shandong,0.80,fraction,User-provided 2025 first-round parameter
+incremental_solar_mechanism_share,Shandong,0.80,fraction,User-provided 2025 first-round parameter
+stock_wind_mechanism_price,Shandong,0.3949,CNY/kWh,User-provided parameter
+stock_solar_mechanism_price,Shandong,0.319,CNY/kWh,User-provided parameter
+incremental_wind_mechanism_price,Shandong,0.225,CNY/kWh,User-provided parameter
+incremental_solar_mechanism_price,Shandong,0.225,CNY/kWh,User-provided parameter
+reference_receiving_capacity,Shandong,33000,MW,Publicly reported external-power receiving capacity; use as context
+net_receiving_load_deduction,Shandong,150,TWh/year,Working 2025 net receiving assumption: subtract from Shandong load
+net_receiving_load_deduction_allocation,Shandong,vre_available,method,Allocate hourly deduction proportional to wind/PV available output before curtailment
+net_receiving_load_deduction_allocation_exponent,Shandong,2.0,power,Use VRE availability squared to concentrate net receiving deduction in high wind/PV hours
+daily_low_output_zero_threshold,Shandong,0.40,fraction,Default low-output threshold restored to an interpretable 40 percent level
