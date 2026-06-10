@@ -892,21 +892,24 @@ def _weekly_lr_and_blocks(
 def _daily_low_output_zero_mask(
     thermal_series: pd.Series,
     threshold: float | pd.Series = 0.4,
+    freq: str = "D",
+    reserve_margin: float = 0.0,
 ) -> pd.Series:
-    """Mask snapshots below threshold * daily thermal maximum for one province."""
+    """Mask snapshots below threshold * grouped thermal maximum * reserve multiplier."""
     if not isinstance(thermal_series.index, pd.DatetimeIndex):
         raise TypeError(
-            "daily low-output zeroing requires DatetimeIndex snapshots; "
+            "low-output zeroing requires DatetimeIndex snapshots; "
             f"got {type(thermal_series.index).__name__}"
         )
     th = pd.to_numeric(thermal_series, errors="coerce").fillna(0.0).astype(float)
-    day_max = th.groupby(pd.Grouper(freq="D")).transform("max")
+    group_max = th.groupby(pd.Grouper(freq=str(freq))).transform("max")
     if isinstance(threshold, pd.Series):
         thr = pd.to_numeric(threshold, errors="coerce").reindex(th.index).fillna(0.4).astype(float)
     else:
         thr = pd.Series(float(threshold), index=th.index, dtype=float)
-    cutoff = day_max * thr
-    return (th < cutoff) | (day_max <= 0.0)
+    reserve_multiplier = 1.0 + max(float(reserve_margin), 0.0)
+    cutoff = group_max * reserve_multiplier * thr
+    return (th < cutoff) | (group_max <= 0.0)
 
 
 def _daily_low_output_zero_threshold(snapshots: pd.Index, config_path: str | Path | None = None) -> pd.Series:
@@ -949,6 +952,28 @@ def _daily_low_output_zero_threshold(snapshots: pd.Index, config_path: str | Pat
         for y, thr in by_year.items():
             out.loc[years == int(y)] = float(thr)
     return out.clip(lower=0.0, upper=1.0)
+
+
+def _low_output_reference_freq(config_path: str | Path | None = None) -> str:
+    """Frequency used for low-output reference maximum. Default keeps legacy daily behavior."""
+    cfg_path = Path(config_path) if config_path is not None else _default_config_path()
+    if cfg_path.exists():
+        with cfg_path.open("r", encoding="utf-8") as f:
+            cfg = yaml.safe_load(f) or {}
+        pe = ((cfg.get("dispatch_segmented_prices") or {}).get("price_export") or {})
+        return str(pe.get("low_output_reference_freq") or pe.get("daily_low_output_reference_freq") or "D")
+    return "D"
+
+
+def _low_output_reserve_margin(config_path: str | Path | None = None) -> float:
+    """Reserve margin applied to the grouped thermal maximum before thresholding."""
+    cfg_path = Path(config_path) if config_path is not None else _default_config_path()
+    if cfg_path.exists():
+        with cfg_path.open("r", encoding="utf-8") as f:
+            cfg = yaml.safe_load(f) or {}
+        pe = ((cfg.get("dispatch_segmented_prices") or {}).get("price_export") or {})
+        return max(float(pe.get("low_output_reserve_margin", 0.0) or 0.0), 0.0)
+    return 0.0
 
 
 def _build_interp_curve(blocks: list[tuple[float, float]]) -> tuple[np.ndarray, np.ndarray]:
@@ -1015,10 +1040,17 @@ def _local_mapped_prices(
     )
 
     zero_threshold = _daily_low_output_zero_threshold(out.index, config_path=config_path)
+    low_output_freq = _low_output_reference_freq(config_path=config_path)
+    low_output_reserve_margin = _low_output_reserve_margin(config_path=config_path)
 
     for p in out.columns:
         th_active = pd.to_numeric(thermal_full[p], errors="coerce").fillna(0.0).astype(float)
-        zero_mask = _daily_low_output_zero_mask(th_active, threshold=zero_threshold).to_numpy(dtype=bool)
+        zero_mask = _daily_low_output_zero_mask(
+            th_active,
+            threshold=zero_threshold,
+            freq=low_output_freq,
+            reserve_margin=low_output_reserve_margin,
+        ).to_numpy(dtype=bool)
 
         if supply_settings is not None:
             fuel_f = _province_ref_fuel_eur_from_seg0_network(

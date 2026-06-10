@@ -217,13 +217,18 @@ dispatch_segmented_prices:
     thermal_load_floor:
       enabled: true
       ratio: 0.10
-    # Daily low-output snapshots are set to mapped price 0 when thermal output is
-    # below (daily max thermal * threshold). Can be set globally and by year.
+    # Low-output snapshots are set to mapped price 0 when thermal output is
+    # below (grouped max thermal * (1 + reserve margin) * threshold).
+    # Can be set globally and by year.
     daily_low_output_zero_threshold: 0.4
     daily_low_output_zero_threshold_by_year:
       "2025": 0.40
       "2030": 0.40
       "2035": 0.40
+    # Reference window for grouped max thermal output and reserve multiplier.
+    # Defaults in code keep the legacy daily/no-reserve behavior when omitted.
+    low_output_reference_freq: "W-SUN"
+    low_output_reserve_margin: 0.10
     # Nov 15–Mar 15 (inclusive): CHP excluded from P/Cap for mapped LR only; rest of year full stack.
     heating_season_chp_excluded_from_mapped_lr:
       enabled: true
