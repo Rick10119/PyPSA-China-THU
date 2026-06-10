@@ -100,6 +100,29 @@ prepare_base_networks_2020
 
 其中 `solve_network_myopic` 负责扩建与运行优化；`run_dispatch_segmented` 在固定装机后重算全年调度，并输出用于电价分析的结果。
 
+规则名 `prepare_base_networks_2020` 是历史遗留：它现在对应 `scenario.planning_horizons` 的**第一个年份**（当前为 `2025`），而不是固定的 `2020`。
+
+### 基础年的既有省间输电容量
+
+首个规划年规则会把 `data/grids/edges_current.csv` 作为 `edges_ext` 传给
+`scripts/prepare_base_network.py`。脚本读取第三列（MW）并添加不可扩建的
+`ext positive` / `ext reversed` 线路；随后仍从 `data/grids/edges.txt` 添加可扩建的
+`positive` / `reversed` 线路。
+
+示例：
+
+```text
+Gansu,Xinjiang,3000
+```
+
+如果**升级基础年**（修改 `baseyear` 或 `planning_horizons[0]`），通常还需要同步检查并更新：
+
+- `config.yaml` 中的 `baseyear` 与 `scenario.planning_horizons`
+- `data/grids/edges_current.csv`（新基准年的既有 AC 输电容量）
+- `data/existing_infrastructure/` 等 brownfield 相关输入
+
+若不更新 `edges_current.csv`，模型会把本应固定的跨省走廊当成从 0 开始自由扩建的线路，可能严重低估既有输电能力。
+
 ## 电价输出
 
 主输出来自 PyPSA 求解后的省级 AC bus 边际电价：
@@ -150,6 +173,8 @@ dispatch_segmented_prices:
 常用输入数据包括：
 
 - `data/costs/costs_<year>.csv`：技术成本与燃料成本；
+- `data/grids/edges_current.csv`：首个规划年的既有 AC 省间输电容量（MW，第三列）；
+- `data/grids/edges.txt`：可扩建 AC/H2 走廊拓扑；
 - `data/existing_infrastructure/*_capacity.csv`：已有装机；
 - `data/load/load_<year>_weatheryears_1979_2016_TWh.h5`：省级电力负荷；
 - `data/heating/heat_demand_profile_<scenario>_<year>.h5`：供热负荷；

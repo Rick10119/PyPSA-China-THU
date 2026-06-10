@@ -39,8 +39,8 @@ Data on existing power generation infrastructure in China.
 
 ### `grids/`
 Transmission network topology and connectivity data.
-- **`edges.txt`**: Main transmission line edges file (used in network preparation)
-- **`edges_current.csv`**: Current transmission network edges
+- **`edges.txt`**: Extendable AC/H2 corridor topology used for `positive` / `reversed` links
+- **`edges_current.csv`**: Existing AC transfer capacities (MW) for the first planning horizon; read as `edges_ext` by `prepare_base_networks_2020`. Columns: `bus0,bus1,capacity_mw`. If you change `config.yaml: baseyear` or `planning_horizons[0]`, update this file to match the new baseline year.
 - **`edges_current_neighbor.csv`**: Transmission edges including neighboring connections
 - **`old/`**: Archive of older grid topology files
 

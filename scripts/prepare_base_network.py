@@ -1232,6 +1232,66 @@ def prepare_network(config):
     #add lines
 
     if not config['no_lines']:
+        edges_ext_path = getattr(snakemake.input, "edges_ext", None)
+        if edges_ext_path:
+            edges_ext = pd.read_csv(edges_ext_path, header=None)
+            baseyear = int(config.get("baseyear", planning_horizons))
+            lengths_ext = 1.25 * np.array(
+                [
+                    haversine(
+                        [network.buses.at[name0, "x"], network.buses.at[name0, "y"]],
+                        [network.buses.at[name1, "x"], network.buses.at[name1, "y"]],
+                    )
+                    for name0, name1 in edges_ext[[0, 1]].values
+                ]
+            )
+            cc_ext = (
+                config["line_cost_factor"]
+                * lengths_ext
+                * [HVAC_cost_curve(l) for l in lengths_ext]
+            ) * 1.5 * 1.02 * Nyears * annuity(40.0, config["costs"]["discountrate"])
+            dc_eff = config["transmission_efficiency"]["DC"]
+            network.madd(
+                "Link",
+                edges_ext[0] + "-" + edges_ext[1],
+                bus0=edges_ext[0].values,
+                bus1=edges_ext[1].values,
+                suffix=" ext positive",
+                p_nom_extendable=False,
+                p_nom=edges_ext[2].values,
+                p_nom_min=edges_ext[2].values,
+                p_min_pu=0,
+                efficiency=dc_eff["efficiency_static"]
+                * dc_eff["efficiency_per_1000km"] ** (lengths_ext / 1000),
+                length=lengths_ext,
+                build_year=baseyear,
+                lifetime=70,
+                capital_cost=cc_ext,
+            )
+            network.madd(
+                "Link",
+                edges_ext[1] + "-" + edges_ext[0],
+                bus0=edges_ext[1].values,
+                bus1=edges_ext[0].values,
+                suffix=" ext reversed",
+                p_nom_extendable=False,
+                p_nom=edges_ext[2].values,
+                p_nom_min=edges_ext[2].values,
+                p_min_pu=0,
+                efficiency=dc_eff["efficiency_static"]
+                * dc_eff["efficiency_per_1000km"] ** (lengths_ext / 1000),
+                length=lengths_ext,
+                build_year=baseyear,
+                lifetime=70,
+                capital_cost=0,
+            )
+            logger.info(
+                "Added %s existing AC transmission link pairs from %s (baseyear=%s).",
+                len(edges_ext),
+                edges_ext_path,
+                baseyear,
+            )
+
         edges = pd.read_csv(snakemake.input.edges, header=None)
 
         lengths = 1.25 * np.array([haversine([network.buses.at[name0,"x"],network.buses.at[name0,"y"]],

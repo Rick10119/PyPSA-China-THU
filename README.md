@@ -38,6 +38,31 @@ solve_network_myopic         (optimize dispatch + investment; aluminum iterative
 
 Each stage reads from `config.yaml` and data files under `data/`, and writes intermediate or final networks to `results/`.
 
+The rule name `prepare_base_networks_2020` is historical: it now builds the **first** planning horizon in `scenario.planning_horizons` (currently `2025`), not a fixed `2020` year.
+
+### Existing inter-provincial AC transmission at the base year
+
+For the first planning horizon only, `prepare_base_networks_2020` passes
+`data/grids/edges_current.csv` as `edges_ext`. `scripts/prepare_base_network.py` reads the third
+column as fixed existing capacity (MW) and adds non-extendable `ext positive` / `ext reversed`
+links before the usual extendable `positive` / `reversed` links from `data/grids/edges.txt`.
+
+Example row:
+
+```text
+Gansu,Xinjiang,3000
+```
+
+If you **change `baseyear` or the first planning horizon**, review and update:
+
+- `config.yaml: baseyear`
+- `config.yaml: scenario.planning_horizons[0]`
+- `data/grids/edges_current.csv` (existing AC transfer capacities for the new baseline year)
+- other brownfield inputs under `data/existing_infrastructure/` and related CSV/HDF5 files
+
+Without updating `edges_current.csv`, the model may treat major corridors as greenfield links
+starting from zero capacity even when real-world transfer limits should be enforced.
+
 ### Heat-only workflow note (deprecated)
 
 Older versions of this repo included an experimental **heat-only** workflow that relied on **exogenous electricity prices**. That approach is deprecated in this repo; electricity price analysis should use post-processing based on solved networks (see `scripts/reconstruct_market_prices.py`).
