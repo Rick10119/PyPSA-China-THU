@@ -193,7 +193,7 @@ dispatch_segmented_prices:
   enabled: true
   # If true, skip the second-stage dispatch solve and copy the planning
   # postnetwork to the dispatch output path instead.
-  copy_planning_postnetwork: true
+  copy_planning_postnetwork: false
   # Fuel-only EUR/MWh_el from costs CSV; first block = 1× fuel, or every block = fuel × mult if list matches segments.
   first_segment_from_fuel_cost: true
   # Dispatch SRMC tiers vs fuel-only baseline: 40% / 30% / 15% / 10% / 5% nameplate shares.
@@ -204,6 +204,11 @@ dispatch_segmented_prices:
   sync_floor_slack_mw: 1.0
   export_prices: true
   price_export:
+    # Mapped sidecar source:
+    # - reconstructed: reconstruct from segmented thermal output and mapped supply curve.
+    # - planning_marginal_floor_zero: use planning marginal prices, but set province-hours
+    #   at/below the thermal minimum-output floor to zero.
+    mapped_price_source: reconstructed
     # Mapped thermal load ratio: (P/Cap) divided by biweekly max within each 2W-SUN bucket per province.
     week_freq: "2W-SUN"
     # Only for mapped price reconstruction: when local synchronous/thermal output is

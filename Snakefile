@@ -318,6 +318,10 @@ if config["foresight"] == "myopic":
             + "version-"
             + str(config["version"])
             + "/dispatch_segmented/{heating_demand}/postnetwork-dispatch-seg-{opts}-{topology}-{pathway}-{planning_horizons}.nc",
+            planning_network=config["results_dir"]
+            + "version-"
+            + str(config["version"])
+            + "/postnetworks/{heating_demand}/postnetwork-{opts}-{topology}-{pathway}-{planning_horizons}.nc",
         output:
             prices=config["results_dir"]
             + "version-"
@@ -342,6 +346,9 @@ if config["foresight"] == "myopic":
             fx_cny_per_eur=lambda wc: float(
                 (config.get("dispatch_segmented_prices") or {}).get("price_export", {}).get("fx_cny_per_eur", 7.8)
             ),
+            mapped_price_source=lambda wc: (config.get("dispatch_segmented_prices") or {})
+            .get("price_export", {})
+            .get("mapped_price_source", "reconstructed"),
             provinces=lambda wc: (
                 [config["single_node_province"]]
                 if bool(config.get("using_single_node", False))
@@ -375,6 +382,10 @@ if config["foresight"] == "myopic":
                 str(params.currency),
                 "--fx-cny-per-eur",
                 str(params.fx_cny_per_eur),
+                "--baseline-network",
+                input.planning_network,
+                "--mapped-price-source",
+                str(params.mapped_price_source),
             ]
             if params.provinces:
                 for p in params.provinces:

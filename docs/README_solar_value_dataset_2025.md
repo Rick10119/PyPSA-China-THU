@@ -12,8 +12,12 @@ The implementation script is:
 
 - Dispatch network:
   - `results/version-0505.1H.2/dispatch_segmented/positive/postnetwork-dispatch-seg-ll-current+FCG-linear2050-2025.nc`
-- Nodal price (mapped):
+- Nodal price (default / option 1):
+  - planning postnetwork marginal prices
+- Nodal price (option 2):
   - `results/version-0505.1H.2/prices/dispatch_segmented/positive/dispatch_segmented_prices-ll-current+FCG-linear2050-2025_mapped.csv`
+- Nodal price (option 3):
+  - planning postnetwork marginal prices, with province/hour prices forced to zero wherever mapped price is zero
 - Real solar capacity input:
   - `data/existing_infrastructure/solar_capacity.csv`
 
@@ -76,6 +80,10 @@ Where:
   - `sum_t(PV_t * Price_t) / sum_t(PV_t)`
 - System weighted average price:
   - `sum_t(TotalGen_t * Price_t) / sum_t(TotalGen_t)`
+- Price modes:
+  - default / `--planning-marginal`: planning marginal price
+  - `--mapped-csv`: mapped price
+  - `--allow-zero-price`: planning marginal price, but zero wherever mapped price is zero
 
 Written workbook fields:
 
@@ -125,3 +133,6 @@ Use:
 ```bash
 conda run -n pypsa python scripts/fill_solar_value_dataset_2025.py
 ```
+
+Use `--mapped-csv` to use mapped prices directly.
+Use `--allow-zero-price` to use planning marginal prices but preserve mapped zero-price hours as zero.

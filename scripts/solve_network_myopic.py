@@ -272,10 +272,30 @@ def add_transimission_constraints(n):
     positive_ext = n.links[positive_bool].query("p_nom_extendable").index
     negative_ext = n.links[negative_bool].query("p_nom_extendable").index
 
-    # Allow asymmetric capacities but limit the difference
+    def _find_reverse_link(pos: str) -> str | None:
+        pos_row = n.links.loc[pos]
+        candidates = negative_ext[
+            (n.links.loc[negative_ext, "bus0"].astype(str) == str(pos_row["bus1"]))
+            & (n.links.loc[negative_ext, "bus1"].astype(str) == str(pos_row["bus0"]))
+            & (n.links.loc[negative_ext, "carrier"].astype(str) == str(pos_row.get("carrier", "")))
+        ]
+        if len(candidates) == 1:
+            return str(candidates[0])
+        if len(candidates) > 1:
+            same_length = candidates[
+                np.isclose(
+                    pd.to_numeric(n.links.loc[candidates, "length"], errors="coerce").fillna(-1.0),
+                    float(pd.to_numeric(pos_row.get("length", -1.0), errors="coerce") or -1.0),
+                )
+            ]
+            if len(same_length) == 1:
+                return str(same_length[0])
+        return None
+
+    # Allow asymmetric capacities but limit the difference.
     for pos in positive_ext:
-        neg = pos.replace("positive", "reversed")
-        if neg not in negative_ext:
+        neg = _find_reverse_link(str(pos))
+        if neg is None:
             continue
             
         # Get the current capacities

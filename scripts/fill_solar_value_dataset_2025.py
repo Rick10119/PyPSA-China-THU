@@ -8,9 +8,11 @@ Paths and the network filename stem match Snakemake wildcards:
 
 Inputs per year:
 - dispatch segmented network (.nc): solar generation/demand/capacity side metrics
-- provincial LMP time series for value-factor metrics (default: mapped dispatch prices CSV)
-- optional: planning postnetwork `buses_t.marginal_price` (pass --planning-marginal;
-  EUR/MWh converted with FX to match legacy CSV convention)
+- provincial LMP time series for value-factor metrics (default: planning postnetwork
+  `buses_t.marginal_price`, EUR/MWh converted with FX)
+- optional: mapped dispatch prices CSV (pass --mapped-csv)
+- optional: planning marginal prices with mapped zero-price hours forced to zero
+  (pass --allow-zero-price)
 
 Capacity adjustment rule:
 - 2025: apply real-capacity correction from `solar_capacity.csv`
@@ -270,6 +272,33 @@ def _price_csv_path(year: int, cfg: SolarValueFillConfig) -> Path:
     )
 
 
+def _load_mapped_price_csv(year: int, cfg: SolarValueFillConfig, snapshots: pd.DatetimeIndex) -> pd.DataFrame:
+    price_csv_path = _price_csv_path(year, cfg)
+    if not price_csv_path.exists():
+        raise FileNotFoundError(f"Mapped price CSV not found for {year}: {price_csv_path}")
+    prices = pd.read_csv(price_csv_path, encoding=_CSV_ENCODING)
+    prices = prices.rename(columns={"snapshot": "time"})
+    prices["time"] = pd.to_datetime(prices["time"])
+    prices = prices.set_index("time").sort_index()
+    prices = prices.reindex(snapshots)
+    if prices.isna().any().any():
+        raise ValueError("Mapped price CSV and network snapshots do not align exactly.")
+    return prices.astype(float)
+
+
+def _apply_mapped_zero_prices(
+    planning_prices: pd.DataFrame, mapped_prices: pd.DataFrame
+) -> pd.DataFrame:
+    prices = planning_prices.copy()
+    mapped_col_set = set(mapped_prices.columns.astype(str))
+    for col in prices.columns:
+        mapped_col = _mapped_name(str(col))
+        if mapped_col not in mapped_col_set:
+            continue
+        prices[col] = prices[col].mask(mapped_prices[mapped_col].astype(float) <= 1e-9, 0.0)
+    return prices
+
+
 def _block_starts(ws) -> list[int]:
     zones = [ws.cell(r, 1).value for r in range(2, ws.max_row + 1)]
     first_zone = zones[0]
@@ -302,7 +331,7 @@ def _compute_metrics_for_year(
     n = pypsa.Network(network_path)
     snapshots = pd.DatetimeIndex(n.snapshots)
 
-    if price_source == "planning_marginal":
+    if price_source in {"planning_marginal", "planning_marginal_zero_mapped"}:
         planning_path = _planning_network_path(year, cfg)
         if not planning_path.exists():
             raise FileNotFoundError(f"Planning network not found for {year}: {planning_path}")
@@ -314,17 +343,11 @@ def _compute_metrics_for_year(
             raise ValueError(
                 f"Planning LMPs for {year} do not cover all dispatch snapshots (check {planning_path})."
             )
+        if price_source == "planning_marginal_zero_mapped":
+            mapped_prices = _load_mapped_price_csv(year, cfg, snapshots)
+            prices = _apply_mapped_zero_prices(prices, mapped_prices)
     elif price_source == "mapped_csv":
-        price_csv_path = _price_csv_path(year, cfg)
-        if not price_csv_path.exists():
-            raise FileNotFoundError(f"Mapped price CSV not found for {year}: {price_csv_path}")
-        prices = pd.read_csv(price_csv_path, encoding=_CSV_ENCODING)
-        prices = prices.rename(columns={"snapshot": "time"})
-        prices["time"] = pd.to_datetime(prices["time"])
-        prices = prices.set_index("time").sort_index()
-        prices = prices.reindex(snapshots)
-        if prices.isna().any().any():
-            raise ValueError("Mapped price CSV and network snapshots do not align exactly.")
+        prices = _load_mapped_price_csv(year, cfg, snapshots)
     else:
         raise ValueError(f"Unknown price_source: {price_source!r}")
 
@@ -539,16 +562,26 @@ def main() -> None:
         dest="price_source",
         action="store_const",
         const="mapped_csv",
-        help="Use dispatch_segmented *_mapped.csv prices (default).",
+        help="Option 2: use dispatch_segmented *_mapped.csv prices directly.",
     )
     price_group.add_argument(
         "--planning-marginal",
         dest="price_source",
         action="store_const",
         const="planning_marginal",
-        help="Use planning postnetwork LMPs instead of mapped CSV prices.",
+        help="Option 1: use planning postnetwork LMPs directly (default).",
     )
-    ap.set_defaults(price_source="mapped_csv")
+    price_group.add_argument(
+        "--allow-zero-price",
+        dest="price_source",
+        action="store_const",
+        const="planning_marginal_zero_mapped",
+        help=(
+            "Option 3: use planning postnetwork LMPs, but force price to zero wherever "
+            "the mapped CSV price is zero."
+        ),
+    )
+    ap.set_defaults(price_source="planning_marginal")
     solar_group = ap.add_mutually_exclusive_group()
     solar_group.add_argument(
         "--include-solar-in-system-value",

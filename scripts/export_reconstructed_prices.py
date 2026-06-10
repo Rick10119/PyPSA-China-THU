@@ -653,6 +653,90 @@ def _load_thermal_load_floor_config(config_path: str | Path | None = None) -> tu
     return (True, ratio)
 
 
+def _load_mapped_price_source_config(config_path: str | Path | None = None) -> str:
+    """
+    Select the mapped sidecar source.
+
+    Config:
+      dispatch_segmented_prices.price_export.mapped_price_source:
+        reconstructed                  (default; current mapped reconstruction)
+        planning_marginal_floor_zero   (planning marginal prices, zeroed at thermal floor)
+    """
+    cfg_path = Path(config_path) if config_path is not None else _default_config_path()
+    if not cfg_path.exists():
+        return "reconstructed"
+    with cfg_path.open("r", encoding="utf-8") as f:
+        cfg = yaml.safe_load(f) or {}
+    dsp = cfg.get("dispatch_segmented_prices", {}) or {}
+    pe = dsp.get("price_export", {}) or {}
+    source = str(pe.get("mapped_price_source", "reconstructed") or "reconstructed").strip().lower()
+    aliases = {
+        "local_reconstructed": "reconstructed",
+        "mapped_reconstructed": "reconstructed",
+        "planning": "planning_marginal_floor_zero",
+        "planning_marginal": "planning_marginal_floor_zero",
+        "planning_with_floor_zero": "planning_marginal_floor_zero",
+    }
+    source = aliases.get(source, source)
+    if source not in {"reconstructed", "planning_marginal_floor_zero"}:
+        raise ValueError(
+            "dispatch_segmented_prices.price_export.mapped_price_source must be "
+            "'reconstructed' or 'planning_marginal_floor_zero'"
+        )
+    return source
+
+
+def _load_synchronous_generation_floor_config(
+    config_path: str | Path | None = None,
+) -> tuple[bool, float, set[str], dict[str, str], float]:
+    """
+    Load the planning/dispatch synchronous-generation floor config.
+
+    Config:
+      synchronous_generation_floor:
+        enabled: true
+        ratio: 0.10
+        Generator: [...]
+        Link: {carrier: {only_bus1_carrier: "AC"}}
+      dispatch_segmented_prices.sync_floor_slack_mw: 1.0
+    """
+    cfg_path = Path(config_path) if config_path is not None else _default_config_path()
+    if not cfg_path.exists():
+        return (False, 0.0, set(), {}, 1.0)
+    with cfg_path.open("r", encoding="utf-8") as f:
+        cfg = yaml.safe_load(f) or {}
+    floor_cfg = cfg.get("synchronous_generation_floor", {}) or {}
+    if not isinstance(floor_cfg, dict) or floor_cfg.get("enabled") is False:
+        return (False, 0.0, set(), {}, 1.0)
+    ratio = float(floor_cfg.get("ratio", 0.0) or 0.0)
+    if ratio <= 0.0:
+        return (False, 0.0, set(), {}, 1.0)
+    if ratio >= 1.0:
+        raise ValueError("synchronous_generation_floor.ratio must be < 1")
+
+    gen_raw = floor_cfg.get("Generator", []) or []
+    if isinstance(gen_raw, dict):
+        generator_carriers = {str(k) for k in gen_raw.keys()}
+    elif isinstance(gen_raw, (list, tuple, set)):
+        generator_carriers = {str(v) for v in gen_raw}
+    else:
+        raise ValueError("synchronous_generation_floor.Generator must be a list or mapping")
+
+    link_raw = floor_cfg.get("Link", {}) or {}
+    if not isinstance(link_raw, dict):
+        raise ValueError("synchronous_generation_floor.Link must be a mapping")
+    link_carrier_to_bus1_carrier: dict[str, str] = {}
+    for k, v in link_raw.items():
+        only_bus1 = ""
+        if isinstance(v, dict):
+            only_bus1 = str(v.get("only_bus1_carrier", "") or "")
+        link_carrier_to_bus1_carrier[str(k)] = only_bus1
+
+    dsp = cfg.get("dispatch_segmented_prices", {}) or {}
+    slack_mw = float(dsp.get("sync_floor_slack_mw", 1.0) or 0.0)
+    return (True, ratio, generator_carriers, link_carrier_to_bus1_carrier, slack_mw)
+
+
 def _province_ac_load(
     n: pypsa.Network,
     provinces: pd.Index,
@@ -1035,6 +1119,66 @@ def mapped_retail_prices(
     return out.fillna(0.0).clip(lower=0.0)
 
 
+def _infer_planning_network_path(dispatch_network_path: str | Path) -> Path | None:
+    path = Path(dispatch_network_path)
+    parts = list(path.parts)
+    if "dispatch_segmented" not in parts:
+        return None
+    idx = parts.index("dispatch_segmented")
+    if idx + 1 >= len(parts):
+        return None
+    heating_demand = parts[idx + 1]
+    name = path.name
+    prefix = "postnetwork-dispatch-seg-"
+    if not name.startswith(prefix):
+        return None
+    planning_name = f"postnetwork-{name[len(prefix):]}"
+    candidate = Path(*parts[:idx]) / "postnetworks" / heating_demand / planning_name
+    return candidate
+
+
+def _planning_marginal_floor_zero_mapped_prices(
+    n_dispatch: pypsa.Network,
+    n_planning: pypsa.Network,
+    *,
+    week_freq: str,
+    config_path: str | Path | None = None,
+) -> pd.DataFrame:
+    provinces = _province_elec_buses(n_dispatch)
+    snapshots = pd.Index(n_dispatch.snapshots)
+    prices = marginal_retail_prices(n_planning, config=ReconstructPriceConfig(week_freq=week_freq))
+    prices = prices.reindex(index=snapshots, columns=list(map(str, provinces))).fillna(0.0).astype(float)
+
+    (
+        floor_enabled,
+        floor_ratio,
+        generator_carriers,
+        link_carrier_to_bus1_carrier,
+        floor_slack_mw,
+    ) = _load_synchronous_generation_floor_config(config_path=config_path)
+    if not floor_enabled:
+        return prices.fillna(0.0).clip(lower=0.0)
+
+    sync_output = _infer_local_thermal_dispatch(
+        n_dispatch,
+        provinces=provinces,
+        snapshots=snapshots,
+        generator_carriers=generator_carriers,
+        link_carrier_to_bus1_carrier=link_carrier_to_bus1_carrier,
+    )
+    load_floor = _province_ac_load(n_dispatch, provinces, snapshots) * float(floor_ratio)
+    load_floor = load_floor.reindex(index=sync_output.index, columns=sync_output.columns).fillna(0.0)
+    floor_mask = sync_output.astype(float) <= (load_floor + float(floor_slack_mw))
+    zero_threshold = _daily_low_output_zero_threshold(sync_output.index, config_path=config_path)
+    for province in sync_output.columns:
+        floor_mask[province] = floor_mask[province] | _daily_low_output_zero_mask(
+            sync_output[province].astype(float),
+            threshold=zero_threshold,
+        )
+    floor_mask = floor_mask.reindex(index=prices.index, columns=prices.columns).fillna(False)
+    return prices.mask(floor_mask, 0.0).fillna(0.0).clip(lower=0.0)
+
+
 def _select_provinces(prices: pd.DataFrame, provinces: Iterable[str] | None) -> pd.DataFrame:
     if provinces is None:
         return prices
@@ -1066,6 +1210,7 @@ def export_prices(
     shandong_plot_sample: int = 0,
     shandong_seasonal_random_day_seed: int | None = 42,
     config_path: str | None = None,
+    mapped_price_source: str | None = None,
 ) -> None:
     n = pypsa.Network(network_path)
     # Parameters below are used by mapped sidecar reconstruction.
@@ -1081,15 +1226,40 @@ def export_prices(
     nodal_marginal = nodal_marginal.reindex(index=prices.index)
     nodal_marginal = _select_nodal_marginal(nodal_marginal, provinces)
 
-    # New sidecar output: mapped prices reconstructed from dispatch result.
-    mapped_prices = mapped_retail_prices(
-        n,
-        week_freq=week_freq,
-        import_agg=import_agg,
-        line_cong_eps_mw=line_cong_eps_mw,
-        min_inflow_mw=min_inflow_mw,
-        config_path=config_path,
+    mapped_source = (
+        str(mapped_price_source).strip().lower()
+        if mapped_price_source
+        else _load_mapped_price_source_config(config_path=config_path)
     )
+    if mapped_source in {"planning", "planning_marginal", "planning_with_floor_zero"}:
+        mapped_source = "planning_marginal_floor_zero"
+    if mapped_source not in {"reconstructed", "planning_marginal_floor_zero"}:
+        raise ValueError("mapped_price_source must be 'reconstructed' or 'planning_marginal_floor_zero'")
+
+    if mapped_source == "planning_marginal_floor_zero":
+        planning_path = Path(baseline_network_path) if baseline_network_path else _infer_planning_network_path(network_path)
+        if planning_path is None or not planning_path.exists():
+            raise FileNotFoundError(
+                "mapped_price_source='planning_marginal_floor_zero' requires a planning postnetwork. "
+                "Pass --baseline-network or use the standard dispatch/postnetwork path layout."
+            )
+        n_planning_for_mapped = pypsa.Network(planning_path)
+        mapped_prices = _planning_marginal_floor_zero_mapped_prices(
+            n,
+            n_planning_for_mapped,
+            week_freq=week_freq,
+            config_path=config_path,
+        )
+    else:
+        # Sidecar output: mapped prices reconstructed from dispatch result.
+        mapped_prices = mapped_retail_prices(
+            n,
+            week_freq=week_freq,
+            import_agg=import_agg,
+            line_cong_eps_mw=line_cong_eps_mw,
+            min_inflow_mw=min_inflow_mw,
+            config_path=config_path,
+        )
     mapped_prices = _select_provinces(mapped_prices, provinces)
 
     if calibrate_with_baseline_max:
@@ -1101,15 +1271,16 @@ def export_prices(
         baseline = baseline.reindex(index=prices.index, columns=prices.columns).fillna(0.0).astype(float)
         prices_f = prices.astype(float)
         prices = prices_f.mask(prices_f < baseline, baseline)
-        mapped_baseline = _province_coal_power_1x_prices(
-            n,
-            provinces=pd.Index(mapped_prices.columns),
-            snapshots=pd.Index(mapped_prices.index),
-        ).reindex(index=mapped_prices.index, columns=mapped_prices.columns).fillna(0.0).astype(float)
-        mapped_f = mapped_prices.astype(float)
-        mapped_zero_mask = mapped_f <= 1e-9
-        mapped_prices = mapped_f.mask((mapped_f < mapped_baseline) & ~mapped_zero_mask, mapped_baseline)
-        mapped_prices = mapped_prices.mask(mapped_zero_mask, 0.0)
+        if mapped_source == "reconstructed":
+            mapped_baseline = _province_coal_power_1x_prices(
+                n,
+                provinces=pd.Index(mapped_prices.columns),
+                snapshots=pd.Index(mapped_prices.index),
+            ).reindex(index=mapped_prices.index, columns=mapped_prices.columns).fillna(0.0).astype(float)
+            mapped_f = mapped_prices.astype(float)
+            mapped_zero_mask = mapped_f <= 1e-9
+            mapped_prices = mapped_f.mask((mapped_f < mapped_baseline) & ~mapped_zero_mask, mapped_baseline)
+            mapped_prices = mapped_prices.mask(mapped_zero_mask, 0.0)
         nodal_marginal = _calibrate_nodal_with_baseline(nodal_marginal, n0)
 
     cur = str(currency).upper()
@@ -1252,6 +1423,15 @@ def main() -> None:
         help="Optional config.yaml path used for mapped carrier selection.",
     )
     ap.add_argument(
+        "--mapped-price-source",
+        default=None,
+        choices=["reconstructed", "planning_marginal_floor_zero"],
+        help=(
+            "Mapped sidecar source. Default comes from "
+            "dispatch_segmented_prices.price_export.mapped_price_source."
+        ),
+    )
+    ap.add_argument(
         "--shandong-plot-sample",
         type=int,
         default=0,
@@ -1290,6 +1470,7 @@ def main() -> None:
             else None
         ),
         config_path=(str(args.config) if args.config else None),
+        mapped_price_source=(str(args.mapped_price_source) if args.mapped_price_source else None),
     )
 
 
