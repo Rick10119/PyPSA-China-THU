@@ -136,3 +136,9 @@ conda run -n pypsa python scripts/fill_solar_value_dataset_2025.py
 
 Use `--mapped-csv` to use mapped prices directly.
 Use `--allow-zero-price` to use planning marginal prices but preserve mapped zero-price hours as zero.
+
+Mapped zero-price hours are set in `scripts/export_reconstructed_prices.py` when provincial thermal
+output falls below `grouped_max × (1 + low_output_reserve_margin) × daily_low_output_zero_threshold`
+within each `low_output_reference_freq` window (default: weekly `W-SUN`, reserve margin `0.10`,
+threshold `0.4`), or when output is within the must-run floor band near 10% of local AC load.
+See `README.md` / `docs/price_module_market_clearing_report.md` for the full mapped-price rules.

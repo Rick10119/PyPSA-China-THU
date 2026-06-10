@@ -65,11 +65,20 @@ this order:
    `max(biweekly_max_thermal_output, biweekly_min_thermal_output / lr_threshold_first)`.
    With the default `lr_threshold_first: 0.4`, a stable must-run floor maps to the first supply
    band instead of being normalized to the peak band.
-2. Apply the local must-run floor price rule:
+2. Zero out low-output hours before the must-run floor rule. For each snapshot, if provincial
+   thermal output is below
+   `grouped_max_thermal × (1 + reserve_margin) × threshold`, the mapped sidecar price is set to
+   `0`. The grouped maximum is taken over `low_output_reference_freq` (default `W-SUN`, i.e. a
+   Sunday-based week). The reserve margin (default `0.10`) reserves headroom above the weekly
+   thermal peak so hours that are low relative to peak-plus-reserve are treated as must-run rather
+   than marginal. `daily_low_output_zero_threshold` (default `0.4`) can be set globally or by year.
+   If these keys are omitted, the exporter falls back to the legacy daily window with no reserve
+   margin.
+3. Apply the local must-run floor price rule:
    - at or near `10 %` of local AC load, treat synchronous output as must-run rather than marginal;
    - within `1.5 x` the floor (`15 %` of local AC load by default), keep the mapped sidecar price at
      `0` and protect it from later coal-price floors.
-3. Do not apply a separate cross-province transmission price adjustment. Each province keeps its
+4. Do not apply a separate cross-province transmission price adjustment. Each province keeps its
    own mapped price based on local synchronous/thermal output; transmission effects are already
    reflected in the solved dispatch and marginal-price output.
 
@@ -82,6 +91,9 @@ dispatch_segmented_prices:
     thermal_load_floor:
       enabled: true
       ratio: 0.10
+    daily_low_output_zero_threshold: 0.4
+    low_output_reference_freq: "W-SUN"
+    low_output_reserve_margin: 0.10
     mapped_supply_curve:
       lr_threshold_first: 0.4
 ```

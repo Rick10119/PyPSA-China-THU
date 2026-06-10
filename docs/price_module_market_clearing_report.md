@@ -113,6 +113,24 @@
 - `marginal`：由模型约束直接给出的节点边际价格，阻塞已经内生反映。
 - `mapped`：用于光伏价值等后处理分析的本地火电/同步机出力-报价映射价格，不叠加跨省出口参考调整。
 
+### 4.5.1 mapped 低出力零价与备用裕度
+
+`scripts/export_reconstructed_prices.py` 在构建 mapped sidecar 时，除燃料报价曲线映射外，还会将部分低出力时段强制为零价。判定规则为：某省某时刻火电出力低于
+
+```text
+分组最大火电出力 × (1 + low_output_reserve_margin) × daily_low_output_zero_threshold
+```
+
+则 mapped 价格置 `0`。
+
+- **分组窗口**（`low_output_reference_freq`）：在窗口内取该省火电出力最大值作为参考峰值。当前默认 `W-SUN`（周日至周六的一周）；若配置省略，代码回退为按日（`D`）分组，与旧版行为一致。
+- **备用裕度**（`low_output_reserve_margin`）：在周（或日）峰值之上预留比例裕度，默认 `0.10`，即 cutoff 使用 `1.1 × 峰值`。这表示部分机组出力用于旋转/运行备用，低于“峰值加备用”阈值的时段按必开处理而非边际定价。若配置省略，裕度为 `0`。
+- **阈值**（`daily_low_output_zero_threshold`）：默认 `0.4`，可通过 `daily_low_output_zero_threshold_by_year` 按年覆盖。
+
+示例（默认参数）：周峰值 100 MW → cutoff = 100 × 1.1 × 0.4 = 44 MW；火电出力低于 44 MW 的小时 mapped 价格为零。该零价时段会被 `--allow-zero-price` 等后处理保留，用于光伏 value factor 分析。
+
+该规则在 must-run floor（本地负荷 10 % 附近）之前应用；两者共同决定 mapped sidecar 中的零价小时集合。
+
 ### 4.6 失负荷机制
 
 `solve_network_myopic.py` 中保留了 PyPSA 风格的 `load_shedding` 机制：当 `solving.options.load_shedding` 启用时，会在 AC 节点添加高边际成本的虚拟发电机，表示负荷无法满足时的失负荷。

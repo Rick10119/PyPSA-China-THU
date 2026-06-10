@@ -115,7 +115,35 @@ prepare_base_networks_2020
 results/version-<version>/prices/dispatch_segmented/<heating_demand>/
 ```
 
-`*_mapped.csv` 是额外的 mapped-price sidecar，主要用于光伏 value factor 等后处理。它不是原始 LMP，而是结合本地同步/火电出力、燃料价、低出力 floor 规则和省间外送修正后的分析口径。
+`*_mapped.csv` 是额外的 mapped-price sidecar，主要用于光伏 value factor 等后处理。它不是原始 LMP，而是结合本地同步/火电出力、燃料价和低出力/必开 floor 规则后的分析口径；各省独立映射，不单独叠加省间输电价格修正。
+
+mapped 价格按以下顺序重建：
+
+1. 根据本地同步/火电出力和燃料报价曲线构建 mapped 价格；双周归一化分母为
+   `max(双周最大火电出力, 双周最小火电出力 / lr_threshold_first)`。
+2. 低出力零价：若某时刻省内火电出力低于
+   `分组最大火电出力 × (1 + 备用裕度) × 阈值`，则 mapped 价格置 `0`。
+   分组最大火电出力在 `low_output_reference_freq` 窗口内取最大值（默认 `W-SUN`，即按周日至周六的一周）；
+   `low_output_reserve_margin`（默认 `0.10`）在周峰值之上预留备用空间，使相对“峰值+备用”偏低的时段视为必开而非边际定价；
+   `daily_low_output_zero_threshold`（默认 `0.4`）可全局或按年设置。
+   若省略上述配置，导出脚本回退为旧的按日窗口、无备用裕度行为。
+3. 必开 floor：同步出力接近本地 AC 负荷 `10 %` 时视为必开；在 `1.5 ×` floor 带宽内（默认即负荷的 `15 %`）mapped 价格保持 `0`，且不受后续煤电底价抬升影响。
+
+相关配置位于 `dispatch_segmented_prices.price_export`：
+
+```yaml
+dispatch_segmented_prices:
+  price_export:
+    week_freq: "2W-SUN"
+    thermal_load_floor:
+      enabled: true
+      ratio: 0.10
+    daily_low_output_zero_threshold: 0.4
+    low_output_reference_freq: "W-SUN"
+    low_output_reserve_margin: 0.10
+    mapped_supply_curve:
+      lr_threshold_first: 0.4
+```
 
 ## 数据目录
 
