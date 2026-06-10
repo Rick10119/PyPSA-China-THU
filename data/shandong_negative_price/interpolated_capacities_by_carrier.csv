@@ -62,42 +62,42 @@ Shandong,Generator,solar,renewable,2032,284299.6397277188
 Shandong,Generator,solar,renewable,2033,299770.6741857108
 Shandong,Generator,solar,renewable,2034,315241.70864370285
 Shandong,Generator,solar,renewable,2035,330712.7431016949
-Shandong,Link,CHP coal,link_capacity,2027,153480.47144795235
-Shandong,Link,CHP coal,link_capacity,2028,153098.8419225833
-Shandong,Link,CHP coal,link_capacity,2029,152717.2123972142
-Shandong,Link,CHP coal,link_capacity,2030,152335.5828718451
-Shandong,Link,CHP coal,link_capacity,2031,150001.32403802016
-Shandong,Link,CHP coal,link_capacity,2032,147667.0652041952
-Shandong,Link,CHP coal,link_capacity,2033,145332.8063703703
-Shandong,Link,CHP coal,link_capacity,2034,142998.54753654535
-Shandong,Link,CHP coal,link_capacity,2035,140664.2887027204
-Shandong,Link,CHP gas,link_capacity,2027,0.59972854287199
-Shandong,Link,CHP gas,link_capacity,2028,0.6574414650287285
-Shandong,Link,CHP gas,link_capacity,2029,0.715154387185467
-Shandong,Link,CHP gas,link_capacity,2030,0.7728673093422055
-Shandong,Link,CHP gas,link_capacity,2031,0.8750028469302025
-Shandong,Link,CHP gas,link_capacity,2032,0.9771383845181993
-Shandong,Link,CHP gas,link_capacity,2033,1.0792739221061962
-Shandong,Link,CHP gas,link_capacity,2034,1.1814094596941933
-Shandong,Link,CHP gas,link_capacity,2035,1.2835449972821902
-Shandong,Link,OCGT gas,link_capacity,2027,0.4985296606241808
-Shandong,Link,OCGT gas,link_capacity,2028,0.5190203237959262
-Shandong,Link,OCGT gas,link_capacity,2029,0.5395109869676716
-Shandong,Link,OCGT gas,link_capacity,2030,0.560001650139417
-Shandong,Link,OCGT gas,link_capacity,2031,0.568877623330768
-Shandong,Link,OCGT gas,link_capacity,2032,0.5777535965221189
-Shandong,Link,OCGT gas,link_capacity,2033,0.5866295697134698
-Shandong,Link,OCGT gas,link_capacity,2034,0.5955055429048207
-Shandong,Link,OCGT gas,link_capacity,2035,0.6043815160961716
-Shandong,Link,battery,link_capacity,2027,37704.13933150198
-Shandong,Link,battery,link_capacity,2028,45346.208997252965
-Shandong,Link,battery,link_capacity,2029,52988.278663003955
-Shandong,Link,battery,link_capacity,2030,60630.348328754946
-Shandong,Link,battery,link_capacity,2031,64257.11559378785
-Shandong,Link,battery,link_capacity,2032,67883.88285882075
-Shandong,Link,battery,link_capacity,2033,71510.65012385364
-Shandong,Link,battery,link_capacity,2034,75137.41738888655
-Shandong,Link,battery,link_capacity,2035,78764.18465391945
+Shandong,Link,CHP coal,link_capacity,2027,49380.71080292404
+Shandong,Link,CHP coal,link_capacity,2028,49257.92995138126
+Shandong,Link,CHP coal,link_capacity,2029,49135.14909983848
+Shandong,Link,CHP coal,link_capacity,2030,49012.36824829571
+Shandong,Link,CHP coal,link_capacity,2031,48261.341012082456
+Shandong,Link,CHP coal,link_capacity,2032,47510.3137758692
+Shandong,Link,CHP coal,link_capacity,2033,46759.28653965595
+Shandong,Link,CHP coal,link_capacity,2034,46008.2593034427
+Shandong,Link,CHP coal,link_capacity,2035,45257.232067229445
+Shandong,Link,CHP gas,link_capacity,2027,0.2076776806719357
+Shandong,Link,CHP gas,link_capacity,2028,0.2287297349295253
+Shandong,Link,CHP gas,link_capacity,2029,0.24978178918711488
+Shandong,Link,CHP gas,link_capacity,2030,0.27083384344470446
+Shandong,Link,CHP gas,link_capacity,2031,0.3074978825788572
+Shandong,Link,CHP gas,link_capacity,2032,0.34416192171300997
+Shandong,Link,CHP gas,link_capacity,2033,0.3808259608471627
+Shandong,Link,CHP gas,link_capacity,2034,0.4174899999813154
+Shandong,Link,CHP gas,link_capacity,2035,0.4541540391154682
+Shandong,Link,OCGT gas,link_capacity,2027,0.20165187085022998
+Shandong,Link,OCGT gas,link_capacity,2028,0.210968139419207
+Shandong,Link,OCGT gas,link_capacity,2029,0.220284407988184
+Shandong,Link,OCGT gas,link_capacity,2030,0.229600676557161
+Shandong,Link,OCGT gas,link_capacity,2031,0.2344485885978072
+Shandong,Link,OCGT gas,link_capacity,2032,0.23929650063845342
+Shandong,Link,OCGT gas,link_capacity,2033,0.24414441267909964
+Shandong,Link,OCGT gas,link_capacity,2034,0.24899232471974586
+Shandong,Link,OCGT gas,link_capacity,2035,0.2538402367603921
+Shandong,Link,battery,link_capacity,2027,18542.74791297045
+Shandong,Link,battery,link_capacity,2028,22322.36586613579
+Shandong,Link,battery,link_capacity,2029,26101.98381930113
+Shandong,Link,battery,link_capacity,2030,29881.60177246647
+Shandong,Link,battery,link_capacity,2031,31658.348585896896
+Shandong,Link,battery,link_capacity,2032,33435.09539932732
+Shandong,Link,battery,link_capacity,2033,35211.84221275775
+Shandong,Link,battery,link_capacity,2034,36988.58902618817
+Shandong,Link,battery,link_capacity,2035,38765.3358396186
 Shandong,StorageUnit,PHS,storage,2027,3339.5548
 Shandong,StorageUnit,PHS,storage,2028,2759.7032
 Shandong,StorageUnit,PHS,storage,2029,2179.8516

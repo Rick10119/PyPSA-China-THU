@@ -53,12 +53,32 @@ def _nominal(row: pd.Series, base_col: str = "p_nom") -> float:
     return float(value or 0.0)
 
 
+def _bus_province(bus: str) -> str:
+    return str(bus).split(" ", 1)[0]
+
+
+def _bus_carrier(n, bus: str) -> str:
+    if not hasattr(n, "buses") or bus not in n.buses.index or "carrier" not in n.buses.columns:
+        return ""
+    return str(n.buses.at[bus, "carrier"])
+
+
+def _is_ac_bus(n, bus: str, province: str) -> bool:
+    b = str(bus)
+    return _bus_province(b) == province and _bus_carrier(n, b) == "AC"
+
+
+def _link_ac_interface_capacity(row: pd.Series) -> float:
+    """Return link capacity at the AC output interface, not the fuel/heat/input port."""
+    return _nominal(row) * float(row.get("efficiency", 1.0) or 1.0)
+
+
 def _extract_capacity_rows(n, *, province: str, year: int) -> list[dict]:
     rows: list[dict] = []
 
     if hasattr(n, "generators") and not n.generators.empty:
         gens = n.generators
-        mask = gens["bus"].astype(str).str.startswith(province)
+        mask = gens["bus"].astype(str).map(lambda b: _is_ac_bus(n, b, province))
         for name, row in gens.loc[mask].iterrows():
             carrier = str(row.get("carrier", ""))
             if carrier in GENERATOR_RENEWABLE_CARRIERS:
@@ -81,7 +101,7 @@ def _extract_capacity_rows(n, *, province: str, year: int) -> list[dict]:
 
     if hasattr(n, "links") and not n.links.empty:
         links = n.links
-        mask = links["bus1"].astype(str).str.startswith(province) | links["bus0"].astype(str).str.startswith(province)
+        mask = links["bus1"].astype(str).map(lambda b: _is_ac_bus(n, b, province))
         for name, row in links.loc[mask].iterrows():
             carrier = str(row.get("carrier", ""))
             if carrier not in LINK_CAPACITY_CARRIERS:
@@ -94,13 +114,13 @@ def _extract_capacity_rows(n, *, province: str, year: int) -> list[dict]:
                     "name": str(name),
                     "carrier": carrier,
                     "group": "link_capacity",
-                    "capacity_mw": _nominal(row),
+                    "capacity_mw": _link_ac_interface_capacity(row),
                 }
             )
 
     if hasattr(n, "storage_units") and not n.storage_units.empty:
         su = n.storage_units
-        mask = su["bus"].astype(str).str.startswith(province)
+        mask = su["bus"].astype(str).map(lambda b: _is_ac_bus(n, b, province))
         for name, row in su.loc[mask].iterrows():
             rows.append(
                 {
