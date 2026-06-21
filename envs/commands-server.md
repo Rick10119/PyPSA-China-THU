@@ -2,6 +2,8 @@
 
 snakemake --configfile config.yaml --cores 12 --resources mem_mb=112000
 
+--rerun-incomplete
+
 python scripts/fill_solar_value_dataset_2025.py --planning-marginal
 
 python scripts/fill_solar_value_dataset_2025.py --allow-zero-price

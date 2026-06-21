@@ -244,7 +244,8 @@ def prepare_network(config):
         )
     load = load.reindex(columns=nodes)
     # Apply a pure level scaling (no shape change) for load calibration.
-    load_scale = float(config.get("load_scale", 1.0))
+    # Use explicit planning-scale; do not rely on legacy `load_scale`.
+    load_scale = float(config.get("load_scale_planning", 1.0))
     load = load * load_scale
     
     if config["add_aluminum"] and config["aluminum"]["grid_interaction"][planning_horizons]:

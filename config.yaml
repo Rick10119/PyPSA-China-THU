@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: CC0-1.0
 
-version: 0605.1H.1
+version: 0621.1H.1
 logging_level: INFO
 foresight: "myopic"
 baseyear: 2025
@@ -22,7 +22,7 @@ freq: '1h'
 # Optional representative-time sampling for local tests.
 # Keep disabled for full 8760-hour production runs.
 time_sampling:
-  enabled: false
+  enabled: true
   # full / sample_days / monthly_typical_days / manual
   mode: sample_days
   # Examples:
@@ -37,8 +37,10 @@ time_sampling:
     dates: []
     ranges: []
 # Uniform electric-load multiplier (applied to all snapshots/provinces).
-# This scales level only and preserves the hourly shape.
-load_scale: 1.0
+# Use `load_scale_planning` for capacity-planning runs and
+# `load_scale_dispatch` for dispatch/operation runs.
+load_scale_planning: 1.0
+load_scale_dispatch: 1.0
 
 add_aluminum: False
 only_other_load: False
@@ -75,12 +77,12 @@ scenario:
     #   '2060': 1.0
     linear2050:
       '2025': -1.
-      '2030': 0.315
-      '2035': 0.431
-      '2040': 0.547
-      '2045': 0.663
-      '2050': 0.779
-      '2055': 0.895
+      '2030': 0.178
+      '2035': 0.317
+      '2040': 0.457
+      '2045': 0.596
+      '2050': 0.735
+      '2055': 0.874
       '2060': 1.0
   opts: ['ll']
   attr: 'p_nom'
@@ -178,8 +180,8 @@ storage_capacity_guard:
   # National cumulative trajectory (NEA / 储能产业研究白皮书2026).
   national_capacity_csv: data/p_nom/national_battery_capacity_from_planning.csv
   # Apply national target × provincial share with an allowed upper deviation.
-  target_lower_multiplier: 0.0
-  target_upper_multiplier: 1.0
+  target_lower_multiplier: 0.8
+  target_upper_multiplier: 1.3
   # Kept for backward compatibility when custom multipliers are not set.
   tolerance: 0.1
   apply_start_year: 2030
@@ -193,7 +195,7 @@ dispatch_segmented_prices:
   enabled: true
   # If true, skip the second-stage dispatch solve and copy the planning
   # postnetwork to the dispatch output path instead.
-  copy_planning_postnetwork: false
+  copy_planning_postnetwork: true
   # Fuel-only EUR/MWh_el from costs CSV; first block = 1× fuel, or every block = fuel × mult if list matches segments.
   first_segment_from_fuel_cost: true
   # Dispatch SRMC tiers vs fuel-only baseline: 40% / 30% / 15% / 10% / 5% nameplate shares.
@@ -201,7 +203,7 @@ dispatch_segmented_prices:
   # If true, zero `* gas fuel` generator marginal_cost while segmented OCGT uses full SRMC per block.
   zero_gas_fuel_marginal_cost: true
   # Dispatch-only tolerance for the synchronous generation floor RHS.
-  sync_floor_slack_mw: 1.0
+  sync_floor_slack_mw: 100.0
   export_prices: true
   price_export:
     # Mapped sidecar source:

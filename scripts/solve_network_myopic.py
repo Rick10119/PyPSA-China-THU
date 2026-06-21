@@ -186,6 +186,48 @@ def prepare_network(
 
     return n
 
+
+def _sync_pnom_opt_to_pnom(n: pypsa.Network) -> None:
+    """Ensure exported nominal capacities reflect optimized decisions.
+
+    For components with '*_nom_opt' present (generators, links, storage_units,
+    stores, lines), set the corresponding '*_nom' to max(existing, *_nom_opt)
+    and mark '*_nom_extendable' False. This avoids postnetwork exports that
+    omit built capacities.
+    """
+    for component in n.iterate_components():
+        name = component.name
+        df = component.df
+        # determine nom and opt column names
+        if name == "Store":
+            nom_col, opt_col, ext_col = "e_nom", "e_nom_opt", "e_nom_extendable"
+        elif name == "Line":
+            nom_col, opt_col, ext_col = "s_nom", "s_nom_opt", "s_nom_extendable"
+        elif name in ("Generator", "Link", "StorageUnit"):
+            nom_col, opt_col, ext_col = "p_nom", "p_nom_opt", "p_nom_extendable"
+        else:
+            continue
+        if opt_col not in df.columns:
+            continue
+        for idx in df.index:
+            try:
+                opt = df.at[idx, opt_col]
+            except Exception:
+                opt = None
+            if opt is None or (isinstance(opt, float) and np.isnan(opt)):
+                continue
+            try:
+                cur = df.at[idx, nom_col] if nom_col in df.columns else 0.0
+            except Exception:
+                cur = 0.0
+            try:
+                new = max(float(cur or 0.0), float(opt or 0.0))
+            except Exception:
+                continue
+            df.at[idx, nom_col] = new
+            if ext_col in df.columns:
+                df.at[idx, ext_col] = False
+
 def add_chp_constraints(n):
     electric = (
         n.links.index.str.contains("CHP")
@@ -1684,5 +1726,42 @@ if __name__ == '__main__':
         # Convert DataFrame to numeric, handling any non-numeric values
         n.links_t.p3 = n.links_t.p3.apply(pd.to_numeric, errors='coerce').fillna(0.0).infer_objects(copy=False)
     
+    # Ensure exported nominal capacities reflect optimized values
+    try:
+        _sync_pnom_opt_to_pnom(n)
+    except Exception as e:  # pragma: no cover - best-effort
+        logger.warning("_sync_pnom_opt_to_pnom failed: %s", e)
+
     # Export results
-    n.export_to_netcdf(snakemake.output.network_name) 
+    n.export_to_netcdf(snakemake.output.network_name)
+
+    # Post-export sanity check: reload and assert p_nom >= p_nom_opt when opt present
+    try:
+        n_chk = pypsa.Network(snakemake.output.network_name)
+        for component in n_chk.iterate_components():
+            df = component.df
+            # check for opt column
+            opt_cols = [c for c in df.columns if c.endswith("_opt")]
+            for opt in opt_cols:
+                nom = opt.replace("_opt", "")
+                if nom in df.columns:
+                    # compare numeric where possible
+                    try:
+                        mask = df[opt].notna()
+                        for idx in df.index[mask]:
+                            vopt = float(df.at[idx, opt])
+                            vnom = float(df.at[idx, nom] or 0.0)
+                            if vopt > vnom + 1e-6:
+                                logger.warning(
+                                    "Export check: %s %s has %s=%s < %s=%s",
+                                    component.name,
+                                    idx,
+                                    nom,
+                                    vnom,
+                                    opt,
+                                    vopt,
+                                )
+                    except Exception:
+                        continue
+    except Exception as e:
+        logger.warning("Post-export reload/consistency check failed: %s", e)
