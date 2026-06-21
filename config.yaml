@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: CC0-1.0
 
-version: 0621.1H.1
+version: 0621.1H.3
 logging_level: INFO
 foresight: "myopic"
 baseyear: 2025
@@ -28,7 +28,7 @@ time_sampling:
   # Examples:
   #   n_days: 4  -> one representative day per season-like 3-month block
   #   n_days: 12 -> one representative day per month
-  n_days: 12
+  n_days: 4
   day_of_month: 15
   # Optional override for the selected representative months.
   # For n_days: 4, this can be [2, 5, 8, 11] or [1, 4, 7, 10].
@@ -39,7 +39,7 @@ time_sampling:
 # Uniform electric-load multiplier (applied to all snapshots/provinces).
 # Use `load_scale_planning` for capacity-planning runs and
 # `load_scale_dispatch` for dispatch/operation runs.
-load_scale_planning: 1.0
+load_scale_planning: 1.5
 load_scale_dispatch: 1.0
 
 add_aluminum: False
@@ -150,6 +150,9 @@ nuclear_capacity_guard:
 # local coal/nuclear/gas/biomass electric output >= ratio * local AC electricity load.
 synchronous_generation_floor:
   enabled: true
+  # Apply through 2050; disable the local synchronous-output floor thereafter.
+  apply_start_year: 2025
+  apply_end_year: 2050
   ratio: 0.10
   Generator:
     - coal power plant

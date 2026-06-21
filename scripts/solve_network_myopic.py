@@ -187,47 +187,6 @@ def prepare_network(
     return n
 
 
-def _sync_pnom_opt_to_pnom(n: pypsa.Network) -> None:
-    """Ensure exported nominal capacities reflect optimized decisions.
-
-    For components with '*_nom_opt' present (generators, links, storage_units,
-    stores, lines), set the corresponding '*_nom' to max(existing, *_nom_opt)
-    and mark '*_nom_extendable' False. This avoids postnetwork exports that
-    omit built capacities.
-    """
-    for component in n.iterate_components():
-        name = component.name
-        df = component.df
-        # determine nom and opt column names
-        if name == "Store":
-            nom_col, opt_col, ext_col = "e_nom", "e_nom_opt", "e_nom_extendable"
-        elif name == "Line":
-            nom_col, opt_col, ext_col = "s_nom", "s_nom_opt", "s_nom_extendable"
-        elif name in ("Generator", "Link", "StorageUnit"):
-            nom_col, opt_col, ext_col = "p_nom", "p_nom_opt", "p_nom_extendable"
-        else:
-            continue
-        if opt_col not in df.columns:
-            continue
-        for idx in df.index:
-            try:
-                opt = df.at[idx, opt_col]
-            except Exception:
-                opt = None
-            if opt is None or (isinstance(opt, float) and np.isnan(opt)):
-                continue
-            try:
-                cur = df.at[idx, nom_col] if nom_col in df.columns else 0.0
-            except Exception:
-                cur = 0.0
-            try:
-                new = max(float(cur or 0.0), float(opt or 0.0))
-            except Exception:
-                continue
-            df.at[idx, nom_col] = new
-            if ext_col in df.columns:
-                df.at[idx, ext_col] = False
-
 def add_chp_constraints(n):
     electric = (
         n.links.index.str.contains("CHP")
@@ -303,7 +262,7 @@ def add_chp_constraints(n):
 def add_transimission_constraints(n):
     """
     Add constraints for transmission lines that allow for asymmetric capacities
-    while maintaining reasonable limits on the difference between directions.
+    while limiting either direction to 120% of its reverse direction.
     """
     if not n.links.p_nom_extendable.any():
         return
@@ -340,17 +299,18 @@ def add_transimission_constraints(n):
         if neg is None:
             continue
             
-        # Get the current capacities
-        pos_cap = n.links.at[pos, "p_nom"]
-        neg_cap = n.links.at[neg, "p_nom"]
-        
-        # Allow up to 20% difference between directions
-        max_diff = 0.2 * max(pos_cap, neg_cap)
-        
-        # Add constraint: |pos_cap - neg_cap| <= max_diff
-        lhs = n.model["Link-p_nom"].loc[pos] - n.model["Link-p_nom"].loc[neg]
-        n.model.add_constraints(lhs <= max_diff, name=f"Link-transmission-{pos}-max")
-        n.model.add_constraints(lhs >= -max_diff, name=f"Link-transmission-{pos}-min")
+        pos_p_nom = n.model["Link-p_nom"].loc[pos]
+        neg_p_nom = n.model["Link-p_nom"].loc[neg]
+
+        # Allow either direction to be at most 20% larger than its reverse.
+        n.model.add_constraints(
+            pos_p_nom <= 1.2 * neg_p_nom,
+            name=f"Link-transmission-{pos}-positive-ratio",
+        )
+        n.model.add_constraints(
+            neg_p_nom <= 1.2 * pos_p_nom,
+            name=f"Link-transmission-{pos}-reverse-ratio",
+        )
 
 def add_retrofit_constraints(n):
     p_nom_max = pd.read_csv("data/p_nom/p_nom_max_cc.csv",index_col=0)
@@ -481,6 +441,17 @@ def add_synchronous_generation_floor_constraints(n, snapshots, rhs_slack_mw: flo
     cfg = getattr(n, "config", {}) or {}
     floor_cfg = cfg.get("synchronous_generation_floor") or {}
     if not isinstance(floor_cfg, dict) or not bool(floor_cfg.get("enabled", False)):
+        return
+    planning_year = int(pd.DatetimeIndex(snapshots)[0].year)
+    apply_start_year = int(floor_cfg.get("apply_start_year", 2025))
+    apply_end_year = int(floor_cfg.get("apply_end_year", 2050))
+    if planning_year < apply_start_year or planning_year > apply_end_year:
+        logger.info(
+            "Synchronous generation floor: year %s outside [%s, %s], skip.",
+            planning_year,
+            apply_start_year,
+            apply_end_year,
+        )
         return
     ratio = float(floor_cfg.get("ratio", 0.0) or 0.0)
     if ratio <= 0.0:
@@ -1726,42 +1697,5 @@ if __name__ == '__main__':
         # Convert DataFrame to numeric, handling any non-numeric values
         n.links_t.p3 = n.links_t.p3.apply(pd.to_numeric, errors='coerce').fillna(0.0).infer_objects(copy=False)
     
-    # Ensure exported nominal capacities reflect optimized values
-    try:
-        _sync_pnom_opt_to_pnom(n)
-    except Exception as e:  # pragma: no cover - best-effort
-        logger.warning("_sync_pnom_opt_to_pnom failed: %s", e)
-
     # Export results
     n.export_to_netcdf(snakemake.output.network_name)
-
-    # Post-export sanity check: reload and assert p_nom >= p_nom_opt when opt present
-    try:
-        n_chk = pypsa.Network(snakemake.output.network_name)
-        for component in n_chk.iterate_components():
-            df = component.df
-            # check for opt column
-            opt_cols = [c for c in df.columns if c.endswith("_opt")]
-            for opt in opt_cols:
-                nom = opt.replace("_opt", "")
-                if nom in df.columns:
-                    # compare numeric where possible
-                    try:
-                        mask = df[opt].notna()
-                        for idx in df.index[mask]:
-                            vopt = float(df.at[idx, opt])
-                            vnom = float(df.at[idx, nom] or 0.0)
-                            if vopt > vnom + 1e-6:
-                                logger.warning(
-                                    "Export check: %s %s has %s=%s < %s=%s",
-                                    component.name,
-                                    idx,
-                                    nom,
-                                    vnom,
-                                    opt,
-                                    vopt,
-                                )
-                    except Exception:
-                        continue
-    except Exception as e:
-        logger.warning("Post-export reload/consistency check failed: %s", e)
