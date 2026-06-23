@@ -144,10 +144,16 @@ def main() -> None:
         default=None,
         help="Directory for PNG/PDF (default: <version_dir>/figures)",
     )
+    ap.add_argument(
+        "--workbook",
+        type=Path,
+        default=None,
+        help="Override the input solar_value_dataset.xlsx path.",
+    )
     args = ap.parse_args()
 
     version_dir, version = _version_dir_from_config(args.config.resolve(), args.version)
-    xlsx = version_dir / "solar_value_dataset.xlsx"
+    xlsx = args.workbook.resolve() if args.workbook is not None else version_dir / "solar_value_dataset.xlsx"
     out_dir = args.output_dir or (version_dir / "figures")
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -157,6 +163,16 @@ def main() -> None:
     national_weighted = _national_weighted_value_factors(by_prov)
 
     pivot = by_prov.pivot(index="province", columns="year", values="value_factor").sort_index()
+    heat_values = pivot.to_numpy(dtype=float)
+    finite_heat = heat_values[np.isfinite(heat_values)]
+    if finite_heat.size:
+        heat_min = float(finite_heat.min())
+        heat_max = float(finite_heat.max())
+        heat_pad = max((heat_max - heat_min) * 0.03, 0.01)
+        heat_vmin = heat_min - heat_pad
+        heat_vmax = heat_max + heat_pad
+    else:
+        heat_vmin, heat_vmax = 0.0, 1.0
 
     fig = plt.figure(figsize=(11, 5.2))
     gs = fig.add_gridspec(1, 2, width_ratios=[1.15, 1.0], wspace=0.28)
@@ -199,8 +215,8 @@ def main() -> None:
         pivot.values,
         aspect="auto",
         cmap="RdYlGn",
-        vmin=0.75,
-        vmax=1.15,
+        vmin=heat_vmin,
+        vmax=heat_vmax,
         interpolation="nearest",
     )
     ax1.set_yticks(range(len(pivot.index)))

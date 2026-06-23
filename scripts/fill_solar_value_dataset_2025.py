@@ -75,6 +75,7 @@ class SolarValueFillConfig:
     real_solar_cap_path: Path
     real_solar_year_columns: tuple[str, ...]
     include_solar_in_system_value: bool
+    mapped_price_dir: Path
 
 
 def load_solar_value_fill_config(config_path: Path) -> SolarValueFillConfig:
@@ -133,6 +134,7 @@ def load_solar_value_fill_config(config_path: Path) -> SolarValueFillConfig:
         real_solar_cap_path=real_solar_cap_path,
         real_solar_year_columns=real_solar_year_columns,
         include_solar_in_system_value=include_solar_in_system_value,
+        mapped_price_dir=version_dir / "prices" / "dispatch_segmented" / heating,
     )
 
 # Workbook province -> source province names
@@ -263,13 +265,7 @@ def _price_column_for_bus(bus: str, price_cols: set[str]) -> str | None:
 
 
 def _price_csv_path(year: int, cfg: SolarValueFillConfig) -> Path:
-    return (
-        cfg.version_dir
-        / "prices"
-        / "dispatch_segmented"
-        / cfg.heating_demand
-        / f"dispatch_segmented_prices-{cfg.scenario_stem}-{year}_mapped.csv"
-    )
+    return cfg.mapped_price_dir / f"dispatch_segmented_prices-{cfg.scenario_stem}-{year}_mapped.csv"
 
 
 def _load_mapped_price_csv(year: int, cfg: SolarValueFillConfig, snapshots: pd.DatetimeIndex) -> pd.DataFrame:
@@ -323,6 +319,7 @@ def _compute_metrics_for_year(
     cfg: SolarValueFillConfig,
     *,
     price_source: str,
+    thermal_floor_min_ratio: float = 0.4,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     network_path = _network_path(year, cfg)
     if not network_path.exists():
@@ -426,7 +423,9 @@ def _compute_metrics_for_year(
         price_s = prices[pc].astype(float) if pc is not None else pd.Series(0.0, index=snapshots)
 
         dispatch_s, extra_curtail_s = _solar_dispatch_after_thermal_floor(
-            dispatch_s_raw.astype(float), thermal_s.astype(float), min_ratio=0.4
+            dispatch_s_raw.astype(float),
+            thermal_s.astype(float),
+            min_ratio=float(thermal_floor_min_ratio),
         )
         solar_mwh = float(dispatch_s.sum())
         solar_gwh = solar_mwh / 1000.0
@@ -556,6 +555,31 @@ def main() -> None:
         default=_DEFAULT_CONFIG_PATH,
         help="Path to config.yaml (default: repo root config.yaml).",
     )
+    ap.add_argument(
+        "--mapped-price-dir",
+        type=Path,
+        default=None,
+        help="Override the directory containing dispatch_segmented_prices-...-YEAR_mapped.csv.",
+    )
+    ap.add_argument(
+        "--workbook",
+        type=Path,
+        default=None,
+        help="Override the solar_value_dataset.xlsx file to update.",
+    )
+    ap.add_argument(
+        "--figure-dir",
+        type=Path,
+        default=None,
+        help="Override the directory receiving the value-factor PNG/PDF.",
+    )
+    ap.add_argument("--skip-plot", action="store_true", help="Do not create the value-factor figures.")
+    ap.add_argument(
+        "--thermal-floor-min-ratio",
+        type=float,
+        default=0.4,
+        help="Thermal minimum-output ratio used for the post-processed extra-curtailment metric.",
+    )
     price_group = ap.add_mutually_exclusive_group()
     price_group.add_argument(
         "--mapped-csv",
@@ -597,7 +621,21 @@ def main() -> None:
         help="Exclude solar from the system value-factor denominator (overrides config).",
     )
     args = ap.parse_args()
+    if not 0.0 <= float(args.thermal_floor_min_ratio) <= 1.0:
+        ap.error("--thermal-floor-min-ratio must be between 0 and 1")
     cfg = load_solar_value_fill_config(args.config.resolve())
+    overrides: dict[str, Any] = {}
+    if args.mapped_price_dir is not None:
+        overrides["mapped_price_dir"] = args.mapped_price_dir.resolve()
+    if args.workbook is not None:
+        workbook = args.workbook.resolve()
+        overrides.update(
+            xlsx_path=workbook,
+            backup_path=workbook.with_name(f"{workbook.stem}.backup{workbook.suffix}"),
+            cap_compare_path=workbook.with_name("solar_capacity_compare_by_year.csv"),
+        )
+    if overrides:
+        cfg = SolarValueFillConfig(**{**cfg.__dict__, **overrides})
     if args.include_solar_in_system_value is not None:
         cfg = SolarValueFillConfig(
             **{**cfg.__dict__, "include_solar_in_system_value": args.include_solar_in_system_value}
@@ -613,6 +651,7 @@ def main() -> None:
                 (year == 2025),
                 cfg,
                 price_source=price_source,
+                thermal_floor_min_ratio=float(args.thermal_floor_min_ratio),
             )
         except FileNotFoundError as e:
             print(f"Skip {year}: {e}")
@@ -641,12 +680,20 @@ def main() -> None:
     print(f"Target years: {list(cfg.target_years)}")
     print(f"Backup created: {cfg.backup_path}")
 
-    plot_script = _SCRIPTS / "plot_solar_value_factor_yearly.py"
-    print(f"Running {plot_script.name}...")
-    subprocess.run(
-        [sys.executable, str(plot_script), "--config", str(args.config.resolve())],
-        check=True,
-    )
+    if not args.skip_plot:
+        plot_script = _SCRIPTS / "plot_solar_value_factor_yearly.py"
+        print(f"Running {plot_script.name}...")
+        plot_cmd = [
+            sys.executable,
+            str(plot_script),
+            "--config",
+            str(args.config.resolve()),
+            "--workbook",
+            str(cfg.xlsx_path),
+        ]
+        if args.figure_dir is not None:
+            plot_cmd += ["--output-dir", str(args.figure_dir.resolve())]
+        subprocess.run(plot_cmd, check=True)
 
 
 if __name__ == "__main__":

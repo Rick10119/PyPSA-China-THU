@@ -39,8 +39,8 @@ time_sampling:
 # Uniform electric-load multiplier (applied to all snapshots/provinces).
 # Use `load_scale_planning` for capacity-planning runs and
 # `load_scale_dispatch` for dispatch/operation runs.
-load_scale_planning: 1.5
-load_scale_dispatch: 1.0
+load_scale_planning: 1.2
+load_scale_dispatch: 1.2
 
 add_aluminum: False
 only_other_load: False
@@ -213,7 +213,7 @@ dispatch_segmented_prices:
     # - reconstructed: reconstruct from segmented thermal output and mapped supply curve.
     # - planning_marginal_floor_zero: use planning marginal prices, but set province-hours
     #   at/below the thermal minimum-output floor to zero.
-    mapped_price_source: reconstructed
+    mapped_price_source: planning_marginal_floor_zero
     # Mapped thermal load ratio: (P/Cap) divided by biweekly max within each 2W-SUN bucket per province.
     week_freq: "2W-SUN"
     # Only for mapped price reconstruction: when local synchronous/thermal output is
@@ -226,10 +226,6 @@ dispatch_segmented_prices:
     # below (grouped max thermal * (1 + reserve margin) * threshold).
     # Can be set globally and by year.
     daily_low_output_zero_threshold: 0.4
-    daily_low_output_zero_threshold_by_year:
-      "2025": 0.40
-      "2030": 0.40
-      "2035": 0.40
     # Reference window for grouped max thermal output and reserve multiplier.
     # Defaults in code keep the legacy daily/no-reserve behavior when omitted.
     low_output_reference_freq: "W-SUN"
