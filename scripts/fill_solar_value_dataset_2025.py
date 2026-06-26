@@ -84,7 +84,9 @@ def load_solar_value_fill_config(config_path: Path) -> SolarValueFillConfig:
     with config_path.open("r", encoding=_CSV_ENCODING) as f:
         cfg = yaml.safe_load(f) or {}
 
-    root = config_path.parent.resolve()
+    # Scenario configs may live under configs/... while Snakemake still writes
+    # relative paths such as results/ from the repository root.
+    root = config_path.parent.resolve() if (config_path.parent / "Snakefile").exists() else ROOT
     results_rel = str(cfg.get("results_dir") or "results/")
     version = cfg.get("version")
     if version is None:

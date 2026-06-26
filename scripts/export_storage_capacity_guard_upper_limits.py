@@ -10,6 +10,7 @@ import yaml
 from storage_capacity_guard import (
     _get_provincial_2025_baseline_mw,
     _resolve_repo_path,
+    _target_capacity_multiplier,
     _target_multipliers,
     get_provincial_storage_shares,
 )
@@ -39,6 +40,7 @@ def main() -> None:
     baseline = _get_provincial_2025_baseline_mw(guard_cfg)
     shares = get_provincial_storage_shares(guard_cfg)
     lower_mult, upper_mult = _target_multipliers(guard_cfg)
+    capacity_multiplier = _target_capacity_multiplier(guard_cfg)
     max_hours = float(
         config.get("electricity", {}).get("max_hours", {}).get("battery", 6.0)
     )
@@ -56,11 +58,12 @@ def main() -> None:
     rows = []
     for year in years:
         guard_active = apply_start_year <= year <= apply_end_year
-        national_target = (
+        national_target_raw = (
             float(targets.at[year, "national_battery_capacity_mw"])
             if targets is not None and year in targets.index
             else float("nan")
         )
+        national_target = national_target_raw * capacity_multiplier if pd.notna(national_target_raw) else float("nan")
         for province, baseline_mw in baseline.items():
             share = float(shares.get(province, 0.0))
             target_power = national_target * share if guard_active and pd.notna(national_target) else 0.0
@@ -80,7 +83,9 @@ def main() -> None:
                     "guard_active": guard_active,
                     "lower_multiplier": lower_mult,
                     "upper_multiplier": upper_mult,
+                    "target_capacity_multiplier": capacity_multiplier,
                     "national_cumulative_target_mw": national_target,
+                    "national_cumulative_target_mw_unscaled": national_target_raw,
                 }
             )
 

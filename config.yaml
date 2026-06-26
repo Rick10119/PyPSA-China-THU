@@ -177,6 +177,9 @@ coal_power_plant:
 
 storage_capacity_guard:
   enabled: true
+  # Uniform scalar for storage availability sensitivity cases.
+  # 1.0 = current target trajectory; use 0.5, 1.5, 2.0 for sensitivity.
+  target_capacity_multiplier: 1.0
   # Provincial 2025 baseline power [MW] used as the spatial allocation shares.
   historical_capacity_csv: data/existing_infrastructure/battery_capacity.csv
   baseline_year_column: "2025"

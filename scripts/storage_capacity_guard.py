@@ -102,6 +102,11 @@ def _target_multipliers(guard_cfg: dict) -> tuple[float, float]:
     return lower_mult, upper_mult
 
 
+def _target_capacity_multiplier(guard_cfg: dict) -> float:
+    """Uniform multiplier for storage availability sensitivity cases."""
+    return max(0.0, float(guard_cfg.get("target_capacity_multiplier", 1.0)))
+
+
 def _fixed_battery_power_by_province(n) -> pd.Series:
     """Fixed/non-extendable battery discharger power by province [MW]."""
     if not hasattr(n, "links") or n.links.empty:
@@ -166,6 +171,8 @@ def apply_storage_capacity_guard(n, config, scenario_context: dict | None = None
     if national_cumulative_target is None or national_cumulative_target <= 0:
         logger.info("Storage capacity guard: no positive national target for %s; skip.", planning_year)
         return
+    capacity_multiplier = _target_capacity_multiplier(guard_cfg)
+    national_cumulative_target *= capacity_multiplier
 
     try:
         shares = get_provincial_storage_shares(guard_cfg)
@@ -233,11 +240,13 @@ def apply_storage_capacity_guard(n, config, scenario_context: dict | None = None
 
     logger.info(
         "Storage capacity guard applied for %s: updated_links=%s, updated_stores=%s, "
-        "national_cumulative_target_mw=%.2f, lower_mult=%.3f, upper_mult=%.3f, max_hours=%.2f",
+        "national_cumulative_target_mw=%.2f, target_capacity_multiplier=%.3f, "
+        "lower_mult=%.3f, upper_mult=%.3f, max_hours=%.2f",
         planning_year,
         updated_links,
         updated_stores,
         national_cumulative_target,
+        capacity_multiplier,
         lower_mult,
         upper_mult,
         max_hours,
