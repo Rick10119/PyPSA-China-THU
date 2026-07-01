@@ -19,8 +19,9 @@ scripts/run_thermal_flexibility_sensitivity.py
 
 - 这是后处理敏感性分析。
 - 不重新求解 PyPSA 容量扩张模型。
-- 复用当前 config 对应的已求解 `postnetwork` 和 `dispatch_segmented` 网络。
-- 对不同火电低出力阈值重新导出 mapped prices，再重新填充 `solar_value_dataset.xlsx`。
+- 默认复用储能容量限制基准 case `storage-x1` 对应的已求解 `postnetwork` 和 `dispatch_segmented` 网络。
+- 以 planning marginal price 为基准；对不同火电低出力阈值生成 zero-price mask，并仅将低于阈值的省份/小时价格置零。
+- 再用 `fill_solar_value_dataset_2025.py --allow-zero-price` 重新填充 `solar_value_dataset.xlsx`。
 
 默认阈值：
 
@@ -32,6 +33,31 @@ scripts/run_thermal_flexibility_sensitivity.py
 
 ```bash
 python scripts/run_thermal_flexibility_sensitivity.py
+```
+
+默认情况下，如果存在下面这个 config，脚本会使用它作为火电灵活性敏感性的基准：
+
+```text
+configs/storage_availability_sensitivity/config_storage_x1.yaml
+```
+
+也就是说，火电灵活性敏感性默认基于：
+
+```text
+results/version-<base-version>-storage-x1/
+```
+
+如果想改用原始 `config.yaml` 或其他 case，可以显式传入：
+
+```bash
+python scripts/run_thermal_flexibility_sensitivity.py --config config.yaml
+```
+
+或：
+
+```bash
+python scripts/run_thermal_flexibility_sensitivity.py \
+  --config configs/storage_availability_sensitivity/config_storage_x0p5.yaml
 ```
 
 指定阈值：
@@ -53,7 +79,7 @@ python scripts/run_thermal_flexibility_sensitivity.py \
 默认输出位置：
 
 ```text
-results/version-<当前config版本>/thermal_flexibility_sensitivity/
+results/version-<storage-x1版本>/thermal_flexibility_sensitivity/
 ```
 
 每个阈值一个子目录：
@@ -73,6 +99,8 @@ solar_value_dataset.xlsx
 mapped_prices/
 figures/
 ```
+
+这里的 `mapped_prices/` 不是最终价格口径，而是用于标记哪些省份/小时需要把 planning marginal price 置零的 mask。非零小时仍使用 planning marginal price。
 
 总汇总输出：
 
@@ -266,7 +294,7 @@ python scripts/summarize_storage_availability_sensitivity.py --allow-missing
 
 | 敏感性 | 是否重跑容量扩张 | 改变对象 | 默认 case | 主要输出 |
 |---|---:|---|---|---|
-| 火电灵活性 | 否 | mapped price 与热电最小出力后处理阈值 | `0.4, 0.3, 0.2, 0.1, 0.0` | `thermal_flexibility_sensitivity/` |
+| 火电灵活性 | 否 | planning marginal price 的低出力置零阈值 | `0.4, 0.3, 0.2, 0.1, 0.0` | `thermal_flexibility_sensitivity/` |
 | 储能容量限制 | 是 | `storage_capacity_guard.target_capacity_multiplier` | `0.5, 1.0, 1.5, 2.0` | `version-*-storage-x*/` |
 
 建议流程：

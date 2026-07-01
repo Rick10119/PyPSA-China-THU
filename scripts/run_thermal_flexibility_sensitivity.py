@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Recalculate mapped prices and solar-value results for thermal flexibility thresholds.
+"""Recalculate solar-value results for thermal flexibility thresholds.
 
 This is a post-processing sensitivity: every case reuses the same solved dispatch and
-planning networks. Only ``daily_low_output_zero_threshold`` changes.
+planning networks. Planning marginal prices remain the base price series; the
+threshold-specific mapped-price CSV is used only as a zero-price mask.
 """
 
 from __future__ import annotations
@@ -14,12 +15,14 @@ import sys
 import tempfile
 from pathlib import Path
 
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_STORAGE_X1_CONFIG = (
+    ROOT / "configs" / "storage_availability_sensitivity" / "config_storage_x1.yaml"
+)
 
 
 def _tag(value: float) -> str:
@@ -29,6 +32,11 @@ def _tag(value: float) -> str:
 def _run(cmd: list[str]) -> None:
     print("+", " ".join(cmd), flush=True)
     subprocess.run(cmd, check=True)
+
+
+def _default_config_path() -> Path:
+    """Use the storage-x1 case as the default thermal-flexibility baseline."""
+    return DEFAULT_STORAGE_X1_CONFIG if DEFAULT_STORAGE_X1_CONFIG.is_file() else ROOT / "config.yaml"
 
 
 def _national_weighted_series(workbook: Path) -> pd.DataFrame:
@@ -48,6 +56,11 @@ def _national_weighted_series(workbook: Path) -> pd.DataFrame:
 
 
 def _plot_threshold_comparison(output_root: Path, thresholds: list[float]) -> None:
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
     fig, ax = plt.subplots(figsize=(9.2, 5.4))
     summary_frames: list[pd.DataFrame] = []
     for threshold in thresholds:
@@ -84,7 +97,15 @@ def main() -> None:
     ap = argparse.ArgumentParser(
         description="Export mapped prices and solar-value workbooks/figures for thermal thresholds."
     )
-    ap.add_argument("--config", type=Path, default=ROOT / "config.yaml")
+    ap.add_argument(
+        "--config",
+        type=Path,
+        default=None,
+        help=(
+            "Config to read solved networks from. Default: storage-x1 sensitivity config "
+            "if it exists, otherwise config.yaml."
+        ),
+    )
     ap.add_argument("--threshold", type=float, action="append", dest="thresholds")
     ap.add_argument(
         "--template-workbook",
@@ -105,7 +126,7 @@ def main() -> None:
     # where the full PyPSA runtime is not installed.
     from fill_solar_value_dataset_2025 import load_solar_value_fill_config
 
-    config_path = args.config.resolve()
+    config_path = (args.config or _default_config_path()).resolve()
     with config_path.open(encoding="utf-8") as f:
         raw_cfg = yaml.safe_load(f) or {}
     base = load_solar_value_fill_config(config_path)
@@ -176,9 +197,9 @@ def main() -> None:
             workbook = case_dir / "solar_value_dataset.xlsx"
             workbook.write_bytes(template.read_bytes())
             _run([
-                sys.executable, str(filler), "--config", str(config_path), "--mapped-csv",
+                sys.executable, str(filler), "--config", str(config_path), "--allow-zero-price",
                 "--mapped-price-dir", str(price_dir), "--workbook", str(workbook),
-                "--figure-dir", str(figure_dir), "--thermal-floor-min-ratio", str(threshold),
+                "--figure-dir", str(figure_dir),
             ])
 
     _plot_threshold_comparison(output_root, thresholds)
