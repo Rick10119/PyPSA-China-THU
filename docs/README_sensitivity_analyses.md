@@ -123,6 +123,7 @@ scripts/summarize_storage_availability_sensitivity.py
 
 - 这是完整模型重跑敏感性分析。
 - 通过 `storage_capacity_guard.target_capacity_multiplier` 缩放储能可用容量目标。
+- 储能约束使用严格上限：`target_lower_multiplier = 0.0`，`target_upper_multiplier = 1.0`，即允许少建，但不允许超过倍率后的目标容量。
 - 每个倍率生成独立 config 和独立 results version。
 - Snakemake 跑完后自动调用 `fill_solar_value_dataset_2025.py` 填充该倍率对应的 `solar_value_dataset.xlsx`。
 
@@ -135,10 +136,10 @@ scripts/summarize_storage_availability_sensitivity.py
 含义：
 
 ```text
-0.5x = 当前储能容量目标的 50%
-1.0x = 当前储能容量目标
-1.5x = 当前储能容量目标的 150%
-2.0x = 当前储能容量目标的 200%
+0.5x = 储能容量严格上限为当前目标的 50%
+1.0x = 储能容量严格上限为当前目标
+1.5x = 储能容量严格上限为当前目标的 150%
+2.0x = 储能容量严格上限为当前目标的 200%
 ```
 
 ### 2.1 生成 config 和 Slurm 作业
