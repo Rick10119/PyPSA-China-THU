@@ -115,19 +115,20 @@
 
 ### 4.5.1 mapped 低出力零价与备用裕度
 
-`scripts/export_reconstructed_prices.py` 在构建 mapped sidecar 时，除燃料报价曲线映射外，还会将部分低出力时段强制为零价。判定规则为：某省某时刻火电出力低于
+`scripts/export_reconstructed_prices.py` 在构建 mapped sidecar 时，除燃料报价曲线映射外，还会将部分低出力时段强制为零价。判定规则为：某省某时刻低出力参考出力低于
 
 ```text
-分组最大火电出力 × (1 + low_output_reserve_margin) × daily_low_output_zero_threshold
+分组最大低出力参考出力 × (1 + low_output_reserve_margin) × daily_low_output_zero_threshold
 ```
 
 则 mapped 价格置 `0`。
 
-- **分组窗口**（`low_output_reference_freq`）：在窗口内取该省火电出力最大值作为参考峰值。当前默认 `W-SUN`（周日至周六的一周）；若配置省略，代码回退为按日（`D`）分组，与旧版行为一致。
-- **备用裕度**（`low_output_reserve_margin`）：在周（或日）峰值之上预留比例裕度，默认 `0.10`，即 cutoff 使用 `1.1 × 峰值`。这表示部分机组出力用于旋转/运行备用，低于“峰值加备用”阈值的时段按必开处理而非边际定价。若配置省略，裕度为 `0`。
+- **低出力机组口径**（`low_output_carrier_scope`）：当前默认 `synchronous_generation_floor`，即使用同步约束中的煤电、核电、燃气、CHP、生物质等同步机组全集做低出力判定；mapped 价格曲线本身仍可使用 `mapped_carriers` 的热电报价栈。若配置省略，代码回退为旧版 `mapped_carriers` 口径。
+- **分组窗口**（`low_output_reference_freq`）：在窗口内取该省参考出力最大值作为参考峰值。当前默认 `D`（自然日）。
+- **备用裕度**（`low_output_reserve_margin`）：可在分组峰值之上预留比例裕度，当前默认 `0.0`。例如设为 `0.10` 时，cutoff 使用 `1.1 × 峰值`；低于“峰值加备用”阈值的时段按必开处理而非边际定价。
 - **阈值**（`daily_low_output_zero_threshold`）：默认 `0.4`，可通过 `daily_low_output_zero_threshold_by_year` 按年覆盖。
 
-示例（默认参数）：周峰值 100 MW → cutoff = 100 × 1.1 × 0.4 = 44 MW；火电出力低于 44 MW 的小时 mapped 价格为零。该零价时段会被 `--allow-zero-price` 等后处理保留，用于光伏 value factor 分析。
+示例（默认参数）：同步机组参考日峰值 100 MW → cutoff = 100 × 0.4 = 40 MW；参考出力低于 40 MW 的小时 mapped 价格为零。该零价时段会被 `--allow-zero-price` 等后处理保留，用于光伏 value factor 分析。
 
 该规则在 must-run floor（本地负荷 10 % 附近）之前应用；两者共同决定 mapped sidecar 中的零价小时集合。
 

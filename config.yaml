@@ -227,9 +227,13 @@ dispatch_segmented_prices:
     thermal_load_floor:
       enabled: true
       ratio: 0.10
-    # Low-output snapshots are set to mapped price 0 when thermal output is
-    # below (grouped max thermal * (1 + reserve margin) * threshold).
+    # Low-output snapshots are set to mapped price 0 when reference output is
+    # below (grouped max reference output * (1 + reserve margin) * threshold).
     # grouped max is taken within low_output_reference_freq (D = calendar day).
+    # Use the synchronous-generation carrier set for this low-output test so
+    # nuclear/biomass synchronous output is counted after coal retires.
+    # The mapped supply curve itself still uses dispatch_segmented_prices.mapped_carriers.
+    low_output_carrier_scope: "synchronous_generation_floor"
     daily_low_output_zero_threshold: 0.4
     low_output_reference_freq: "D"
     low_output_reserve_margin: 0.0

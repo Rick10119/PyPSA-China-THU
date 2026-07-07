@@ -162,6 +162,7 @@ dispatch_segmented_prices:
     thermal_load_floor:
       enabled: true
       ratio: 0.1
+    low_output_carrier_scope: synchronous_generation_floor
     daily_low_output_zero_threshold: 0.4
     low_output_reference_freq: D
     low_output_reserve_margin: 0.0

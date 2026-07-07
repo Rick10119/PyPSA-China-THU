@@ -23,7 +23,7 @@ scripts/run_thermal_flexibility_sensitivity.py
 - 以 planning marginal price 为基准；对不同火电**最小出力阈值**生成 zero-price mask，并仅将满足条件的省份/小时价格置零。
 - 再用 `fill_solar_value_dataset_2025.py --allow-zero-price` 重新填充 `solar_value_dataset.xlsx`。
 - 阈值 **> 0** 时，置零条件为 **同步机 10% 本地负荷底线**（`synchronous_generation_floor`，**仅 2025–2050**）**与**最小出力阈值（`daily_low_output_zero_threshold`）的并集；不启用 `thermal_load_floor`。
-- **低出力置零**：当本省火电低于 **当日最大火电 × 阈值**（`low_output_reference_freq: D`，无额外 reserve 裕度）时标记置零；例如 `0.1` 表示低于日最大值的 10% 才置零。
+- **低出力置零**：当本省同步机组参考出力低于 **当日最大同步机组参考出力 × 阈值**（`low_output_reference_freq: D`，无额外 reserve 裕度）时标记置零；例如 `0.1` 表示低于日最大值的 10% 才置零。默认 `low_output_carrier_scope: synchronous_generation_floor`，因此核电和生物质会计入低出力判定；mapped 价格曲线本身仍使用 `mapped_carriers` 的热电报价栈。
 - 同步机置零 mask 与 dispatch 约束对齐：`sync >= ratio×负荷 - sync_floor_slack_mw`；后处理仅在同步出力贴近该 RHS（默认 +1 MW 带宽）时标记置零。**2051 年及以后不再施加同步机置零。**
 - 填充 workbook 时，置零 mask **仅在省内有光伏出力的小时**生效（`--zero-mask-only-when-solar-generates`），避免夜间置零抬高 value factor、破坏单调性。
 - **主曲线 `threshold_0/`**：最小出力阈值 0、**不**含同步机 mask（灵活性端点；与 0.1–0.4 同走 `--allow-zero-price` 流程）。

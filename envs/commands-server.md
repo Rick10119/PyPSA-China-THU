@@ -17,19 +17,10 @@ conda activate pypsa
 python -c "import pypsa; print('pypsa', pypsa.__version__)"
 ```
 
-## 2) Copy code to server directories
-
-```bash
-mv ~/Documents/PyPSA-China /scratch/gpfs/rl8728/PyPSA-China
-cp -R ~/Documents/PyPSA-China /scratch/gpfs/rl8728/PyPSA-China
-```
-
-https://mydella.princeton.edu/pun/sys/dashboard/files/fs//scratch/gpfs/JENKINS/rl8728/PyPSA-China/results
-
 ## 3) Scenario test (JENKINS path)
 
 ```bash
-cd /scratch/gpfs/JENKINS/rl8728/PyPSA-China
+cd /scratch/gpfs/JENKINS/rl8728/PyPSA-China-THU
 module load anaconda3/2024.6
 conda activate pypsa
 
@@ -52,22 +43,6 @@ chmod +x submit_core_scenario.sh
 ./submit_core_scenario.sh
 ```
 
-## 4) Run production jobs (example: Sep 2)
-
-```bash
-cd /scratch/gpfs/rl8728/PyPSA-China
-module load anaconda3/2024.6
-conda activate pypsa
-
-git restore .
-git pull
-find ./results | xargs touch
-snakemake --unlock
-
-chmod +x submit_multiple_jobs.sh
-./submit_multiple_jobs.sh
-```
-
 ## 5) Common ops commands
 
 ### Cancel all jobs
@@ -82,11 +57,3 @@ scancel -u rl8728
 find ./results | xargs touch
 ```
 
-## 6) Plotting / debugging (example: Sep 2)
-
-```bash
-find ./results/version-0516.1H.2 | xargs touch 
-snakemake --unlock
-snakemake --configfile configs/config_MMMF_2050_10p.yaml -np --rerun-incomplete --ignore-incomplete --rerun-triggers mtime
-snakemake --configfile configs/config_MMMF_2050_10p.yaml --cores 6 --rerun-incomplete --ignore-incomplete --rerun-triggers mtime
-```

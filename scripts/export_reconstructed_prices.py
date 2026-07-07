@@ -702,6 +702,39 @@ def _load_apply_synchronous_generation_floor_zero_mask(config_path: str | Path |
     return True
 
 
+def _load_low_output_carrier_scope(config_path: str | Path | None = None) -> str:
+    """
+    Carrier scope for the low-output zero-price mask.
+
+    Config:
+      dispatch_segmented_prices.price_export.low_output_carrier_scope:
+        mapped_carriers               (default; legacy behavior)
+        synchronous_generation_floor  (use the synchronous floor carrier set)
+    """
+    cfg_path = Path(config_path) if config_path is not None else _default_config_path()
+    if not cfg_path.exists():
+        return "mapped_carriers"
+    with cfg_path.open("r", encoding="utf-8") as f:
+        cfg = yaml.safe_load(f) or {}
+    pe = ((cfg.get("dispatch_segmented_prices") or {}).get("price_export") or {})
+    scope = str(pe.get("low_output_carrier_scope", "mapped_carriers") or "mapped_carriers")
+    scope = scope.strip().lower().replace("-", "_")
+    aliases = {
+        "mapped": "mapped_carriers",
+        "thermal": "mapped_carriers",
+        "sync": "synchronous_generation_floor",
+        "synchronous": "synchronous_generation_floor",
+        "sync_floor": "synchronous_generation_floor",
+    }
+    scope = aliases.get(scope, scope)
+    if scope not in {"mapped_carriers", "synchronous_generation_floor"}:
+        raise ValueError(
+            "dispatch_segmented_prices.price_export.low_output_carrier_scope must be "
+            "'mapped_carriers' or 'synchronous_generation_floor'"
+        )
+    return scope
+
+
 def _load_synchronous_generation_floor_config(
     config_path: str | Path | None = None,
 ) -> tuple[bool, float, set[str], dict[str, str], float, int, int]:
@@ -1096,13 +1129,32 @@ def _local_mapped_prices(
         link_carrier_to_bus1_carrier=link_carrier_to_bus1_carrier,
         config_path=config_path,
     )
+    low_output_thermal = thermal_full
+    if _load_low_output_carrier_scope(config_path=config_path) == "synchronous_generation_floor":
+        (
+            floor_enabled,
+            _floor_ratio,
+            sync_generator_carriers,
+            sync_link_carrier_to_bus1_carrier,
+            _floor_slack_mw,
+            _apply_start_year,
+            _apply_end_year,
+        ) = _load_synchronous_generation_floor_config(config_path=config_path)
+        if floor_enabled:
+            low_output_thermal = _infer_local_thermal_dispatch(
+                n,
+                provinces=provinces,
+                snapshots=snapshots,
+                generator_carriers=sync_generator_carriers,
+                link_carrier_to_bus1_carrier=sync_link_carrier_to_bus1_carrier,
+            )
 
     zero_threshold = _daily_low_output_zero_threshold(out.index, config_path=config_path)
     low_output_freq = _low_output_reference_freq(config_path=config_path)
     low_output_reserve_margin = _low_output_reserve_margin(config_path=config_path)
 
     for p in out.columns:
-        th_active = pd.to_numeric(thermal_full[p], errors="coerce").fillna(0.0).astype(float)
+        th_active = pd.to_numeric(low_output_thermal[p], errors="coerce").fillna(0.0).astype(float)
         zero_mask = _daily_low_output_zero_mask(
             th_active,
             threshold=zero_threshold,
@@ -1247,6 +1299,7 @@ def _planning_marginal_floor_zero_mapped_prices(
         generator_carriers=generator_carriers,
         link_carrier_to_bus1_carrier=link_carrier_to_bus1_carrier,
     )
+    low_output_thermal = thermal_output
 
     floor_mask = pd.DataFrame(False, index=prices.index, columns=prices.columns, dtype=bool)
 
@@ -1278,13 +1331,24 @@ def _planning_marginal_floor_zero_mapped_prices(
             apply_start_year=apply_start_year,
             apply_end_year=apply_end_year,
         )
+    if (
+        _load_low_output_carrier_scope(config_path=config_path) == "synchronous_generation_floor"
+        and floor_enabled
+    ):
+        low_output_thermal = _infer_local_thermal_dispatch(
+            n_dispatch,
+            provinces=provinces,
+            snapshots=snapshots,
+            generator_carriers=sync_generator_carriers,
+            link_carrier_to_bus1_carrier=sync_link_carrier_to_bus1_carrier,
+        )
 
-    zero_threshold = _daily_low_output_zero_threshold(thermal_output.index, config_path=config_path)
+    zero_threshold = _daily_low_output_zero_threshold(low_output_thermal.index, config_path=config_path)
     low_output_freq = _low_output_reference_freq(config_path=config_path)
     low_output_reserve_margin = _low_output_reserve_margin(config_path=config_path)
-    for province in thermal_output.columns:
+    for province in low_output_thermal.columns:
         low_output_mask = _daily_low_output_zero_mask(
-            thermal_output[province].astype(float),
+            low_output_thermal[province].astype(float),
             threshold=zero_threshold,
             freq=low_output_freq,
             reserve_margin=low_output_reserve_margin,
