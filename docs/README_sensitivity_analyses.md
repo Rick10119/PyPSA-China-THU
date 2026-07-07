@@ -22,10 +22,12 @@ scripts/run_thermal_flexibility_sensitivity.py
 - 默认复用储能容量限制基准 case `storage-x1` 对应的已求解 `postnetwork` 和 `dispatch_segmented` 网络。
 - 以 planning marginal price 为基准；对不同火电**最小出力阈值**生成 zero-price mask，并仅将满足条件的省份/小时价格置零。
 - 再用 `fill_solar_value_dataset_2025.py --allow-zero-price` 重新填充 `solar_value_dataset.xlsx`。
-- 阈值 **> 0** 时，置零条件为 **同步机 10% 本地负荷底线**（`synchronous_generation_floor`）**与**最小出力阈值（`daily_low_output_zero_threshold`）的并集；不启用 `thermal_load_floor`（避免与阈值参数混淆）。
-- 同步机置零 mask 与 dispatch 约束对齐：`sync >= ratio×负荷 - sync_floor_slack_mw` 为模型 RHS；后处理仅在同步出力 **贴近该 RHS**（默认 +1 MW 带宽，`price_export.sync_floor_zero_band_mw`）时置零，且仅对 `apply_start_year`–`apply_end_year` 生效（默认 2025–2050）。
-- **阈值 `0.0`（`threshold_0/`）**：不导出 mapped mask，直接使用 `fill_solar_value_dataset_2025.py --planning-marginal`（纯 planning LMP），与储能 `storage-x1` 作业的价格口径一致，便于对照。
-- **额外曲线 `threshold_0_sync/`**：最小出力阈值仍为 `0.0`，但启用同步机 10% 底线置零（`--allow-zero-price`）；用于区分「完全无 mask」与「仅同步机约束」两种极端。
+- 阈值 **> 0** 时，置零条件为 **同步机 10% 本地负荷底线**（`synchronous_generation_floor`，**仅 2025–2050**）**与**最小出力阈值（`daily_low_output_zero_threshold`）的并集；不启用 `thermal_load_floor`。
+- 同步机置零 mask 与 dispatch 约束对齐：`sync >= ratio×负荷 - sync_floor_slack_mw`；后处理仅在同步出力贴近该 RHS（默认 +1 MW 带宽）时标记置零。**2051 年及以后不再施加同步机置零。**
+- 填充 workbook 时，置零 mask **仅在省内有光伏出力的小时**生效（`--zero-mask-only-when-solar-generates`），避免夜间置零抬高 value factor、破坏单调性。
+- **主曲线 `threshold_0/`**：最小出力阈值 0、**不**含同步机 mask（灵活性端点；与 0.1–0.4 同走 `--allow-zero-price` 流程）。
+- **参考曲线 `threshold_0_lmp/`**：`--planning-marginal` 纯 LMP，与储能 `storage-x1` 一致。
+- **参考曲线 `threshold_0_sync/`**：阈值 0 + 仅同步机底线（2025–2050）。
 
 默认阈值：
 
@@ -33,7 +35,7 @@ scripts/run_thermal_flexibility_sensitivity.py
 0.4, 0.3, 0.2, 0.1, 0.0
 ```
 
-默认还会额外生成 `threshold_0_sync/`（0.0 阈值 + 同步机底线）。若不需要，加 `--skip-zero-sync-floor`。
+默认还会额外生成 `threshold_0_sync/` 与 `threshold_0_lmp/`（storage-x1 纯 LMP 参考）。分别用 `--skip-zero-sync-floor` / `--skip-pure-lmp-reference` 关闭。
 
 运行命令：
 
@@ -95,19 +97,20 @@ threshold_0p4/
 threshold_0p3/
 threshold_0p2/
 threshold_0p1/
-threshold_0/          # 纯 LMP
-threshold_0_sync/     # 0.0 阈值 + 同步机底线
+threshold_0/          # 主曲线端点：无 sync / 无低出力 mask
+threshold_0_sync/     # 参考：0 + 同步机底线（2025–2050）
+threshold_0_lmp/      # 参考：纯 LMP（storage-x1）
 ```
 
 每个阈值目录中主要包括：
 
 ```text
 solar_value_dataset.xlsx
-mapped_prices/    # 阈值 > 0 时才有
+mapped_prices/    # 除 threshold_0_lmp 外均有
 figures/
 ```
 
-这里的 `mapped_prices/` 不是最终价格口径，而是用于标记哪些省份/小时需要把 planning marginal price 置零的 mask（同步机 10% 底线 **或** 低于最小出力阈值 `daily_low_output_zero_threshold`）。非零小时仍使用 planning marginal price。`threshold_0/` 不含 `mapped_prices/`（纯 LMP，与 `storage-x1` 一致）；`threshold_0_sync/` 仅含同步机底线 mask。
+主曲线应满足 **value factor(0) ≥ value factor(0.1) ≥ … ≥ value factor(0.4)**（阈值越高，置零越多，光伏价值因子越低）。`threshold_0_lmp` 与 `threshold_0_sync` 为参考线，不参与该单调序列。
 
 总汇总输出：
 

@@ -285,7 +285,11 @@ def _load_mapped_price_csv(year: int, cfg: SolarValueFillConfig, snapshots: pd.D
 
 
 def _apply_mapped_zero_prices(
-    planning_prices: pd.DataFrame, mapped_prices: pd.DataFrame
+    planning_prices: pd.DataFrame,
+    mapped_prices: pd.DataFrame,
+    *,
+    solar_dispatch_bus: pd.DataFrame | None = None,
+    solar_eps_mw: float = 1e-6,
 ) -> pd.DataFrame:
     prices = planning_prices.copy()
     mapped_col_set = set(mapped_prices.columns.astype(str))
@@ -293,7 +297,18 @@ def _apply_mapped_zero_prices(
         mapped_col = _mapped_name(str(col))
         if mapped_col not in mapped_col_set:
             continue
-        prices[col] = prices[col].mask(mapped_prices[mapped_col].astype(float) <= 1e-9, 0.0)
+        zero = mapped_prices[mapped_col].astype(float) <= 1e-9
+        if solar_dispatch_bus is not None:
+            solar_col = str(col)
+            if solar_col in solar_dispatch_bus.columns:
+                zero = zero & (solar_dispatch_bus[solar_col].astype(float) > float(solar_eps_mw))
+            else:
+                mapped_solar_col = _mapped_name(solar_col)
+                if mapped_solar_col in solar_dispatch_bus.columns:
+                    zero = zero & (solar_dispatch_bus[mapped_solar_col].astype(float) > float(solar_eps_mw))
+                else:
+                    zero = zero & False
+        prices[col] = prices[col].mask(zero, 0.0)
     return prices
 
 
@@ -322,6 +337,7 @@ def _compute_metrics_for_year(
     *,
     price_source: str,
     thermal_floor_min_ratio: float = 0.4,
+    zero_mask_only_when_solar_generates: bool = False,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     network_path = _network_path(year, cfg)
     if not network_path.exists():
@@ -329,6 +345,13 @@ def _compute_metrics_for_year(
 
     n = pypsa.Network(network_path)
     snapshots = pd.DatetimeIndex(n.snapshots)
+
+    solar_gens = n.generators.index[_is_solar_carrier(n.generators.carrier)]
+    if len(solar_gens) == 0:
+        raise ValueError("No solar generators found in network.")
+    solar_dispatch = n.generators_t.p[solar_gens].clip(lower=0.0)
+    solar_bus = n.generators.loc[solar_gens, "bus"]
+    solar_dispatch_bus = _group_sum_by_bus(solar_dispatch, solar_bus)
 
     if price_source in {"planning_marginal", "planning_marginal_zero_mapped"}:
         planning_path = _planning_network_path(year, cfg)
@@ -344,7 +367,11 @@ def _compute_metrics_for_year(
             )
         if price_source == "planning_marginal_zero_mapped":
             mapped_prices = _load_mapped_price_csv(year, cfg, snapshots)
-            prices = _apply_mapped_zero_prices(prices, mapped_prices)
+            prices = _apply_mapped_zero_prices(
+                prices,
+                mapped_prices,
+                solar_dispatch_bus=solar_dispatch_bus if zero_mask_only_when_solar_generates else None,
+            )
     elif price_source == "mapped_csv":
         prices = _load_mapped_price_csv(year, cfg, snapshots)
     else:
@@ -352,20 +379,12 @@ def _compute_metrics_for_year(
 
     price_col_set = set(prices.columns.astype(str))
 
-    # Select solar generators (include all carriers containing 'solar').
-    solar_gens = n.generators.index[_is_solar_carrier(n.generators.carrier)]
-
-    if len(solar_gens) == 0:
-        raise ValueError("No solar generators found in network.")
-
-    solar_dispatch = n.generators_t.p[solar_gens].clip(lower=0.0)
-    solar_bus = n.generators.loc[solar_gens, "bus"]
-    solar_dispatch_bus = _group_sum_by_bus(solar_dispatch, solar_bus)
-
-    avail = n.generators_t.p_max_pu[solar_gens].multiply(
-        n.generators.loc[solar_gens, "p_nom_opt"], axis=1
+    solar_available_bus = _group_sum_by_bus(
+        n.generators_t.p_max_pu[solar_gens].multiply(
+            n.generators.loc[solar_gens, "p_nom_opt"], axis=1
+        ),
+        solar_bus,
     )
-    solar_available_bus = _group_sum_by_bus(avail, solar_bus)
 
     solar_capacity_bus = n.generators.loc[solar_gens].groupby("bus")["p_nom_opt"].sum()
     real_solar_capacity_bus = _load_real_solar_capacity_2025(cfg) if adjust_capacity else pd.Series(dtype=float)
@@ -622,6 +641,14 @@ def main() -> None:
         action="store_false",
         help="Exclude solar from the system value-factor denominator (overrides config).",
     )
+    ap.add_argument(
+        "--zero-mask-only-when-solar-generates",
+        action="store_true",
+        help=(
+            "With --allow-zero-price: apply mapped zero-price mask only in province-hours "
+            "with solar dispatch > 0 (recommended for thermal flexibility sensitivity)."
+        ),
+    )
     args = ap.parse_args()
     if not 0.0 <= float(args.thermal_floor_min_ratio) <= 1.0:
         ap.error("--thermal-floor-min-ratio must be between 0 and 1")
@@ -654,6 +681,7 @@ def main() -> None:
                 cfg,
                 price_source=price_source,
                 thermal_floor_min_ratio=float(args.thermal_floor_min_ratio),
+                zero_mask_only_when_solar_generates=bool(args.zero_mask_only_when_solar_generates),
             )
         except FileNotFoundError as e:
             print(f"Skip {year}: {e}")

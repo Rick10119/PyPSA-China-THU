@@ -5,15 +5,17 @@ This is a post-processing sensitivity: every case reuses the same solved dispatc
 planning networks. Planning marginal prices remain the base price series; the
 threshold-specific mapped-price CSV is used only as a zero-price mask.
 
-Threshold 0.0 (``threshold_0/``) uses planning marginal prices directly (``--planning-marginal``),
-matching the storage-x1 fill mode with no zero-price masking.
+Threshold 0.0 (``threshold_0/``) is the flexibility endpoint on the main curve: no sync-floor
+or low-output zero mask (same planning LMP base as other cases).
 
-An additional ``threshold_0_sync/`` case uses minimum-output threshold 0.0 with only the
-synchronous-generation floor zero mask (no low-output thresholding beyond sync floor).
+``threshold_0_lmp/`` optionally keeps the storage-x1 ``--planning-marginal`` reference.
+``threshold_0_sync/`` adds only the sync-floor mask (2025–2050).
 
 For threshold > 0, mapped zero-price masks apply both the synchronous-generation floor
-(10% local AC load) and ``daily_low_output_zero_threshold``. ``thermal_load_floor`` is
-disabled so threshold cases differ only by the minimum-output parameter.
+(10% local AC load, 2025–2050 only) and ``daily_low_output_zero_threshold``.
+``thermal_load_floor`` is disabled so threshold cases differ only by the minimum-output
+parameter. Zero masks are applied only in hours with provincial solar output when filling
+the workbook, so value factor falls as the threshold rises.
 """
 
 from __future__ import annotations
@@ -35,6 +37,7 @@ DEFAULT_STORAGE_X1_CONFIG = (
     ROOT / "configs" / "storage_availability_sensitivity" / "config_storage_x1.yaml"
 )
 ZERO_SYNC_SLUG = "sync"
+ZERO_LMP_SLUG = "lmp"
 
 
 @dataclass(frozen=True)
@@ -44,6 +47,7 @@ class ThermalFlexCase:
     threshold: float
     slug: str = ""
     pure_lmp: bool = False
+    apply_sync_floor: bool = True
 
     @property
     def dir_name(self) -> str:
@@ -53,9 +57,11 @@ class ThermalFlexCase:
     @property
     def plot_label(self) -> str:
         if self.pure_lmp:
-            return "min output = 0 (pure LMP)"
+            return "pure LMP (storage-x1 ref)"
         if self.slug == ZERO_SYNC_SLUG:
             return "min output = 0 + sync floor"
+        if float(self.threshold) == 0.0 and not self.slug:
+            return "min output = 0"
         return f"min output = {self.threshold:g}"
 
 
@@ -73,15 +79,22 @@ def _default_config_path() -> Path:
     return DEFAULT_STORAGE_X1_CONFIG if DEFAULT_STORAGE_X1_CONFIG.is_file() else ROOT / "config.yaml"
 
 
-def _build_cases(thresholds: list[float], *, include_zero_sync_floor: bool) -> list[ThermalFlexCase]:
+def _build_cases(
+    thresholds: list[float],
+    *,
+    include_zero_sync_floor: bool,
+    include_pure_lmp_reference: bool,
+) -> list[ThermalFlexCase]:
     cases: list[ThermalFlexCase] = []
     for threshold in thresholds:
         if float(threshold) == 0.0:
-            cases.append(ThermalFlexCase(threshold=0.0, pure_lmp=True))
+            cases.append(ThermalFlexCase(threshold=0.0, apply_sync_floor=False))
         else:
-            cases.append(ThermalFlexCase(threshold=float(threshold)))
+            cases.append(ThermalFlexCase(threshold=float(threshold), apply_sync_floor=True))
     if include_zero_sync_floor and any(float(t) == 0.0 for t in thresholds):
-        cases.append(ThermalFlexCase(threshold=0.0, slug=ZERO_SYNC_SLUG))
+        cases.append(ThermalFlexCase(threshold=0.0, slug=ZERO_SYNC_SLUG, apply_sync_floor=True))
+    if include_pure_lmp_reference and any(float(t) == 0.0 for t in thresholds):
+        cases.append(ThermalFlexCase(threshold=0.0, slug=ZERO_LMP_SLUG, pure_lmp=True))
     return cases
 
 
@@ -101,6 +114,14 @@ def _national_weighted_series(workbook: Path) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def _case_sort_key(case: ThermalFlexCase) -> tuple[int, float, str]:
+    if case.pure_lmp:
+        return (2, 0.0, case.slug)
+    if case.slug == ZERO_SYNC_SLUG:
+        return (1, 0.0, case.slug)
+    return (0, -float(case.threshold), case.slug)
+
+
 def _plot_threshold_comparison(output_root: Path, cases: list[ThermalFlexCase]) -> None:
     import matplotlib
 
@@ -109,7 +130,7 @@ def _plot_threshold_comparison(output_root: Path, cases: list[ThermalFlexCase]) 
 
     fig, ax = plt.subplots(figsize=(9.2, 5.4))
     summary_frames: list[pd.DataFrame] = []
-    for case in cases:
+    for case in sorted(cases, key=_case_sort_key):
         workbook = output_root / case.dir_name / "solar_value_dataset.xlsx"
         if not workbook.is_file():
             continue
@@ -174,6 +195,11 @@ def main() -> None:
         action="store_true",
         help="Do not run the extra threshold_0_sync case (0.0 minimum output + sync floor only).",
     )
+    ap.add_argument(
+        "--skip-pure-lmp-reference",
+        action="store_true",
+        help="Do not run threshold_0_lmp (storage-x1 --planning-marginal reference).",
+    )
     args = ap.parse_args()
 
     # Delay this import so ``--help`` also works in lightweight environments
@@ -187,7 +213,11 @@ def main() -> None:
     thresholds = args.thresholds or [0.4, 0.3, 0.2, 0.1, 0.0]
     if any(t < 0.0 or t > 1.0 for t in thresholds):
         ap.error("Every --threshold must be between 0 and 1.")
-    cases = _build_cases(thresholds, include_zero_sync_floor=not args.skip_zero_sync_floor)
+    cases = _build_cases(
+        thresholds,
+        include_zero_sync_floor=not args.skip_zero_sync_floor,
+        include_pure_lmp_reference=not args.skip_pure_lmp_reference,
+    )
 
     template = (args.template_workbook or base.xlsx_path).resolve()
     if not template.is_file():
@@ -222,7 +252,8 @@ def main() -> None:
                 pe["daily_low_output_zero_threshold"] = float(case.threshold)
                 # Per-year values take precedence in the exporter, so clear them for a true uniform case.
                 pe["daily_low_output_zero_threshold_by_year"] = {}
-                # Keep sync-floor zero mask (default); disable mapped thermal_load_floor only.
+                pe["apply_synchronous_generation_floor_zero_mask"] = bool(case.apply_sync_floor)
+                # Keep mapped thermal_load_floor off; sensitivity varies threshold + optional sync floor.
                 pe.setdefault("thermal_load_floor", {})["enabled"] = False
                 case_config_path = tmp_dir / f"config_threshold_{config_tag}.yaml"
                 with case_config_path.open("w", encoding="utf-8") as f:
@@ -251,10 +282,7 @@ def main() -> None:
                         cmd.append("--skip-shandong-plot")
                     _run(cmd)
             else:
-                print(
-                    f"{case.dir_name}: using pure planning marginal prices "
-                    "(same fill mode as storage-x1; skipping mapped-price export)"
-                )
+                print(f"{case.dir_name}: using pure planning marginal prices (storage-x1 reference)")
 
             workbook = case_dir / "solar_value_dataset.xlsx"
             workbook.write_bytes(template.read_bytes())
@@ -265,7 +293,11 @@ def main() -> None:
             if case.pure_lmp:
                 fill_cmd.append("--planning-marginal")
             else:
-                fill_cmd += ["--allow-zero-price", "--mapped-price-dir", str(price_dir)]
+                fill_cmd += [
+                    "--allow-zero-price",
+                    "--mapped-price-dir", str(price_dir),
+                    "--zero-mask-only-when-solar-generates",
+                ]
             _run(fill_cmd)
 
     _plot_threshold_comparison(output_root, cases)
