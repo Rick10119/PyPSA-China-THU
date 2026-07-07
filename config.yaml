@@ -217,6 +217,8 @@ dispatch_segmented_prices:
     # - planning_marginal_floor_zero: use planning marginal prices, but set province-hours
     #   at/below the thermal minimum-output floor to zero.
     mapped_price_source: planning_marginal_floor_zero
+    # Post-process zero-price band above model sync-floor RHS (MW); see export_reconstructed_prices.py.
+    sync_floor_zero_band_mw: 1.0
     # Mapped thermal load ratio: (P/Cap) divided by biweekly max within each 2W-SUN bucket per province.
     week_freq: "2W-SUN"
     # Only for mapped price reconstruction: when local synchronous/thermal output is

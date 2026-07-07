@@ -686,9 +686,25 @@ def _load_mapped_price_source_config(config_path: str | Path | None = None) -> s
     return source
 
 
+def _load_apply_synchronous_generation_floor_zero_mask(config_path: str | Path | None = None) -> bool:
+    """
+    Whether planning-marginal floor-zero mapped prices also zero out synchronous-generation
+    floor hours. Default True for backward compatibility with the main workflow.
+    """
+    cfg_path = Path(config_path) if config_path is not None else _default_config_path()
+    if not cfg_path.exists():
+        return True
+    with cfg_path.open("r", encoding="utf-8") as f:
+        cfg = yaml.safe_load(f) or {}
+    pe = ((cfg.get("dispatch_segmented_prices") or {}).get("price_export") or {})
+    if "apply_synchronous_generation_floor_zero_mask" in pe:
+        return bool(pe.get("apply_synchronous_generation_floor_zero_mask"))
+    return True
+
+
 def _load_synchronous_generation_floor_config(
     config_path: str | Path | None = None,
-) -> tuple[bool, float, set[str], dict[str, str], float]:
+) -> tuple[bool, float, set[str], dict[str, str], float, int, int]:
     """
     Load the planning/dispatch synchronous-generation floor config.
 
@@ -702,15 +718,15 @@ def _load_synchronous_generation_floor_config(
     """
     cfg_path = Path(config_path) if config_path is not None else _default_config_path()
     if not cfg_path.exists():
-        return (False, 0.0, set(), {}, 1.0)
+        return (False, 0.0, set(), {}, 1.0, 2025, 2050)
     with cfg_path.open("r", encoding="utf-8") as f:
         cfg = yaml.safe_load(f) or {}
     floor_cfg = cfg.get("synchronous_generation_floor", {}) or {}
     if not isinstance(floor_cfg, dict) or floor_cfg.get("enabled") is False:
-        return (False, 0.0, set(), {}, 1.0)
+        return (False, 0.0, set(), {}, 1.0, 2025, 2050)
     ratio = float(floor_cfg.get("ratio", 0.0) or 0.0)
     if ratio <= 0.0:
-        return (False, 0.0, set(), {}, 1.0)
+        return (False, 0.0, set(), {}, 1.0, 2025, 2050)
     if ratio >= 1.0:
         raise ValueError("synchronous_generation_floor.ratio must be < 1")
 
@@ -734,7 +750,49 @@ def _load_synchronous_generation_floor_config(
 
     dsp = cfg.get("dispatch_segmented_prices", {}) or {}
     slack_mw = float(dsp.get("sync_floor_slack_mw", 1.0) or 0.0)
-    return (True, ratio, generator_carriers, link_carrier_to_bus1_carrier, slack_mw)
+    apply_start_year = int(floor_cfg.get("apply_start_year", 2025))
+    apply_end_year = int(floor_cfg.get("apply_end_year", 2050))
+    return (True, ratio, generator_carriers, link_carrier_to_bus1_carrier, slack_mw, apply_start_year, apply_end_year)
+
+
+def _load_sync_floor_zero_band_mw(config_path: str | Path | None = None) -> float:
+    """
+    Tolerance above the model synchronous-generation floor RHS for zero-price masking.
+
+    Config:
+      dispatch_segmented_prices.price_export.sync_floor_zero_band_mw
+    """
+    cfg_path = Path(config_path) if config_path is not None else _default_config_path()
+    if not cfg_path.exists():
+        return 1.0
+    with cfg_path.open("r", encoding="utf-8") as f:
+        cfg = yaml.safe_load(f) or {}
+    pe = ((cfg.get("dispatch_segmented_prices") or {}).get("price_export") or {})
+    return max(float(pe.get("sync_floor_zero_band_mw", 1.0) or 0.0), 0.0)
+
+
+def _sync_generation_floor_zero_mask(
+    sync_output: pd.DataFrame,
+    load_mw: pd.DataFrame,
+    *,
+    ratio: float,
+    rhs_slack_mw: float,
+    zero_band_mw: float,
+    apply_start_year: int,
+    apply_end_year: int,
+) -> pd.DataFrame:
+    """
+    Zero-price mask aligned with the dispatch synchronous-generation floor constraint.
+
+    Model RHS per province-hour: max(ratio * local AC load - rhs_slack_mw, 0).
+    Mask hours where synchronous output is at or just above that minimum (must-run).
+    """
+    min_required = (load_mw.astype(float) * float(ratio) - float(rhs_slack_mw)).clip(lower=0.0)
+    min_required = min_required.reindex(index=sync_output.index, columns=sync_output.columns).fillna(0.0)
+    mask = sync_output.astype(float) <= (min_required + float(zero_band_mw))
+    years = pd.Series(pd.DatetimeIndex(sync_output.index).year, index=sync_output.index, dtype=int)
+    active = (years >= int(apply_start_year)) & (years <= int(apply_end_year))
+    return mask & active.to_numpy(dtype=bool)[:, None]
 
 
 def _province_ac_load(
@@ -1181,33 +1239,61 @@ def _planning_marginal_floor_zero_mapped_prices(
     prices = marginal_retail_prices(n_planning, config=ReconstructPriceConfig(week_freq=week_freq))
     prices = prices.reindex(index=snapshots, columns=list(map(str, provinces))).fillna(0.0).astype(float)
 
-    (
-        floor_enabled,
-        floor_ratio,
-        generator_carriers,
-        link_carrier_to_bus1_carrier,
-        floor_slack_mw,
-    ) = _load_synchronous_generation_floor_config(config_path=config_path)
-    if not floor_enabled:
-        return prices.fillna(0.0).clip(lower=0.0)
-
-    sync_output = _infer_local_thermal_dispatch(
+    generator_carriers, link_carrier_to_bus1_carrier = _load_mapped_carrier_config(config_path=config_path)
+    thermal_output = _infer_local_thermal_dispatch(
         n_dispatch,
         provinces=provinces,
         snapshots=snapshots,
         generator_carriers=generator_carriers,
         link_carrier_to_bus1_carrier=link_carrier_to_bus1_carrier,
     )
-    load_floor = _province_ac_load(n_dispatch, provinces, snapshots) * float(floor_ratio)
-    load_floor = load_floor.reindex(index=sync_output.index, columns=sync_output.columns).fillna(0.0)
-    floor_mask = sync_output.astype(float) <= (load_floor + float(floor_slack_mw))
-    zero_threshold = _daily_low_output_zero_threshold(sync_output.index, config_path=config_path)
-    for province in sync_output.columns:
-        floor_mask[province] = floor_mask[province] | _daily_low_output_zero_mask(
-            sync_output[province].astype(float),
-            threshold=zero_threshold,
+
+    floor_mask = pd.DataFrame(False, index=prices.index, columns=prices.columns, dtype=bool)
+
+    apply_sync_zero = _load_apply_synchronous_generation_floor_zero_mask(config_path=config_path)
+    (
+        floor_enabled,
+        floor_ratio,
+        sync_generator_carriers,
+        sync_link_carrier_to_bus1_carrier,
+        floor_slack_mw,
+        apply_start_year,
+        apply_end_year,
+    ) = _load_synchronous_generation_floor_config(config_path=config_path)
+    if apply_sync_zero and floor_enabled:
+        sync_output = _infer_local_thermal_dispatch(
+            n_dispatch,
+            provinces=provinces,
+            snapshots=snapshots,
+            generator_carriers=sync_generator_carriers,
+            link_carrier_to_bus1_carrier=sync_link_carrier_to_bus1_carrier,
         )
+        load_mw = _province_ac_load(n_dispatch, provinces, snapshots)
+        floor_mask = _sync_generation_floor_zero_mask(
+            sync_output,
+            load_mw,
+            ratio=floor_ratio,
+            rhs_slack_mw=floor_slack_mw,
+            zero_band_mw=_load_sync_floor_zero_band_mw(config_path=config_path),
+            apply_start_year=apply_start_year,
+            apply_end_year=apply_end_year,
+        )
+
+    zero_threshold = _daily_low_output_zero_threshold(thermal_output.index, config_path=config_path)
+    low_output_freq = _low_output_reference_freq(config_path=config_path)
+    low_output_reserve_margin = _low_output_reserve_margin(config_path=config_path)
+    for province in thermal_output.columns:
+        low_output_mask = _daily_low_output_zero_mask(
+            thermal_output[province].astype(float),
+            threshold=zero_threshold,
+            freq=low_output_freq,
+            reserve_margin=low_output_reserve_margin,
+        )
+        floor_mask[province] = floor_mask[province] | low_output_mask
+
     floor_mask = floor_mask.reindex(index=prices.index, columns=prices.columns).fillna(False)
+    if not floor_mask.any().any():
+        return prices.fillna(0.0).clip(lower=0.0)
     return prices.mask(floor_mask, 0.0).fillna(0.0).clip(lower=0.0)
 
 

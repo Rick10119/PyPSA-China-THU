@@ -20,14 +20,20 @@ scripts/run_thermal_flexibility_sensitivity.py
 - 这是后处理敏感性分析。
 - 不重新求解 PyPSA 容量扩张模型。
 - 默认复用储能容量限制基准 case `storage-x1` 对应的已求解 `postnetwork` 和 `dispatch_segmented` 网络。
-- 以 planning marginal price 为基准；对不同火电低出力阈值生成 zero-price mask，并仅将低于阈值的省份/小时价格置零。
+- 以 planning marginal price 为基准；对不同火电**最小出力阈值**生成 zero-price mask，并仅将满足条件的省份/小时价格置零。
 - 再用 `fill_solar_value_dataset_2025.py --allow-zero-price` 重新填充 `solar_value_dataset.xlsx`。
+- 阈值 **> 0** 时，置零条件为 **同步机 10% 本地负荷底线**（`synchronous_generation_floor`）**与**最小出力阈值（`daily_low_output_zero_threshold`）的并集；不启用 `thermal_load_floor`（避免与阈值参数混淆）。
+- 同步机置零 mask 与 dispatch 约束对齐：`sync >= ratio×负荷 - sync_floor_slack_mw` 为模型 RHS；后处理仅在同步出力 **贴近该 RHS**（默认 +1 MW 带宽，`price_export.sync_floor_zero_band_mw`）时置零，且仅对 `apply_start_year`–`apply_end_year` 生效（默认 2025–2050）。
+- **阈值 `0.0`（`threshold_0/`）**：不导出 mapped mask，直接使用 `fill_solar_value_dataset_2025.py --planning-marginal`（纯 planning LMP），与储能 `storage-x1` 作业的价格口径一致，便于对照。
+- **额外曲线 `threshold_0_sync/`**：最小出力阈值仍为 `0.0`，但启用同步机 10% 底线置零（`--allow-zero-price`）；用于区分「完全无 mask」与「仅同步机约束」两种极端。
 
 默认阈值：
 
 ```text
 0.4, 0.3, 0.2, 0.1, 0.0
 ```
+
+默认还会额外生成 `threshold_0_sync/`（0.0 阈值 + 同步机底线）。若不需要，加 `--skip-zero-sync-floor`。
 
 运行命令：
 
@@ -89,18 +95,19 @@ threshold_0p4/
 threshold_0p3/
 threshold_0p2/
 threshold_0p1/
-threshold_0/
+threshold_0/          # 纯 LMP
+threshold_0_sync/     # 0.0 阈值 + 同步机底线
 ```
 
 每个阈值目录中主要包括：
 
 ```text
 solar_value_dataset.xlsx
-mapped_prices/
+mapped_prices/    # 阈值 > 0 时才有
 figures/
 ```
 
-这里的 `mapped_prices/` 不是最终价格口径，而是用于标记哪些省份/小时需要把 planning marginal price 置零的 mask。非零小时仍使用 planning marginal price。
+这里的 `mapped_prices/` 不是最终价格口径，而是用于标记哪些省份/小时需要把 planning marginal price 置零的 mask（同步机 10% 底线 **或** 低于最小出力阈值 `daily_low_output_zero_threshold`）。非零小时仍使用 planning marginal price。`threshold_0/` 不含 `mapped_prices/`（纯 LMP，与 `storage-x1` 一致）；`threshold_0_sync/` 仅含同步机底线 mask。
 
 总汇总输出：
 
@@ -297,6 +304,8 @@ python scripts/summarize_storage_availability_sensitivity.py --allow-missing
 |---|---:|---|---|---|
 | 火电灵活性 | 否 | planning marginal price 的低出力置零阈值 | `0.4, 0.3, 0.2, 0.1, 0.0` | `thermal_flexibility_sensitivity/` |
 | 储能容量限制 | 是 | `storage_capacity_guard.target_capacity_multiplier` | `0.5, 1.0, 1.5, 2.0` | `version-*-storage-x*/` |
+
+火电 `threshold_0` 与储能 `storage-x1` 使用相同价格口径（纯 planning LMP）；若两者 value factor 仍有差异，来自 `storage-x1` 完整重跑与火电后处理复用网络之间的容量/调度差别，而非价格 mask。
 
 建议流程：
 

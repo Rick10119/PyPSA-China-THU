@@ -160,9 +160,9 @@ dispatch_segmented_prices:
     mapped_price_source: planning_marginal_floor_zero
     week_freq: 2W-SUN
     thermal_load_floor:
-      enabled: true
+      enabled: false
       ratio: 0.1
-    daily_low_output_zero_threshold: 0.4
+    daily_low_output_zero_threshold: 0.3
     low_output_reference_freq: W-SUN
     low_output_reserve_margin: 0.1
     heating_season_chp_excluded_from_mapped_lr:
@@ -191,6 +191,7 @@ dispatch_segmented_prices:
       - 1.5
       - 1.7
       - 2.0
+    daily_low_output_zero_threshold_by_year: {}
   carriers:
     Generator:
       coal power plant:
