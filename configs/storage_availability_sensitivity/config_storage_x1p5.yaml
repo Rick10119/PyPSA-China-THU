@@ -163,8 +163,8 @@ dispatch_segmented_prices:
       enabled: true
       ratio: 0.1
     daily_low_output_zero_threshold: 0.4
-    low_output_reference_freq: W-SUN
-    low_output_reserve_margin: 0.1
+    low_output_reference_freq: D
+    low_output_reserve_margin: 0.0
     heating_season_chp_excluded_from_mapped_lr:
       enabled: true
       start:

@@ -252,6 +252,9 @@ def main() -> None:
                 pe["daily_low_output_zero_threshold"] = float(case.threshold)
                 # Per-year values take precedence in the exporter, so clear them for a true uniform case.
                 pe["daily_low_output_zero_threshold_by_year"] = {}
+                # Zero when provincial thermal output is below threshold × daily max (not weekly max).
+                pe["low_output_reference_freq"] = "D"
+                pe["low_output_reserve_margin"] = 0.0
                 pe["apply_synchronous_generation_floor_zero_mask"] = bool(case.apply_sync_floor)
                 # Keep mapped thermal_load_floor off; sensitivity varies threshold + optional sync floor.
                 pe.setdefault("thermal_load_floor", {})["enabled"] = False

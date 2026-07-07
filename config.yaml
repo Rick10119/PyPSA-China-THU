@@ -229,12 +229,10 @@ dispatch_segmented_prices:
       ratio: 0.10
     # Low-output snapshots are set to mapped price 0 when thermal output is
     # below (grouped max thermal * (1 + reserve margin) * threshold).
-    # Can be set globally and by year.
+    # grouped max is taken within low_output_reference_freq (D = calendar day).
     daily_low_output_zero_threshold: 0.4
-    # Reference window for grouped max thermal output and reserve multiplier.
-    # Defaults in code keep the legacy daily/no-reserve behavior when omitted.
-    low_output_reference_freq: "W-SUN"
-    low_output_reserve_margin: 0.10
+    low_output_reference_freq: "D"
+    low_output_reserve_margin: 0.0
     # Nov 15–Mar 15 (inclusive): CHP excluded from P/Cap for mapped LR only; rest of year full stack.
     heating_season_chp_excluded_from_mapped_lr:
       enabled: true

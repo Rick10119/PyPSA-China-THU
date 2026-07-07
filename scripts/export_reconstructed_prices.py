@@ -953,7 +953,7 @@ def _daily_low_output_zero_mask(
     freq: str = "D",
     reserve_margin: float = 0.0,
 ) -> pd.Series:
-    """Mask snapshots below threshold * grouped thermal maximum * reserve multiplier."""
+    """Mask snapshots below threshold × grouped thermal maximum × reserve multiplier."""
     if not isinstance(thermal_series.index, pd.DatetimeIndex):
         raise TypeError(
             "low-output zeroing requires DatetimeIndex snapshots; "
