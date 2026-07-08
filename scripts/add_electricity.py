@@ -47,11 +47,22 @@ def apply_market_scenario_costs(costs, config):
         if market_scenario in config['aluminum']['scenario_dimensions']['market_opportunity']:
             market_factors = config['aluminum']['scenario_dimensions']['market_opportunity'][market_scenario]
             
-            # Apply VRE capital-cost multiplier
-            vre_techs = ['solar', 'onwind', 'offwind', 'solar-rooftop', 'solar-utility']
-            for tech in vre_techs:
+            # Apply VRE capital-cost multipliers.  Optional tech-specific factors
+            # make it possible to test wind-vs-solar cost assumptions while keeping
+            # existing configs backward-compatible with the aggregate VRE factor.
+            vre_factor = float(market_factors.get('vre_cost_factor', 1.0))
+            solar_factor = float(market_factors.get('solar_cost_factor', vre_factor))
+            wind_factor = float(market_factors.get('wind_cost_factor', vre_factor))
+            vre_tech_factors = {
+                'solar': solar_factor,
+                'solar-rooftop': solar_factor,
+                'solar-utility': solar_factor,
+                'onwind': wind_factor,
+                'offwind': wind_factor,
+            }
+            for tech, factor in vre_tech_factors.items():
                 if tech in costs.index:
-                    costs.loc[tech, 'capital_cost'] *= market_factors['vre_cost_factor']
+                    costs.loc[tech, 'capital_cost'] *= factor
             
             # Apply battery capital-cost multiplier
             battery_techs = ['battery', 'battery storage', 'battery inverter']
@@ -74,7 +85,9 @@ def apply_market_scenario_costs(costs, config):
             # Log the set of market-opportunity cost adjustments that were applied
             try:
                 logger.info(f"Applied market opportunity cost factors for scenario '{market_scenario}': "
-                           f"VRE={market_factors['vre_cost_factor']}, "
+                           f"VRE={vre_factor}, "
+                           f"Solar={solar_factor}, "
+                           f"Wind={wind_factor}, "
                            f"Battery={market_factors['battery_cost_factor']}, "
                            f"H2={market_factors['h2_cost_factor']}, "
                            f"Sabatier={market_factors['sabatier_cost_factor']}")

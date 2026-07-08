@@ -1,0 +1,4 @@
+case,config,wind_cost_factor,wind_target_upper_multiplier,notes
+wind_cheap_x0p8,configs/wind_cost_sensitivity/config_wind_cheap_x0p8.yaml,0.8,1.5,Wind capital cost 0.8x; wind guard upper bound 1.5x target
+wind_cheap_x0p6,configs/wind_cost_sensitivity/config_wind_cheap_x0p6.yaml,0.6,2.0,Wind capital cost 0.6x; wind guard upper bound 2.0x target
+wind_cheap_x0p4,configs/wind_cost_sensitivity/config_wind_cheap_x0p4.yaml,0.4,2.5,Wind capital cost 0.4x; wind guard upper bound 2.5x target
