@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: CC0-1.0
 
-version: 0621.1H.3
+version: 0708.1H.1
 logging_level: INFO
 foresight: "myopic"
 baseyear: 2025
@@ -22,7 +22,7 @@ freq: '1h'
 # Optional representative-time sampling for local tests.
 # Keep disabled for full 8760-hour production runs.
 time_sampling:
-  enabled: true
+  enabled: false
   # full / sample_days / monthly_typical_days / manual
   mode: sample_days
   # Examples:

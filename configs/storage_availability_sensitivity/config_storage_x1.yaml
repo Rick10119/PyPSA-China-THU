@@ -1,4 +1,4 @@
-version: 0621.1H.3-storage-x1
+version: 0708.1H.1-storage-x1
 logging_level: INFO
 foresight: myopic
 baseyear: 2025
@@ -12,7 +12,7 @@ tmin: -01-01 00:00
 tmax: -12-31 23:00
 freq: 1h
 time_sampling:
-  enabled: true
+  enabled: false
   mode: sample_days
   n_days: 4
   day_of_month: 15
