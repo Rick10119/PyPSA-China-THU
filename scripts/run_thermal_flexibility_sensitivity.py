@@ -11,11 +11,11 @@ or low-output zero mask (same planning LMP base as other cases).
 ``threshold_0_lmp/`` optionally keeps the storage-x1 ``--planning-marginal`` reference.
 ``threshold_0_sync/`` adds only the sync-floor mask (2025–2050).
 
-For threshold > 0, mapped zero-price masks apply both the synchronous-generation floor
-(10% local AC load, 2025–2050 only) and ``daily_low_output_zero_threshold``.
-``thermal_load_floor`` is disabled so threshold cases differ only by the minimum-output
-parameter. Zero masks are applied only in hours with provincial solar output when filling
-the workbook, so value factor falls as the threshold rises.
+For threshold > 0, mapped zero-price masks apply both the configured
+synchronous-generation floor/thermal-load-floor settings and
+``daily_low_output_zero_threshold``. Zero masks are applied only in hours with
+provincial solar output when filling the workbook, so value factor falls as the
+threshold rises.
 """
 
 from __future__ import annotations
@@ -254,10 +254,7 @@ def main() -> None:
                 pe["daily_low_output_zero_threshold_by_year"] = {}
                 # Zero when provincial thermal output is below threshold × daily max (not weekly max).
                 pe["low_output_reference_freq"] = "D"
-                pe["low_output_reserve_margin"] = 0.0
                 pe["apply_synchronous_generation_floor_zero_mask"] = bool(case.apply_sync_floor)
-                # Keep mapped thermal_load_floor off; sensitivity varies threshold + optional sync floor.
-                pe.setdefault("thermal_load_floor", {})["enabled"] = False
                 case_config_path = tmp_dir / f"config_threshold_{config_tag}.yaml"
                 with case_config_path.open("w", encoding="utf-8") as f:
                     yaml.safe_dump(case_cfg, f, allow_unicode=True, sort_keys=False)

@@ -19,10 +19,24 @@ from typing import Any
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_BATTERY_COST_FACTORS = {
+    0.7: 1.5,
+    1.0: 1.0,
+    1.5: 1.0,
+    2.0: 1.0,
+}
 
 
 def _tag(value: float) -> str:
     return f"{value:g}".replace("-", "m").replace(".", "p")
+
+
+def _battery_cost_factor(multiplier: float, explicit: dict[float, float] | None = None) -> float:
+    mapping = explicit or DEFAULT_BATTERY_COST_FACTORS
+    for key, value in mapping.items():
+        if abs(float(multiplier) - float(key)) < 1e-9:
+            return float(value)
+    return 1.0
 
 
 def _first(value: Any, default: str) -> str:
@@ -153,7 +167,17 @@ def main() -> None:
         description="Generate, submit, or locally run storage availability sensitivity cases."
     )
     ap.add_argument("--config", type=Path, default=ROOT / "config.yaml")
-    ap.add_argument("--multipliers", type=float, nargs="+", default=[0.5, 1.0, 1.5, 2.0])
+    ap.add_argument("--multipliers", type=float, nargs="+", default=[0.7, 1.0, 1.5, 2.0])
+    ap.add_argument(
+        "--battery-cost-factors",
+        type=float,
+        nargs="*",
+        default=None,
+        help=(
+            "Optional battery capital-cost factors paired with --multipliers. "
+            "Default mapping: 0.7->1.5, 1.0->1.0, 1.5->1.0, 2.0->1.0."
+        ),
+    )
     ap.add_argument("--config-dir", type=Path, default=ROOT / "configs" / "storage_availability_sensitivity")
     ap.add_argument("--job-dir", type=Path, default=ROOT / "jobs_storage_availability")
     ap.add_argument("--version-prefix", default=None)
@@ -166,7 +190,12 @@ def main() -> None:
     ap.add_argument(
         "--fill-price-mode",
         choices=["planning-marginal", "mapped-csv", "allow-zero-price"],
-        default="planning-marginal",
+        default="allow-zero-price",
+        help=(
+            "Price source used when filling solar_value_dataset.xlsx after each storage run. "
+            "Default uses the mapped price sidecar with zero-price hours preserved, matching "
+            "the thermal-flexibility 40% baseline configured by daily_low_output_zero_threshold=0.4."
+        ),
     )
     ap.add_argument("--skip-plot", action="store_true")
     ap.add_argument("--run-local", action="store_true", help="Run all cases locally after generating files.")
@@ -180,6 +209,13 @@ def main() -> None:
         raise KeyError("Base config must define 'version'.")
     if any(m < 0 for m in args.multipliers):
         ap.error("--multipliers must be non-negative.")
+    explicit_battery_factors = None
+    if args.battery_cost_factors:
+        if len(args.battery_cost_factors) != len(args.multipliers):
+            ap.error("--battery-cost-factors must have the same length as --multipliers.")
+        explicit_battery_factors = {
+            float(m): float(f) for m, f in zip(args.multipliers, args.battery_cost_factors)
+        }
 
     version_prefix = args.version_prefix or f"{base_cfg['version']}-storage"
     template_workbook = args.template_workbook.resolve() if args.template_workbook else _find_template_workbook(base_cfg, ROOT)
@@ -189,14 +225,28 @@ def main() -> None:
     args.config_dir.mkdir(parents=True, exist_ok=True)
     args.job_dir.mkdir(parents=True, exist_ok=True)
 
-    generated: list[tuple[float, Path, Path, Path]] = []
+    generated: list[tuple[float, float, Path, Path, Path]] = []
     for multiplier in args.multipliers:
         tag = _tag(multiplier)
         case_name = f"x{tag}"
         case_cfg = copy.deepcopy(base_cfg)
         case_cfg["version"] = f"{version_prefix}-{case_name}"
-        case_cfg.setdefault("storage_capacity_guard", {})["target_capacity_multiplier"] = float(multiplier)
-        case_cfg.setdefault("sensitivity", {})["storage_availability_multiplier"] = float(multiplier)
+        target_multiplier = float(multiplier)
+        case_cfg.setdefault("storage_capacity_guard", {})["target_capacity_multiplier"] = float(target_multiplier)
+        battery_factor = _battery_cost_factor(multiplier, explicit_battery_factors)
+        market_mid = (
+            case_cfg.setdefault("aluminum", {})
+            .setdefault("scenario_dimensions", {})
+            .setdefault("market_opportunity", {})
+            .setdefault("mid", {})
+        )
+        market_mid["battery_cost_factor"] = float(battery_factor)
+        sensitivity = case_cfg.setdefault("sensitivity", {})
+        sensitivity["storage_availability_multiplier"] = float(target_multiplier)
+        sensitivity["battery_cost_factor"] = float(battery_factor)
+        sensitivity["thermal_flexibility_baseline"] = "threshold_0p4"
+        sensitivity["thermal_flexibility_threshold"] = 0.4
+        sensitivity["fill_price_mode"] = args.fill_price_mode
 
         case_config = args.config_dir / f"config_storage_{case_name}.yaml"
         with case_config.open("w", encoding="utf-8") as f:
@@ -218,25 +268,28 @@ def main() -> None:
             fill_price_mode=args.fill_price_mode,
             skip_plot=args.skip_plot,
         )
-        generated.append((multiplier, case_config, job_path, version_dir))
+        generated.append((target_multiplier, battery_factor, case_config, job_path, version_dir))
 
     manifest = args.config_dir / "storage_availability_cases.csv"
     manifest.write_text(
-        "multiplier,config,job,version_dir,scenario_stem,heating_demand\n"
+        "multiplier,battery_cost_factor,thermal_flexibility_threshold,fill_price_mode,config,job,version_dir,scenario_stem,heating_demand\n"
         + "\n".join(
-            f"{m},{cfg},{job},{vdir},{_scenario_stem(yaml.safe_load(cfg.read_text()) or {})},{_heating(yaml.safe_load(cfg.read_text()) or {})}"
-            for m, cfg, job, vdir in generated
+            f"{m},{bf},0.4,{args.fill_price_mode},{cfg},{job},{vdir},{_scenario_stem(yaml.safe_load(cfg.read_text()) or {})},{_heating(yaml.safe_load(cfg.read_text()) or {})}"
+            for m, bf, cfg, job, vdir in generated
         )
         + "\n",
         encoding="utf-8",
     )
 
     print("Generated storage availability sensitivity cases:")
-    for multiplier, case_config, job_path, version_dir in generated:
-        print(f"  {multiplier:g}x -> {case_config} | {job_path} | {version_dir}")
+    for multiplier, battery_factor, case_config, job_path, version_dir in generated:
+        print(
+            f"  {multiplier:g}x storage, battery cost {battery_factor:g}x -> "
+            f"{case_config} | {job_path} | {version_dir}"
+        )
 
     if args.submit:
-        for _, _, job_path, _ in generated:
+        for _, _, _, job_path, _ in generated:
             _run(["sbatch", str(job_path)], cwd=ROOT)
 
     if args.run_local:
@@ -247,7 +300,7 @@ def main() -> None:
             "mapped-csv": "--mapped-csv",
             "allow-zero-price": "--allow-zero-price",
         }[args.fill_price_mode]
-        for _, case_config, _, version_dir in generated:
+        for _, _, case_config, _, version_dir in generated:
             _run(["snakemake", "--configfile", str(case_config), "--cores", str(args.cores)], cwd=ROOT)
             version_dir.mkdir(parents=True, exist_ok=True)
             workbook = version_dir / "solar_value_dataset.xlsx"

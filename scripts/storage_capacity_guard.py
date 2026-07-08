@@ -44,15 +44,6 @@ def _get_provincial_2025_baseline_mw(guard_cfg: dict) -> pd.Series:
     return baseline.astype(float)
 
 
-def get_provincial_storage_shares(guard_cfg: dict) -> pd.Series:
-    """Provincial storage target shares from the configured historical baseline year."""
-    baseline = _get_provincial_2025_baseline_mw(guard_cfg)
-    total = float(baseline.sum())
-    if total <= 0:
-        raise ValueError("Historical total battery capacity is non-positive.")
-    return baseline / total
-
-
 def _province_from_battery_index(name: str) -> str:
     for suffix in (" battery charger", " battery discharger", " battery"):
         if suffix in name:
@@ -107,6 +98,15 @@ def _target_capacity_multiplier(guard_cfg: dict) -> float:
     return max(0.0, float(guard_cfg.get("target_capacity_multiplier", 1.0)))
 
 
+def _yearly_min_capacity_mw(guard_cfg: dict, planning_year: int) -> float:
+    """Optional absolute national cumulative lower target by planning year [MW]."""
+    values = guard_cfg.get("national_min_capacity_mw_by_year") or {}
+    if not isinstance(values, dict):
+        return 0.0
+    value = values.get(planning_year, values.get(str(planning_year), 0.0))
+    return max(0.0, float(value or 0.0))
+
+
 def _fixed_battery_power_by_province(n) -> pd.Series:
     """Fixed/non-extendable battery discharger power by province [MW]."""
     if not hasattr(n, "links") or n.links.empty:
@@ -122,6 +122,11 @@ def _fixed_battery_power_by_province(n) -> pd.Series:
         return pd.Series(dtype=float)
     provinces = fixed.index.to_series().map(_province_from_battery_index)
     return fixed["p_nom"].groupby(provinces).sum().astype(float)
+
+
+def _fixed_battery_power_mw(n) -> float:
+    """Fixed/non-extendable battery discharger power nationally [MW]."""
+    return float(_fixed_battery_power_by_province(n).sum())
 
 
 def _set_bounds(df: pd.DataFrame, idx, min_col: str, max_col: str, min_total: float, max_total: float) -> None:
@@ -144,52 +149,90 @@ def _set_bounds(df: pd.DataFrame, idx, min_col: str, max_col: str, min_total: fl
     df.loc[idx, max_col] = np.maximum(df.loc[idx, max_col], df.loc[idx, min_col])
 
 
-def apply_storage_capacity_guard(n, config, scenario_context: dict | None = None):
-    """
-    Apply provincial battery power/energy bounds from national cumulative targets.
-
-    National battery targets are allocated by provincial historical storage shares
-    and converted to extendable power/energy bounds after subtracting fixed stock.
-    """
+def _storage_guard_limits(config, planning_year: int) -> tuple[float, float, float, float, float, float] | None:
     guard_cfg = config.get("storage_capacity_guard", {})
     if not bool(guard_cfg.get("enabled", False)):
-        return
+        return None
 
-    planning_year = int(pd.DatetimeIndex(n.snapshots)[0].year)
     apply_start_year = int(guard_cfg.get("apply_start_year", 2030))
     apply_end_year = int(guard_cfg.get("apply_end_year", 2060))
     if planning_year < apply_start_year or planning_year > apply_end_year:
-        logger.info(
-            "Storage capacity guard: year %s outside [%s, %s], skip.",
-            planning_year,
-            apply_start_year,
-            apply_end_year,
-        )
-        return
+        return None
 
-    national_cumulative_target = _get_national_cumulative_target_mw(guard_cfg, planning_year)
-    if national_cumulative_target is None or national_cumulative_target <= 0:
+    national_cumulative_target_raw = _get_national_cumulative_target_mw(guard_cfg, planning_year)
+    if national_cumulative_target_raw is None or national_cumulative_target_raw <= 0:
         logger.info("Storage capacity guard: no positive national target for %s; skip.", planning_year)
-        return
+        return None
     capacity_multiplier = _target_capacity_multiplier(guard_cfg)
-    national_cumulative_target *= capacity_multiplier
-
-    try:
-        shares = get_provincial_storage_shares(guard_cfg)
-    except Exception as e:
-        logger.warning("Storage capacity guard: failed to load provincial shares: %s", e)
-        return
+    national_cumulative_target = national_cumulative_target_raw * capacity_multiplier
 
     lower_mult, upper_mult = _target_multipliers(guard_cfg)
+    min_cumulative_target = max(
+        national_cumulative_target * lower_mult,
+        _yearly_min_capacity_mw(guard_cfg, planning_year),
+    )
+    max_cumulative_target = national_cumulative_target * upper_mult
+    if min_cumulative_target > max_cumulative_target:
+        logger.warning(
+            "Storage capacity guard: min target %.2f MW exceeds max target %.2f MW for %s; "
+            "clipping min to max to avoid infeasibility.",
+            min_cumulative_target,
+            max_cumulative_target,
+            planning_year,
+        )
+        min_cumulative_target = max_cumulative_target
     max_hours = float(
         config.get("electricity", {}).get("max_hours", {}).get("battery", 6.0)
     )
+    return national_cumulative_target, min_cumulative_target, max_cumulative_target, lower_mult, upper_mult, capacity_multiplier, max_hours
 
-    fixed_power_by_province = _fixed_battery_power_by_province(n)
-    target_power_by_province = shares * float(national_cumulative_target)
 
-    updated_links = 0
-    updated_stores = 0
+def apply_storage_capacity_guard(n, config, scenario_context: dict | None = None):
+    """
+    Keep storage capacity guard setup out of per-province bounds.
+
+    The actual national-only cap is added as a model constraint in
+    add_storage_capacity_guard_constraints(). This function intentionally does
+    not modify per-asset p_nom_max/e_nom_max, so provincial siting remains free.
+    """
+    planning_year = int(pd.DatetimeIndex(n.snapshots)[0].year)
+    limits = _storage_guard_limits(config, planning_year)
+    if limits is None:
+        return
+
+    national_cumulative_target, min_cumulative_target, max_cumulative_target, lower_mult, upper_mult, capacity_multiplier, max_hours = limits
+    logger.info(
+        "Storage capacity guard prepared for %s as national-only cap: "
+        "national_cumulative_target_mw=%.2f, min_cumulative_target_mw=%.2f, "
+        "max_cumulative_target_mw=%.2f, target_capacity_multiplier=%.3f, "
+        "lower_mult=%.3f, upper_mult=%.3f, max_hours=%.2f",
+        planning_year,
+        national_cumulative_target,
+        min_cumulative_target,
+        max_cumulative_target,
+        capacity_multiplier,
+        lower_mult,
+        upper_mult,
+        max_hours,
+    )
+
+
+def add_storage_capacity_guard_constraints(n, snapshots, config=None) -> None:
+    """Add national battery power/energy cap constraints without provincial allocation."""
+    cfg = config if isinstance(config, dict) else getattr(n, "config", {}) or {}
+    planning_year = int(pd.DatetimeIndex(snapshots)[0].year)
+    limits = _storage_guard_limits(cfg, planning_year)
+    if limits is None:
+        return
+
+    national_cumulative_target, min_cumulative_target, max_cumulative_target, lower_mult, upper_mult, capacity_multiplier, max_hours = limits
+
+    fixed_power = _fixed_battery_power_mw(n)
+    min_power = max(float(min_cumulative_target) - fixed_power, 0.0)
+    max_power = max(float(max_cumulative_target) - fixed_power, 0.0)
+    min_energy = min_power * max_hours
+    max_energy = max_power * max_hours
+    added = 0
 
     if hasattr(n, "links") and not n.links.empty:
         battery_links = n.links[n.links.carrier.astype(str) == "battery"]
@@ -203,20 +246,18 @@ def apply_storage_capacity_guard(n, config, scenario_context: dict | None = None
                 index=battery_links.index,
             )
             ext_new = battery_links[is_ext & is_new]
-            for (province, suffix), ext_i in ext_new.groupby(
-                [
-                    ext_new.index.to_series().map(_province_from_battery_index),
-                    ext_new.index.to_series().map(
-                        lambda x: "discharger" if " battery discharger" in str(x) else "charger"
-                    ),
-                ]
-            ).groups.items():
-                target_power = float(target_power_by_province.get(province, 0.0))
-                fixed_power = float(fixed_power_by_province.get(province, 0.0))
-                min_power = max(target_power * lower_mult - fixed_power, 0.0)
-                max_power = max(target_power * upper_mult - fixed_power, 0.0)
-                _set_bounds(n.links, ext_i, "p_nom_min", "p_nom_max", min_power, max_power)
-                updated_links += len(ext_i)
+            suffixes = ext_new.index.to_series().map(
+                lambda x: "discharger" if " battery discharger" in str(x) else "charger"
+            )
+            link_p_nom = n.model["Link-p_nom"] if "Link-p_nom" in n.model.variables else None
+            for suffix, ext_i in ext_new.groupby(suffixes).groups.items():
+                if link_p_nom is None or len(ext_i) == 0:
+                    continue
+                lhs = link_p_nom.loc[ext_i].sum()
+                n.model.add_constraints(lhs <= max_power, name=f"battery-national-{suffix}-p-nom-max")
+                if min_power > 0:
+                    n.model.add_constraints(lhs >= min_power, name=f"battery-national-{suffix}-p-nom-min")
+                added += 1
 
     if hasattr(n, "stores") and not n.stores.empty:
         battery_stores = n.stores[n.stores.carrier.astype(str) == "battery"]
@@ -230,30 +271,27 @@ def apply_storage_capacity_guard(n, config, scenario_context: dict | None = None
                 index=battery_stores.index,
             )
             ext_new = battery_stores[is_ext & is_new]
-            for province, ext_i in ext_new.groupby(ext_new.index.to_series().map(_province_from_battery_index)).groups.items():
-                target_power = float(target_power_by_province.get(province, 0.0))
-                fixed_power = float(fixed_power_by_province.get(province, 0.0))
-                min_energy = max(target_power * lower_mult - fixed_power, 0.0) * max_hours
-                max_energy = max(target_power * upper_mult - fixed_power, 0.0) * max_hours
-                _set_bounds(n.stores, ext_i, "e_nom_min", "e_nom_max", min_energy, max_energy)
-                updated_stores += len(ext_i)
+            store_e_nom = n.model["Store-e_nom"] if "Store-e_nom" in n.model.variables else None
+            if store_e_nom is not None and not ext_new.empty:
+                lhs = store_e_nom.loc[ext_new.index].sum()
+                n.model.add_constraints(lhs <= max_energy, name="battery-national-store-e-nom-max")
+                if min_energy > 0:
+                    n.model.add_constraints(lhs >= min_energy, name="battery-national-store-e-nom-min")
+                added += 1
 
     logger.info(
-        "Storage capacity guard applied for %s: updated_links=%s, updated_stores=%s, "
-        "national_cumulative_target_mw=%.2f, target_capacity_multiplier=%.3f, "
-        "lower_mult=%.3f, upper_mult=%.3f, max_hours=%.2f",
+        "Storage capacity guard national constraints for %s: added=%s, "
+        "national_cumulative_target_mw=%.2f, min_cumulative_target_mw=%.2f, "
+        "max_cumulative_target_mw=%.2f, target_capacity_multiplier=%.3f, "
+        "lower_mult=%.3f, upper_mult=%.3f, fixed_power_mw=%.2f, max_hours=%.2f",
         planning_year,
-        updated_links,
-        updated_stores,
+        added,
         national_cumulative_target,
+        min_cumulative_target,
+        max_cumulative_target,
         capacity_multiplier,
         lower_mult,
         upper_mult,
+        fixed_power,
         max_hours,
     )
-
-    if updated_links == 0 and updated_stores == 0:
-        logger.info(
-            "Storage capacity guard: no extendable new-build battery assets for %s.",
-            planning_year,
-        )

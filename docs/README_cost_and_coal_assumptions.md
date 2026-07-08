@@ -43,8 +43,12 @@
 synchronous_generation_floor:
   enabled: true
   ratio: 0.10   # 本地同步电源出力 ≥ 10% × 本地 AC 负荷
-  Generator: [coal power plant, coal cc, nuclear]
-  Link: [OCGT gas, CHP gas, CHP coal, biomass]  # 仅 AC 出力侧
+  apply_end_year: 2060
+  ratio_by_year:
+    2055: 0.075 # 2055 降为 7.5%
+    2060: 0.05  # 2060 降为 5%
+  Generator: [coal power plant, coal cc, nuclear, hydroelectricity]
+  Link: [OCGT gas, CHP gas, CHP coal, biomass, hydroelectricity]  # 仅 AC 出力侧；不含 hydro_inflow/PHS
 ```
 
 实现：`scripts/solve_network_myopic.py` → `add_synchronous_generation_floor_constraints()`。

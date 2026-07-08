@@ -737,7 +737,7 @@ def _load_low_output_carrier_scope(config_path: str | Path | None = None) -> str
 
 def _load_synchronous_generation_floor_config(
     config_path: str | Path | None = None,
-) -> tuple[bool, float, set[str], dict[str, str], float, int, int]:
+) -> tuple[bool, float, dict[int, float], set[str], dict[str, str], float, int, int]:
     """
     Load the planning/dispatch synchronous-generation floor config.
 
@@ -751,17 +751,26 @@ def _load_synchronous_generation_floor_config(
     """
     cfg_path = Path(config_path) if config_path is not None else _default_config_path()
     if not cfg_path.exists():
-        return (False, 0.0, set(), {}, 1.0, 2025, 2050)
+        return (False, 0.0, {}, set(), {}, 1.0, 2025, 2050)
     with cfg_path.open("r", encoding="utf-8") as f:
         cfg = yaml.safe_load(f) or {}
     floor_cfg = cfg.get("synchronous_generation_floor", {}) or {}
     if not isinstance(floor_cfg, dict) or floor_cfg.get("enabled") is False:
-        return (False, 0.0, set(), {}, 1.0, 2025, 2050)
+        return (False, 0.0, {}, set(), {}, 1.0, 2025, 2050)
     ratio = float(floor_cfg.get("ratio", 0.0) or 0.0)
     if ratio <= 0.0:
-        return (False, 0.0, set(), {}, 1.0, 2025, 2050)
+        return (False, 0.0, {}, set(), {}, 1.0, 2025, 2050)
     if ratio >= 1.0:
         raise ValueError("synchronous_generation_floor.ratio must be < 1")
+    ratio_by_year_raw = floor_cfg.get("ratio_by_year") or {}
+    if not isinstance(ratio_by_year_raw, dict):
+        raise ValueError("synchronous_generation_floor.ratio_by_year must be a mapping")
+    ratio_by_year: dict[int, float] = {}
+    for year, year_ratio in ratio_by_year_raw.items():
+        value = float(year_ratio)
+        if value < 0.0 or value >= 1.0:
+            raise ValueError("synchronous_generation_floor.ratio_by_year values must be in [0, 1)")
+        ratio_by_year[int(year)] = value
 
     gen_raw = floor_cfg.get("Generator", []) or []
     if isinstance(gen_raw, dict):
@@ -785,7 +794,16 @@ def _load_synchronous_generation_floor_config(
     slack_mw = float(dsp.get("sync_floor_slack_mw", 1.0) or 0.0)
     apply_start_year = int(floor_cfg.get("apply_start_year", 2025))
     apply_end_year = int(floor_cfg.get("apply_end_year", 2050))
-    return (True, ratio, generator_carriers, link_carrier_to_bus1_carrier, slack_mw, apply_start_year, apply_end_year)
+    return (
+        True,
+        ratio,
+        ratio_by_year,
+        generator_carriers,
+        link_carrier_to_bus1_carrier,
+        slack_mw,
+        apply_start_year,
+        apply_end_year,
+    )
 
 
 def _load_sync_floor_zero_band_mw(config_path: str | Path | None = None) -> float:
@@ -809,6 +827,7 @@ def _sync_generation_floor_zero_mask(
     load_mw: pd.DataFrame,
     *,
     ratio: float,
+    ratio_by_year: dict[int, float] | None = None,
     rhs_slack_mw: float,
     zero_band_mw: float,
     apply_start_year: int,
@@ -820,10 +839,13 @@ def _sync_generation_floor_zero_mask(
     Model RHS per province-hour: max(ratio * local AC load - rhs_slack_mw, 0).
     Mask hours where synchronous output is at or just above that minimum (must-run).
     """
-    min_required = (load_mw.astype(float) * float(ratio) - float(rhs_slack_mw)).clip(lower=0.0)
+    years = pd.Series(pd.DatetimeIndex(sync_output.index).year, index=sync_output.index, dtype=int)
+    ratio_s = pd.Series(float(ratio), index=sync_output.index, dtype=float)
+    for year, year_ratio in (ratio_by_year or {}).items():
+        ratio_s.loc[years == int(year)] = float(year_ratio)
+    min_required = load_mw.astype(float).mul(ratio_s, axis=0).sub(float(rhs_slack_mw)).clip(lower=0.0)
     min_required = min_required.reindex(index=sync_output.index, columns=sync_output.columns).fillna(0.0)
     mask = sync_output.astype(float) <= (min_required + float(zero_band_mw))
-    years = pd.Series(pd.DatetimeIndex(sync_output.index).year, index=sync_output.index, dtype=int)
     active = (years >= int(apply_start_year)) & (years <= int(apply_end_year))
     return mask & active.to_numpy(dtype=bool)[:, None]
 
@@ -1134,6 +1156,7 @@ def _local_mapped_prices(
         (
             floor_enabled,
             _floor_ratio,
+            _floor_ratio_by_year,
             sync_generator_carriers,
             sync_link_carrier_to_bus1_carrier,
             _floor_slack_mw,
@@ -1307,6 +1330,7 @@ def _planning_marginal_floor_zero_mapped_prices(
     (
         floor_enabled,
         floor_ratio,
+        floor_ratio_by_year,
         sync_generator_carriers,
         sync_link_carrier_to_bus1_carrier,
         floor_slack_mw,
@@ -1326,6 +1350,7 @@ def _planning_marginal_floor_zero_mapped_prices(
             sync_output,
             load_mw,
             ratio=floor_ratio,
+            ratio_by_year=floor_ratio_by_year,
             rhs_slack_mw=floor_slack_mw,
             zero_band_mw=_load_sync_floor_zero_band_mw(config_path=config_path),
             apply_start_year=apply_start_year,

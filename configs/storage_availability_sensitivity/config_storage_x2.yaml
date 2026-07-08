@@ -12,7 +12,7 @@ tmin: -01-01 00:00
 tmax: -12-31 23:00
 freq: 1h
 time_sampling:
-  enabled: false
+  enabled: true
   mode: sample_days
   n_days: 4
   day_of_month: 15
@@ -112,12 +112,16 @@ nuclear_capacity_guard:
 synchronous_generation_floor:
   enabled: true
   apply_start_year: 2025
-  apply_end_year: 2050
+  apply_end_year: 2060
   ratio: 0.1
+  ratio_by_year:
+    2055: 0.075
+    2060: 0.05
   Generator:
   - coal power plant
   - coal cc
   - nuclear
+  - hydroelectricity
   Link:
     OCGT gas:
       only_bus1_carrier: AC
@@ -126,6 +130,8 @@ synchronous_generation_floor:
     CHP coal:
       only_bus1_carrier: AC
     biomass:
+      only_bus1_carrier: AC
+    hydroelectricity:
       only_bus1_carrier: AC
 coal_retrofit:
   start_year: 2030
@@ -137,6 +143,8 @@ storage_capacity_guard:
   historical_capacity_csv: data/existing_infrastructure/battery_capacity.csv
   baseline_year_column: '2025'
   national_capacity_csv: data/p_nom/national_battery_capacity_from_planning.csv
+  national_min_capacity_mw_by_year:
+    2030: 370000
   target_lower_multiplier: 0.0
   target_upper_multiplier: 1.0
   tolerance: 0.1
@@ -158,6 +166,7 @@ dispatch_segmented_prices:
   export_prices: true
   price_export:
     mapped_price_source: planning_marginal_floor_zero
+    sync_floor_zero_band_mw: 1.0
     week_freq: 2W-SUN
     thermal_load_floor:
       enabled: true
@@ -165,7 +174,7 @@ dispatch_segmented_prices:
     low_output_carrier_scope: synchronous_generation_floor
     daily_low_output_zero_threshold: 0.4
     low_output_reference_freq: D
-    low_output_reserve_margin: 0.0
+    low_output_reserve_margin: 0.1
     heating_season_chp_excluded_from_mapped_lr:
       enabled: true
       start:
@@ -907,3 +916,7 @@ existing_capacities:
   battery_max_hours_existing: 2.58
 sensitivity:
   storage_availability_multiplier: 2.0
+  battery_cost_factor: 1.0
+  thermal_flexibility_baseline: threshold_0p4
+  thermal_flexibility_threshold: 0.4
+  fill_price_mode: allow-zero-price

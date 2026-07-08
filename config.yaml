@@ -22,7 +22,7 @@ freq: '1h'
 # Optional representative-time sampling for local tests.
 # Keep disabled for full 8760-hour production runs.
 time_sampling:
-  enabled: false
+  enabled: true
   # full / sample_days / monthly_typical_days / manual
   mode: sample_days
   # Examples:
@@ -147,17 +147,21 @@ nuclear_capacity_guard:
   tolerance: 0.2
 
 # Planning-stage synchronous generation floor:
-# local coal/nuclear/gas/biomass electric output >= ratio * local AC electricity load.
+# local coal/nuclear/gas/biomass/hydroelectricity electric output >= ratio * local AC electricity load.
 synchronous_generation_floor:
   enabled: true
-  # Apply through 2050; disable the local synchronous-output floor thereafter.
+  # Apply at 10% through 2050, 7.5% in 2055, and 5% in 2060.
   apply_start_year: 2025
-  apply_end_year: 2050
+  apply_end_year: 2060
   ratio: 0.10
+  ratio_by_year:
+    2055: 0.075
+    2060: 0.05
   Generator:
     - coal power plant
     - coal cc
     - nuclear
+    - hydroelectricity
   Link:
     OCGT gas:
       only_bus1_carrier: "AC"
@@ -166,6 +170,8 @@ synchronous_generation_floor:
     CHP coal:
       only_bus1_carrier: "AC"
     biomass:
+      only_bus1_carrier: "AC"
+    hydroelectricity:
       only_bus1_carrier: "AC"
 
 coal_retrofit:
@@ -180,11 +186,15 @@ storage_capacity_guard:
   # Uniform scalar for storage availability sensitivity cases.
   # 1.0 = current target trajectory; use 0.5, 1.5, 2.0 for sensitivity.
   target_capacity_multiplier: 1.0
-  # Provincial 2025 baseline power [MW] used as the spatial allocation shares.
+  # National total cap only; no provincial allocation constraint.
+  # Kept for backward compatibility and diagnostics.
   historical_capacity_csv: data/existing_infrastructure/battery_capacity.csv
   baseline_year_column: "2025"
   # National cumulative trajectory (NEA / 储能产业研究白皮书2026).
   national_capacity_csv: data/p_nom/national_battery_capacity_from_planning.csv
+  # Special national cumulative lower bound from policy wording: 2030 above 370 GW.
+  national_min_capacity_mw_by_year:
+    2030: 370000
   # Strict upper cap: allow underbuild, but do not allow +30% over the target.
   target_lower_multiplier: 0.0
   target_upper_multiplier: 1.0
@@ -236,7 +246,7 @@ dispatch_segmented_prices:
     low_output_carrier_scope: "synchronous_generation_floor"
     daily_low_output_zero_threshold: 0.4
     low_output_reference_freq: "D"
-    low_output_reserve_margin: 0.0
+    low_output_reserve_margin: 0.1
     # Nov 15–Mar 15 (inclusive): CHP excluded from P/Cap for mapped LR only; rest of year full stack.
     heating_season_chp_excluded_from_mapped_lr:
       enabled: true

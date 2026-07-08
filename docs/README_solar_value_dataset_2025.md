@@ -142,7 +142,8 @@ low-output reference output falls below
 `grouped_max × (1 + low_output_reserve_margin) × daily_low_output_zero_threshold`
 within each `low_output_reference_freq` window (default: daily `D`, reserve margin `0.0`,
 threshold `0.4`). With `low_output_carrier_scope: synchronous_generation_floor`, this reference
-uses the full synchronous carrier set, including nuclear and biomass; the mapped supply curve can
+uses the full synchronous carrier set, including nuclear, biomass, and AC-connected
+`hydroelectricity` but excluding `hydro_inflow` and pumped hydro storage; the mapped supply curve can
 still use the thermal `mapped_carriers` stack. Prices are also zeroed when output is within the
-must-run floor band near 10% of local AC load.
+must-run floor band near 10% of local AC load through 2050 and 5% in 2055.
 See `README.md` / `docs/price_module_market_clearing_report.md` for the full mapped-price rules.

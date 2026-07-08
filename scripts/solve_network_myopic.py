@@ -63,7 +63,7 @@ from pypsa.descriptors import get_switchable_as_dense as get_as_dense
 from baseyear_capacity_lock import apply_baseyear_capacity_locks
 from solar_capacity_guard import apply_solar_capacity_guard
 from wind_capacity_guard import apply_wind_capacity_guard
-from storage_capacity_guard import apply_storage_capacity_guard
+from storage_capacity_guard import apply_storage_capacity_guard, add_storage_capacity_guard_constraints
 from nuclear_capacity_guard import apply_nuclear_capacity_guard
 
 def prepare_network(
@@ -436,6 +436,21 @@ def _sync_link_groups(n, floor_cfg: dict, provinces: set[str]) -> dict[str, list
     return groups
 
 
+def _synchronous_generation_floor_ratio_for_year(floor_cfg: dict, planning_year: int) -> float:
+    """Return the synchronous floor ratio, allowing optional year-specific overrides."""
+    ratio = float(floor_cfg.get("ratio", 0.0) or 0.0)
+    ratio_by_year = floor_cfg.get("ratio_by_year") or {}
+    if isinstance(ratio_by_year, dict):
+        override = ratio_by_year.get(planning_year, ratio_by_year.get(str(planning_year)))
+        if override is not None:
+            ratio = float(override)
+    if ratio < 0.0:
+        raise ValueError(f"synchronous_generation_floor.ratio must be non-negative, got {ratio}")
+    if ratio >= 1.0:
+        raise ValueError(f"synchronous_generation_floor.ratio must be < 1, got {ratio}")
+    return ratio
+
+
 def add_synchronous_generation_floor_constraints(n, snapshots, rhs_slack_mw: float = 0.0) -> None:
     """Require configured synchronous generators/links to cover a share of local AC load."""
     cfg = getattr(n, "config", {}) or {}
@@ -453,11 +468,9 @@ def add_synchronous_generation_floor_constraints(n, snapshots, rhs_slack_mw: flo
             apply_end_year,
         )
         return
-    ratio = float(floor_cfg.get("ratio", 0.0) or 0.0)
+    ratio = _synchronous_generation_floor_ratio_for_year(floor_cfg, planning_year)
     if ratio <= 0.0:
         return
-    if ratio >= 1.0:
-        raise ValueError(f"synchronous_generation_floor.ratio must be < 1, got {ratio}")
     rhs_slack_mw = max(float(rhs_slack_mw or 0.0), 0.0)
 
     ac_buses = n.buses.index[n.buses.carrier.astype(str) == "AC"] if "carrier" in n.buses.columns else n.buses.index
@@ -526,6 +539,7 @@ def extra_functionality(n, snapshots, fixed_aluminum_usage=None):
     if snakemake.wildcards.planning_horizons != "2020":
         add_retrofit_constraints(n)
     add_synchronous_generation_floor_constraints(n, snapshots)
+    add_storage_capacity_guard_constraints(n, snapshots, config=config)
 
 def solve_aluminum_optimization(n, config, solving, opts="", nodal_prices=None, target_province=None, national_smelter_production=None, **kwargs):
     """

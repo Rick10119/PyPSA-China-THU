@@ -32,15 +32,26 @@ def _load_config(path: Path) -> dict[str, Any]:
         return yaml.safe_load(f) or {}
 
 
-def _case_rows_from_manifest(path: Path) -> list[tuple[float, Path]]:
+def _case_rows_from_manifest(path: Path) -> list[tuple[float, float, float, str, Path]]:
     manifest = pd.read_csv(path)
     rows = []
     for _, row in manifest.iterrows():
-        rows.append((float(row["multiplier"]), Path(row["config"]).resolve()))
+        battery_factor = float(row.get("battery_cost_factor", 1.0))
+        thermal_threshold = float(row.get("thermal_flexibility_threshold", 0.4))
+        fill_price_mode = str(row.get("fill_price_mode", "allow-zero-price"))
+        rows.append(
+            (
+                float(row["multiplier"]),
+                battery_factor,
+                thermal_threshold,
+                fill_price_mode,
+                Path(row["config"]).resolve(),
+            )
+        )
     return rows
 
 
-def _case_rows_from_configs(paths: list[Path]) -> list[tuple[float, Path]]:
+def _case_rows_from_configs(paths: list[Path]) -> list[tuple[float, float, float, str, Path]]:
     rows = []
     for path in paths:
         cfg = _load_config(path)
@@ -50,7 +61,23 @@ def _case_rows_from_configs(paths: list[Path]) -> list[tuple[float, Path]]:
                 (cfg.get("sensitivity") or {}).get("storage_availability_multiplier", 1.0),
             )
         )
-        rows.append((multiplier, path.resolve()))
+        market_scenario = ((cfg.get("aluminum") or {}).get("current_scenario") or {}).get(
+            "market_opportunity", "mid"
+        )
+        market_factors = (
+            ((cfg.get("aluminum") or {}).get("scenario_dimensions") or {})
+            .get("market_opportunity", {})
+            .get(market_scenario, {})
+        )
+        battery_factor = float(
+            (cfg.get("sensitivity") or {}).get(
+                "battery_cost_factor", market_factors.get("battery_cost_factor", 1.0)
+            )
+        )
+        sensitivity = cfg.get("sensitivity") or {}
+        thermal_threshold = float(sensitivity.get("thermal_flexibility_threshold", 0.4))
+        fill_price_mode = str(sensitivity.get("fill_price_mode", "allow-zero-price"))
+        rows.append((multiplier, battery_factor, thermal_threshold, fill_price_mode, path.resolve()))
     return rows
 
 
@@ -65,7 +92,14 @@ def _weighted_average(values: pd.Series, weights: pd.Series) -> float:
     return float(values.loc[valid].mean())
 
 
-def _read_workbook(workbook: Path, multiplier: float, version: str) -> pd.DataFrame:
+def _read_workbook(
+    workbook: Path,
+    multiplier: float,
+    battery_factor: float,
+    thermal_threshold: float,
+    fill_price_mode: str,
+    version: str,
+) -> pd.DataFrame:
     data = pd.read_excel(workbook, sheet_name="Sheet1", header=0)
     zone_col = "load_zone" if "load_zone" in data.columns else "zone"
     required = {zone_col, "year", *METRIC_COLUMNS}
@@ -78,18 +112,39 @@ def _read_workbook(workbook: Path, multiplier: float, version: str) -> pd.DataFr
     data = data.dropna(subset=["year"])
     data["year"] = data["year"].astype(int)
     data.insert(0, "version", version)
+    data.insert(0, "fill_price_mode", str(fill_price_mode))
+    data.insert(0, "thermal_flexibility_threshold", float(thermal_threshold))
+    data.insert(0, "battery_cost_factor", float(battery_factor))
     data.insert(0, "storage_multiplier", float(multiplier))
     return data
 
 
 def _national_summary(province_detail: pd.DataFrame) -> pd.DataFrame:
     rows = []
-    for (multiplier, version, year), group in province_detail.groupby(
-        ["storage_multiplier", "version", "year"], sort=True
+    for (
+        multiplier,
+        battery_factor,
+        thermal_threshold,
+        fill_price_mode,
+        version,
+        year,
+    ), group in province_detail.groupby(
+        [
+            "storage_multiplier",
+            "battery_cost_factor",
+            "thermal_flexibility_threshold",
+            "fill_price_mode",
+            "version",
+            "year",
+        ],
+        sort=True,
     ):
         weights = group["solar_ele_GWh"]
         row: dict[str, float | int | str] = {
             "storage_multiplier": float(multiplier),
+            "battery_cost_factor": float(battery_factor),
+            "thermal_flexibility_threshold": float(thermal_threshold),
+            "fill_price_mode": str(fill_price_mode),
             "version": str(version),
             "year": int(year),
             "solar_ele_GWh": float(pd.to_numeric(weights, errors="coerce").fillna(0.0).sum()),
@@ -99,7 +154,7 @@ def _national_summary(province_detail: pd.DataFrame) -> pd.DataFrame:
                 continue
             row[col] = _weighted_average(group[col], weights)
         rows.append(row)
-    return pd.DataFrame(rows).sort_values(["storage_multiplier", "year"])
+    return pd.DataFrame(rows).sort_values(["storage_multiplier", "battery_cost_factor", "year"])
 
 
 def _plot_value_factor(summary: pd.DataFrame, output_dir: Path) -> tuple[Path, Path]:
@@ -109,14 +164,16 @@ def _plot_value_factor(summary: pd.DataFrame, output_dir: Path) -> tuple[Path, P
     import matplotlib.pyplot as plt
 
     fig, ax = plt.subplots(figsize=(9.2, 5.4))
-    for multiplier, group in summary.groupby("storage_multiplier", sort=True):
+    for (multiplier, battery_factor), group in summary.groupby(
+        ["storage_multiplier", "battery_cost_factor"], sort=True
+    ):
         group = group.sort_values("year")
         ax.plot(
             group["year"],
             group["value_factor"],
             marker="o",
             linewidth=2.0,
-            label=f"storage {float(multiplier):g}x",
+            label=f"storage {float(multiplier):g}x / battery {float(battery_factor):g}x",
         )
     ax.set_xlabel("Year")
     ax.set_ylabel("Generation-weighted solar value factor")
@@ -161,14 +218,23 @@ def main() -> None:
 
     detail_frames = []
     missing = []
-    for multiplier, config_path in cases:
+    for multiplier, battery_factor, thermal_threshold, fill_price_mode, config_path in cases:
         cfg = _load_config(config_path)
         version = str(cfg["version"])
         workbook = _version_dir(cfg, ROOT) / "solar_value_dataset.xlsx"
         if not workbook.is_file():
             missing.append(str(workbook))
             continue
-        detail_frames.append(_read_workbook(workbook, multiplier, version))
+        detail_frames.append(
+            _read_workbook(
+                workbook,
+                multiplier,
+                battery_factor,
+                thermal_threshold,
+                fill_price_mode,
+                version,
+            )
+        )
 
     if missing and not args.allow_missing:
         raise FileNotFoundError("Missing workbook(s):\n" + "\n".join(missing))

@@ -71,13 +71,17 @@ Older versions of this repo included an experimental **heat-only** workflow that
 
 The planning solve (`scripts/solve_network_myopic.py`) and the fixed-capacity dispatch solve
 (`scripts/run_dispatch_segmented_prices.py`) can enforce a provincial synchronous-generation floor.
-With the current default configuration, coal, nuclear, gas, and biomass synchronous generators must
-produce at least `10 %` of the local AC electricity load in each province and snapshot:
+With the current default configuration, coal, nuclear, gas, biomass, and AC-connected
+`hydroelectricity` generators must produce at least `10 %` of the local AC electricity load in each
+province and snapshot through 2050, `5 %` in 2055, and `0 %` from 2060 onward:
 
 ```yaml
 synchronous_generation_floor:
   enabled: true
   ratio: 0.10
+  apply_end_year: 2055
+  ratio_by_year:
+    2055: 0.05
 ```
 
 The dispatch price export still writes the primary CSV from solved marginal prices
@@ -98,10 +102,11 @@ this order:
    reference peak so hours that are low relative to peak-plus-reserve are treated as must-run rather
    than marginal. `daily_low_output_zero_threshold` (default `0.4`) can be set globally or by year.
    By default, `low_output_carrier_scope: synchronous_generation_floor` uses the full synchronous
-   carrier set from `synchronous_generation_floor` for this low-output test, so nuclear and biomass
-   synchronous output are counted even when the mapped supply curve itself is based on the thermal
-   `mapped_carriers` stack. If these keys are omitted, the exporter falls back to the legacy mapped
-   carrier scope, daily window, and no reserve margin.
+   carrier set from `synchronous_generation_floor` for this low-output test, so nuclear, biomass,
+   and AC-connected `hydroelectricity` output are counted even when the mapped supply curve itself
+   is based on the thermal `mapped_carriers` stack. `hydro_inflow` and pumped hydro storage (`PHS`)
+   are not included. If these keys are omitted, the exporter falls back to the legacy mapped carrier
+   scope, daily window, and no reserve margin.
 3. Apply the local must-run floor price rule:
    - at or near `10 %` of local AC load, treat synchronous output as must-run rather than marginal;
    - within `1.5 x` the floor (`15 %` of local AC load by default), keep the mapped sidecar price at

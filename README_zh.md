@@ -75,7 +75,12 @@ dispatch_segmented_prices:
 synchronous_generation_floor:
   enabled: true
   ratio: 0.10
+  apply_end_year: 2055
+  ratio_by_year:
+    2055: 0.05
 ```
+
+默认 2025-2050 年为本地 AC 负荷的 `10 %`，2055 年降为 `5 %`，2060 年及以后不再施加该同步机组底线。
 
 风电、光伏、核电、储能扩张约束分别由以下配置块控制：
 
@@ -150,7 +155,8 @@ mapped 价格按以下顺序重建：
    `low_output_reserve_margin`（默认 `0.0`）可在分组峰值之上预留备用空间，使相对“峰值+备用”偏低的时段视为必开而非边际定价；
    `daily_low_output_zero_threshold`（默认 `0.4`）可全局或按年设置。
    默认 `low_output_carrier_scope: synchronous_generation_floor` 使用 `synchronous_generation_floor`
-   中的同步机组全集做低出力判定，因此煤电退场后核电、生物质同步出力也会被计入；mapped 价格曲线本身仍可使用
+   中的同步机组全集做低出力判定，因此煤电退场后核电、生物质、接在 AC 电力母线上的
+   `hydroelectricity` 水电出力也会被计入；`hydro_inflow` 和抽蓄 `PHS` 不计入。mapped 价格曲线本身仍可使用
    `mapped_carriers` 中的热电报价栈。若省略上述配置，导出脚本回退为旧的 mapped carrier 口径、按日窗口、无备用裕度行为。
 3. 必开 floor：同步出力接近本地 AC 负荷 `10 %` 时视为必开；在 `1.5 ×` floor 带宽内（默认即负荷的 `15 %`）mapped 价格保持 `0`，且不受后续煤电底价抬升影响。
 

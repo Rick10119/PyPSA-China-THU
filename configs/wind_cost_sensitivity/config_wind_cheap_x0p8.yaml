@@ -112,12 +112,15 @@ nuclear_capacity_guard:
 synchronous_generation_floor:
   enabled: true
   apply_start_year: 2025
-  apply_end_year: 2050
+  apply_end_year: 2055
   ratio: 0.1
+  ratio_by_year:
+    2055: 0.05
   Generator:
   - coal power plant
   - coal cc
   - nuclear
+  - hydroelectricity
   Link:
     OCGT gas:
       only_bus1_carrier: AC
@@ -126,6 +129,8 @@ synchronous_generation_floor:
     CHP coal:
       only_bus1_carrier: AC
     biomass:
+      only_bus1_carrier: AC
+    hydroelectricity:
       only_bus1_carrier: AC
 coal_retrofit:
   start_year: 2030

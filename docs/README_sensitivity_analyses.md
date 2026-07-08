@@ -3,7 +3,7 @@
 本文档说明两类用于评估 `fill_solar_value_dataset_2025.py` 结果稳健性的敏感性分析：
 
 - 火电灵活性敏感性：改变价格重构和后处理中的火电最小出力阈值。
-- 储能容量限制敏感性：改变 `storage_capacity_guard` 中储能可用容量目标。
+- 储能容量限制敏感性：联动改变 `storage_capacity_guard` 中储能可用容量目标和电池资本成本。
 
 两者的计算对象都是 `solar_value_dataset.xlsx` 中的光伏价值因子、光伏渗透率、弃光率、容量因子等指标，但实现方式不同。
 
@@ -22,13 +22,13 @@ scripts/run_thermal_flexibility_sensitivity.py
 - 默认复用储能容量限制基准 case `storage-x1` 对应的已求解 `postnetwork` 和 `dispatch_segmented` 网络。
 - 以 planning marginal price 为基准；对不同火电**最小出力阈值**生成 zero-price mask，并仅将满足条件的省份/小时价格置零。
 - 再用 `fill_solar_value_dataset_2025.py --allow-zero-price` 重新填充 `solar_value_dataset.xlsx`。
-- 阈值 **> 0** 时，置零条件为 **同步机 10% 本地负荷底线**（`synchronous_generation_floor`，**仅 2025–2050**）**与**最小出力阈值（`daily_low_output_zero_threshold`）的并集；不启用 `thermal_load_floor`。
-- **低出力置零**：当本省同步机组参考出力低于 **当日最大同步机组参考出力 × 阈值**（`low_output_reference_freq: D`，无额外 reserve 裕度）时标记置零；例如 `0.1` 表示低于日最大值的 10% 才置零。默认 `low_output_carrier_scope: synchronous_generation_floor`，因此核电和生物质会计入低出力判定；mapped 价格曲线本身仍使用 `mapped_carriers` 的热电报价栈。
-- 同步机置零 mask 与 dispatch 约束对齐：`sync >= ratio×负荷 - sync_floor_slack_mw`；后处理仅在同步出力贴近该 RHS（默认 +1 MW 带宽）时标记置零。**2051 年及以后不再施加同步机置零。**
+- 阈值 **> 0** 时，置零条件为 **同步机本地负荷底线**（`synchronous_generation_floor`：2025-2050 为 10%，2055 为 7.5%，2060 为 5%）**与**最小出力阈值（`daily_low_output_zero_threshold`）的并集；不启用 `thermal_load_floor`。
+- **低出力置零**：当本省同步机组参考出力低于 **当日最大同步机组参考出力 × 阈值**（`low_output_reference_freq: D`，无额外 reserve 裕度）时标记置零；例如 `0.1` 表示低于日最大值的 10% 才置零。默认 `low_output_carrier_scope: synchronous_generation_floor`，因此核电、生物质、接在 AC 电力母线上的 `hydroelectricity` 水电会计入低出力判定；`hydro_inflow` 和抽蓄 `PHS` 不计入。mapped 价格曲线本身仍使用 `mapped_carriers` 的热电报价栈。
+- 同步机置零 mask 与 dispatch 约束对齐：`sync >= ratio×负荷 - sync_floor_slack_mw`；后处理仅在同步出力贴近该 RHS（默认 +1 MW 带宽）时标记置零。**2055 年 ratio 降为 0.075，2060 年 ratio 降为 0.05。**
 - 填充 workbook 时，置零 mask **仅在省内有光伏出力的小时**生效（`--zero-mask-only-when-solar-generates`），避免夜间置零抬高 value factor、破坏单调性。
 - **主曲线 `threshold_0/`**：最小出力阈值 0、**不**含同步机 mask（灵活性端点；与 0.1–0.4 同走 `--allow-zero-price` 流程）。
 - **参考曲线 `threshold_0_lmp/`**：`--planning-marginal` 纯 LMP，与储能 `storage-x1` 一致。
-- **参考曲线 `threshold_0_sync/`**：阈值 0 + 仅同步机底线（2025–2050）。
+- **参考曲线 `threshold_0_sync/`**：阈值 0 + 仅同步机底线（2025-2050 为 10%，2055 为 7.5%，2060 为 5%）。
 
 默认阈值：
 
@@ -66,7 +66,7 @@ python scripts/run_thermal_flexibility_sensitivity.py --config config.yaml
 
 ```bash
 python scripts/run_thermal_flexibility_sensitivity.py \
-  --config configs/storage_availability_sensitivity/config_storage_x0p5.yaml
+  --config configs/storage_availability_sensitivity/config_storage_x0p7.yaml
 ```
 
 指定阈值：
@@ -99,7 +99,7 @@ threshold_0p3/
 threshold_0p2/
 threshold_0p1/
 threshold_0/          # 主曲线端点：无 sync / 无低出力 mask
-threshold_0_sync/     # 参考：0 + 同步机底线（2025–2050）
+threshold_0_sync/     # 参考：0 + 同步机底线（2025-2050 为 10%，2055 为 7.5%，2060 为 5%）
 threshold_0_lmp/      # 参考：纯 LMP（storage-x1）
 ```
 
@@ -133,25 +133,19 @@ scripts/summarize_storage_availability_sensitivity.py
 用途：
 
 - 这是完整模型重跑敏感性分析。
-- 通过 `storage_capacity_guard.target_capacity_multiplier` 缩放储能可用容量目标。
+- 通过 `storage_capacity_guard.target_capacity_multiplier` 缩放储能可用容量目标，同时调整 `market_opportunity.mid.battery_cost_factor`。
 - 储能约束使用严格上限：`target_lower_multiplier = 0.0`，`target_upper_multiplier = 1.0`，即允许少建，但不允许超过倍率后的目标容量。
 - 每个倍率生成独立 config 和独立 results version。
-- Snakemake 跑完后自动调用 `fill_solar_value_dataset_2025.py` 填充该倍率对应的 `solar_value_dataset.xlsx`。
+- Snakemake 跑完后自动调用 `fill_solar_value_dataset_2025.py --allow-zero-price` 填充该倍率对应的 `solar_value_dataset.xlsx`；默认价格口径为火电灵活性 `threshold_0p4`（`daily_low_output_zero_threshold = 0.4`）。
 
-默认倍率：
+默认容量/成本组合：
 
-```text
-0.5, 1.0, 1.5, 2.0
-```
-
-含义：
-
-```text
-0.5x = 储能容量严格上限为当前目标的 50%
-1.0x = 储能容量严格上限为当前目标
-1.5x = 储能容量严格上限为当前目标的 150%
-2.0x = 储能容量严格上限为当前目标的 200%
-```
+| case | 储能容量严格上限 | 电池资本成本 |
+|---|---:|---:|
+| `storage-x0p7` | 当前目标的 70% | 1.5x |
+| `storage-x1` | 当前目标 | 1.0x |
+| `storage-x1p5` | 当前目标的 150% | 1.0x |
+| `storage-x2` | 当前目标的 200% | 1.0x |
 
 ### 2.1 生成 config 和 Slurm 作业
 
@@ -164,7 +158,7 @@ python scripts/run_storage_availability_sensitivity.py --skip-plot
 生成的 config：
 
 ```text
-configs/storage_availability_sensitivity/config_storage_x0p5.yaml
+configs/storage_availability_sensitivity/config_storage_x0p7.yaml
 configs/storage_availability_sensitivity/config_storage_x1.yaml
 configs/storage_availability_sensitivity/config_storage_x1p5.yaml
 configs/storage_availability_sensitivity/config_storage_x2.yaml
@@ -173,7 +167,7 @@ configs/storage_availability_sensitivity/config_storage_x2.yaml
 生成的 Slurm 作业：
 
 ```text
-jobs_storage_availability/job_storage_x0p5.slurm
+jobs_storage_availability/job_storage_x0p7.slurm
 jobs_storage_availability/job_storage_x1.slurm
 jobs_storage_availability/job_storage_x1p5.slurm
 jobs_storage_availability/job_storage_x2.slurm
@@ -196,7 +190,7 @@ python scripts/run_storage_availability_sensitivity.py --skip-plot --submit
 也可以手动提交单个作业：
 
 ```bash
-sbatch jobs_storage_availability/job_storage_x0p5.slurm
+sbatch jobs_storage_availability/job_storage_x0p7.slurm
 sbatch jobs_storage_availability/job_storage_x1.slurm
 sbatch jobs_storage_availability/job_storage_x1p5.slurm
 sbatch jobs_storage_availability/job_storage_x2.slurm
@@ -239,7 +233,7 @@ python scripts/run_storage_availability_sensitivity.py \
 默认四个结果目录：
 
 ```text
-results/version-0621.1H.3-storage-x0p5/
+results/version-0621.1H.3-storage-x0p7/
 results/version-0621.1H.3-storage-x1/
 results/version-0621.1H.3-storage-x1p5/
 results/version-0621.1H.3-storage-x2/
@@ -248,7 +242,7 @@ results/version-0621.1H.3-storage-x2/
 其中 `0621.1H.3` 来自当前 `config.yaml` 的 `version`。如果以后 base config 版本号改变，输出目录也会相应变成：
 
 ```text
-results/version-<base-version>-storage-x0p5/
+results/version-<base-version>-storage-x0p7/
 results/version-<base-version>-storage-x1/
 results/version-<base-version>-storage-x1p5/
 results/version-<base-version>-storage-x2/
@@ -307,9 +301,9 @@ python scripts/summarize_storage_availability_sensitivity.py --allow-missing
 | 敏感性 | 是否重跑容量扩张 | 改变对象 | 默认 case | 主要输出 |
 |---|---:|---|---|---|
 | 火电灵活性 | 否 | planning marginal price 的低出力置零阈值 | `0.4, 0.3, 0.2, 0.1, 0.0` | `thermal_flexibility_sensitivity/` |
-| 储能容量限制 | 是 | `storage_capacity_guard.target_capacity_multiplier` | `0.5, 1.0, 1.5, 2.0` | `version-*-storage-x*/` |
+| 储能容量/成本限制 | 是 | `storage_capacity_guard.target_capacity_multiplier` + `battery_cost_factor` | `0.7/1.5, 1.0/1.0, 1.5/1.0, 2.0/1.0` | `version-*-storage-x*/` |
 
-火电 `threshold_0` 与储能 `storage-x1` 使用相同价格口径（纯 planning LMP）；若两者 value factor 仍有差异，来自 `storage-x1` 完整重跑与火电后处理复用网络之间的容量/调度差别，而非价格 mask。
+储能敏感性默认与火电 `threshold_0p4` 使用相同价格口径：基于 planning marginal price 的 mapped sidecar，并保留 40% 低出力 zero-price mask。若 `storage-x1` 与火电 `threshold_0p4` 仍有差异，来自 `storage-x1` 完整重跑与火电后处理复用网络之间的容量/调度差别，而不是低出力阈值口径不同。
 
 建议流程：
 
