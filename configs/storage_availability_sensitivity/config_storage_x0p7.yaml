@@ -331,7 +331,7 @@ aluminum:
         sabatier_cost_factor: 0.8
       mid:
         vre_cost_factor: 1.0
-        battery_cost_factor: 1.5
+        battery_cost_factor: 1.0
         h2_cost_factor: 1.0
         sabatier_cost_factor: 1.0
       high:
@@ -916,7 +916,7 @@ existing_capacities:
   battery_max_hours_existing: 2.58
 sensitivity:
   storage_availability_multiplier: 0.7
-  battery_cost_factor: 1.5
+  battery_cost_factor: 1.0
   thermal_flexibility_baseline: threshold_0p4
   thermal_flexibility_threshold: 0.4
   fill_price_mode: allow-zero-price

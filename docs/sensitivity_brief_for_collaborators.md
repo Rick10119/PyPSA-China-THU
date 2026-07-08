@@ -39,7 +39,7 @@
 
 目录/命名：
 
-- `storage-x0p7`：储能容量目标为 core 的 0.7 倍，电池成本为 1.5 倍。
+- `storage-x0p7`：储能容量目标为 core 的 0.7 倍，电池成本为 1.0 倍。
 - `storage-x1`：core 储能容量目标，电池成本为 1.0 倍。
 - `storage-x1p5`：储能容量目标为 core 的 1.5 倍，电池成本为 1.0 倍。
 - `storage-x2`：储能容量目标为 core 的 2 倍，电池成本为 1.0 倍。
@@ -51,14 +51,9 @@ results/storage_availability_sensitivity_summary/storage_availability_national_s
 results/storage_availability_sensitivity_summary/storage_availability_sensitivity_summary.xlsx
 ```
 
-关键结果（全国发电量加权 solar value factor）：
+关键结果（全国发电量加权 solar value factor）需在新一组 `0.7 / 1.0 / 1.5 / 2.0` 容量、统一 `1.0x` 成本场景重跑后更新。
 
-| year | storage 0.7x | storage 1x/core | storage 1.5x | storage 2x |
-|---:|---:|---:|---:|---:|
-| 2050 | 0.457 | 0.584 | 0.688 | 0.724 |
-| 2060 | 0.444 | 0.569 | 0.657 | 0.700 |
-
-解释：该敏感性同时代表“储能更可用且更便宜”的方向。储能容量越高、成本越低，光伏发电更容易跨时段转移，弃光率下降，solar value factor 上升。
+解释：该敏感性只改变储能可用容量，电池成本统一保持 `1.0x`。储能容量越高，光伏发电更容易跨时段转移，弃光率下降，solar value factor 上升。
 
 ## 4. 火电灵活性敏感性
 

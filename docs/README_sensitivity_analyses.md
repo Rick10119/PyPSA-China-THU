@@ -142,12 +142,12 @@ scripts/summarize_storage_availability_sensitivity.py
 
 | case | 储能容量严格上限 | 电池资本成本 |
 |---|---:|---:|
-| `storage-x0p7` | 当前目标的 70% | 1.5x |
+| `storage-x0p7` | 当前目标的 70% | 1.0x |
 | `storage-x1` | 当前目标 | 1.0x |
 | `storage-x1p5` | 当前目标的 150% | 1.0x |
 | `storage-x2` | 当前目标的 200% | 1.0x |
 
-### 2.1 生成 config 和 Slurm 作业
+### 2.1 生成 config 和 manifest
 
 只生成文件，不提交、不运行：
 
@@ -164,45 +164,13 @@ configs/storage_availability_sensitivity/config_storage_x1p5.yaml
 configs/storage_availability_sensitivity/config_storage_x2.yaml
 ```
 
-生成的 Slurm 作业：
-
-```text
-jobs_storage_availability/job_storage_x0p7.slurm
-jobs_storage_availability/job_storage_x1.slurm
-jobs_storage_availability/job_storage_x1p5.slurm
-jobs_storage_availability/job_storage_x2.slurm
-```
-
 生成的 manifest：
 
 ```text
 configs/storage_availability_sensitivity/storage_availability_cases.csv
 ```
 
-### 2.2 提交到 Slurm
-
-生成并提交四个作业：
-
-```bash
-python scripts/run_storage_availability_sensitivity.py --skip-plot --submit
-```
-
-也可以手动提交单个作业：
-
-```bash
-sbatch jobs_storage_availability/job_storage_x0p7.slurm
-sbatch jobs_storage_availability/job_storage_x1.slurm
-sbatch jobs_storage_availability/job_storage_x1p5.slurm
-sbatch jobs_storage_availability/job_storage_x2.slurm
-```
-
-如需强制重跑完整 workflow：
-
-```bash
-FORCE_RESTART=1 sbatch jobs_storage_availability/job_storage_x1.slurm
-```
-
-### 2.3 本地运行
+### 2.2 本地运行
 
 在本地依次运行四个 case：
 
@@ -228,7 +196,7 @@ python scripts/run_storage_availability_sensitivity.py \
   --template-workbook results/version-0605.1H.2/solar_value_dataset.xlsx
 ```
 
-### 2.4 储能敏感性输出位置
+### 2.3 储能敏感性输出位置
 
 默认四个结果目录：
 
@@ -258,7 +226,7 @@ solar_value_dataset.xlsx
 solar_capacity_compare_by_year.csv
 ```
 
-### 2.5 汇总储能敏感性结果
+### 2.4 汇总储能敏感性结果
 
 四个 case 都跑完后：
 
@@ -301,7 +269,7 @@ python scripts/summarize_storage_availability_sensitivity.py --allow-missing
 | 敏感性 | 是否重跑容量扩张 | 改变对象 | 默认 case | 主要输出 |
 |---|---:|---|---|---|
 | 火电灵活性 | 否 | planning marginal price 的低出力置零阈值 | `0.4, 0.3, 0.2, 0.1, 0.0` | `thermal_flexibility_sensitivity/` |
-| 储能容量/成本限制 | 是 | `storage_capacity_guard.target_capacity_multiplier` + `battery_cost_factor` | `0.7/1.5, 1.0/1.0, 1.5/1.0, 2.0/1.0` | `version-*-storage-x*/` |
+| 储能容量/成本限制 | 是 | `storage_capacity_guard.target_capacity_multiplier` + `battery_cost_factor` | `0.7/1.0, 1.0/1.0, 1.5/1.0, 2.0/1.0` | `version-*-storage-x*/` |
 
 储能敏感性默认与火电 `threshold_0p4` 使用相同价格口径：基于 planning marginal price 的 mapped sidecar，并保留 40% 低出力 zero-price mask。若 `storage-x1` 与火电 `threshold_0p4` 仍有差异，来自 `storage-x1` 完整重跑与火电后处理复用网络之间的容量/调度差别，而不是低出力阈值口径不同。
 
@@ -309,5 +277,5 @@ python scripts/summarize_storage_availability_sensitivity.py --allow-missing
 
 1. 先确认 base config 已能成功生成 `postnetwork`、`dispatch_segmented` 和 `prices`。
 2. 火电灵活性敏感性可先跑，因为它只做后处理，速度较快。
-3. 储能容量限制敏感性需要完整重跑模型，建议用 Slurm 并行提交。
+3. 储能容量限制敏感性需要完整重跑模型；生成 config 后按可用计算环境运行对应 case。
 4. 两类结果都以 `solar_value_dataset.xlsx` 为核心输出，后续画图或表格比较时优先使用对应的 summary CSV / Excel。
