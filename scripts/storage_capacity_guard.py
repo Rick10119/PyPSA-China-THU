@@ -129,6 +129,14 @@ def _fixed_battery_power_mw(n) -> float:
     return float(_fixed_battery_power_by_province(n).sum())
 
 
+def _battery_max_hours(config) -> float:
+    return float(config.get("electricity", {}).get("max_hours", {}).get("battery", 6.0))
+
+
+def _safe_constraint_suffix(name: str) -> str:
+    return re.sub(r"[^\w]+", "-", str(name)).strip("-") or "unknown"
+
+
 def _set_bounds(df: pd.DataFrame, idx, min_col: str, max_col: str, min_total: float, max_total: float) -> None:
     current_max = pd.to_numeric(df.loc[idx, max_col], errors="coerce").replace([np.inf, -np.inf], np.nan)
     finite_max = current_max.dropna().clip(lower=0.0)
@@ -181,9 +189,7 @@ def _storage_guard_limits(config, planning_year: int) -> tuple[float, float, flo
             planning_year,
         )
         min_cumulative_target = max_cumulative_target
-    max_hours = float(
-        config.get("electricity", {}).get("max_hours", {}).get("battery", 6.0)
-    )
+    max_hours = _battery_max_hours(config)
     return national_cumulative_target, min_cumulative_target, max_cumulative_target, lower_mult, upper_mult, capacity_multiplier, max_hours
 
 
@@ -213,6 +219,69 @@ def apply_storage_capacity_guard(n, config, scenario_context: dict | None = None
         capacity_multiplier,
         lower_mult,
         upper_mult,
+        max_hours,
+    )
+
+
+def add_battery_max_hours_constraints(n, snapshots, config=None) -> None:
+    """
+    Couple each province's battery energy capacity to its discharger power.
+
+    Enforces store e_nom <= max_hours * discharger p_nom so optimized duration
+    cannot exceed electricity.max_hours.battery (default 6 h).
+    """
+    cfg = config if isinstance(config, dict) else getattr(n, "config", {}) or {}
+    max_hours = _battery_max_hours(cfg)
+    if max_hours <= 0:
+        return
+
+    if not hasattr(n, "stores") or n.stores.empty or not hasattr(n, "links") or n.links.empty:
+        return
+
+    battery_stores = n.stores[n.stores.carrier.astype(str) == "battery"]
+    if battery_stores.empty:
+        return
+
+    battery_links = n.links[n.links.carrier.astype(str) == "battery"]
+    dischargers = battery_links[battery_links.index.astype(str).str.contains(" battery discharger")]
+    if dischargers.empty:
+        return
+
+    link_p_nom = n.model["Link-p_nom"] if "Link-p_nom" in n.model.variables else None
+    store_e_nom = n.model["Store-e_nom"] if "Store-e_nom" in n.model.variables else None
+    if link_p_nom is None or store_e_nom is None:
+        logger.warning("Battery max-hours: optimization variables missing; skip.")
+        return
+
+    discharger_by_province = {
+        _province_from_battery_index(str(idx)): idx for idx in dischargers.index
+    }
+
+    added = 0
+    skipped = 0
+    for store_idx in battery_stores.index:
+        province = _province_from_battery_index(str(store_idx))
+        dis_idx = discharger_by_province.get(province)
+        if dis_idx is None:
+            skipped += 1
+            continue
+        if store_idx not in store_e_nom.index or dis_idx not in link_p_nom.index:
+            skipped += 1
+            continue
+
+        lhs = store_e_nom.loc[store_idx]
+        rhs = max_hours * link_p_nom.loc[dis_idx]
+        n.model.add_constraints(
+            lhs <= rhs,
+            name=f"battery-max-hours-{_safe_constraint_suffix(province)}",
+        )
+        added += 1
+
+    logger.info(
+        "Battery max-hours constraints for %s: added=%s, skipped=%s, max_hours=%.2f",
+        int(pd.DatetimeIndex(snapshots)[0].year),
+        added,
+        skipped,
         max_hours,
     )
 

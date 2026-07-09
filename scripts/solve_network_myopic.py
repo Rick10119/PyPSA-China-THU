@@ -63,7 +63,11 @@ from pypsa.descriptors import get_switchable_as_dense as get_as_dense
 from baseyear_capacity_lock import apply_baseyear_capacity_locks
 from solar_capacity_guard import apply_solar_capacity_guard
 from wind_capacity_guard import apply_wind_capacity_guard
-from storage_capacity_guard import apply_storage_capacity_guard, add_storage_capacity_guard_constraints
+from storage_capacity_guard import (
+    apply_storage_capacity_guard,
+    add_battery_max_hours_constraints,
+    add_storage_capacity_guard_constraints,
+)
 from nuclear_capacity_guard import apply_nuclear_capacity_guard
 
 def prepare_network(
@@ -539,6 +543,7 @@ def extra_functionality(n, snapshots, fixed_aluminum_usage=None):
     if snakemake.wildcards.planning_horizons != "2020":
         add_retrofit_constraints(n)
     add_synchronous_generation_floor_constraints(n, snapshots)
+    add_battery_max_hours_constraints(n, snapshots, config=config)
     add_storage_capacity_guard_constraints(n, snapshots, config=config)
 
 def solve_aluminum_optimization(n, config, solving, opts="", nodal_prices=None, target_province=None, national_smelter_production=None, **kwargs):
