@@ -228,7 +228,7 @@ def add_battery_max_hours_constraints(n, snapshots, config=None) -> None:
     Couple each province's battery energy capacity to its discharger power.
 
     Enforces store e_nom <= max_hours * discharger p_nom so optimized duration
-    cannot exceed electricity.max_hours.battery (default 6 h).
+    cannot exceed electricity.max_hours.battery.
     """
     cfg = config if isinstance(config, dict) else getattr(n, "config", {}) or {}
     max_hours = _battery_max_hours(cfg)
@@ -265,12 +265,13 @@ def add_battery_max_hours_constraints(n, snapshots, config=None) -> None:
         if dis_idx is None:
             skipped += 1
             continue
-        if store_idx not in store_e_nom.index or dis_idx not in link_p_nom.index:
+        try:
+            lhs = store_e_nom.loc[store_idx]
+            rhs = max_hours * link_p_nom.loc[dis_idx]
+        except (KeyError, ValueError):
             skipped += 1
             continue
 
-        lhs = store_e_nom.loc[store_idx]
-        rhs = max_hours * link_p_nom.loc[dis_idx]
         n.model.add_constraints(
             lhs <= rhs,
             name=f"battery-max-hours-{_safe_constraint_suffix(province)}",

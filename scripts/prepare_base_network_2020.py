@@ -152,6 +152,8 @@ def prepare_network(config):
 
     # add buses
     for suffix in config["bus_suffix"]:
+        if suffix == " aluminum" and not config.get("add_aluminum", False):
+            continue
         carrier = config["bus_carrier"][suffix]
         add_buses(network, nodes, suffix, carrier, pro_centroid_x, pro_centroid_y)
 

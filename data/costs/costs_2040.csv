@@ -184,9 +184,9 @@ air separation unit,2040,investment,596501.02,EUR/t_N2/h,"Danish Energy Agency, 
 air separation unit,2040,lifetime,30.0,years,"Danish Energy Agency, data_sheets_for_renewable_fuels.xlsx",103 Hydrogen to Ammonia:  Technical lifetime
 battery inverter,2040,FOM,0.54,%/year,"Danish Energy Agency, technology_data_catalogue_for_energy_storage.xlsx",:  Fixed O&M
 battery inverter,2040,efficiency,0.96,per unit,"Danish Energy Agency, technology_data_catalogue_for_energy_storage.xlsx",:  Round trip efficiency DC
-battery inverter,2040,investment,28.044872,EUR/kW,"UCSB China power system template (2700 CNY/kW, 4h); NEA new-type storage reports; parameter review 2026-06-04",:  Output capacity expansion cost investment
+battery inverter,2040,investment,30.512821,EUR/kW,"UCSB China power system template (2700 CNY/kW, 4h); NEA new-type storage reports; parameter review 2026-06-04",:  Output capacity expansion cost investment
 battery inverter,2040,lifetime,10.0,years,"Danish Energy Agency, technology_data_catalogue_for_energy_storage.xlsx, Note K.",:  Technical lifetime
-battery storage,2040,investment,49.860058,EUR/kWh,"UCSB China power system template (2700 CNY/kW, 4h); NEA new-type storage reports; parameter review 2026-06-04",:  Energy storage expansion cost investment
+battery storage,2040,investment,51.217949,EUR/kWh,"UCSB China power system template (2700 CNY/kW, 4h); NEA new-type storage reports; parameter review 2026-06-04",:  Energy storage expansion cost investment
 battery storage,2040,lifetime,30.0,years,"Danish Energy Agency, technology_data_catalogue_for_energy_storage.xlsx",:  Technical lifetime
 biogas,2040,CO2 stored,0.09,tCO2/MWh_th,"Stoichiometric calculation, doi:10.1016/j.apenergy.2022.120016",
 biogas,2040,FOM,13.45,%/year,"Danish Energy Agency, data_sheets_for_renewable_fuels.xlsx","81 Biogas Plant, Basic conf.:  Total O&M"

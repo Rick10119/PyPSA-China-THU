@@ -68,12 +68,32 @@ def _find_template_workbook(config: dict[str, Any], root: Path) -> Path | None:
     direct = _version_dir(config, root) / "solar_value_dataset.xlsx"
     if direct.is_file():
         return direct
-    candidates = sorted(
-        p
-        for p in (root / "results").glob("version-*/solar_value_dataset.xlsx")
-        if "-storage-" not in p.parent.name
-    )
-    return candidates[-1] if candidates else None
+    results_dir = root / "results"
+    candidates = [p for p in results_dir.rglob("solar_value_dataset.xlsx") if p.is_file()]
+    if not candidates:
+        return None
+
+    non_storage = [p for p in candidates if "-storage-" not in p.parent.name]
+    pool = non_storage or candidates
+    return max(pool, key=lambda p: p.stat().st_mtime)
+
+
+def _usable_template_workbook(
+    requested: Path | None,
+    config: dict[str, Any],
+    root: Path,
+    *,
+    destination: Path | None = None,
+) -> Path | None:
+    if requested is not None and requested.is_file():
+        return requested
+
+    candidate = _find_template_workbook(config, root)
+    if candidate is None:
+        return None
+    if destination is not None and candidate.resolve() == destination.resolve():
+        return None
+    return candidate
 
 
 def _run(cmd: list[str], *, cwd: Path) -> None:
@@ -131,7 +151,8 @@ def main() -> None:
         }
 
     version_prefix = args.version_prefix or f"{base_cfg['version']}-storage"
-    template_workbook = args.template_workbook.resolve() if args.template_workbook else _find_template_workbook(base_cfg, ROOT)
+    requested_template_workbook = args.template_workbook.resolve() if args.template_workbook else None
+    template_workbook = _usable_template_workbook(requested_template_workbook, base_cfg, ROOT)
     if template_workbook is None:
         print("No solar_value_dataset.xlsx template found; local fill will require one before running.")
 
@@ -186,7 +207,8 @@ def main() -> None:
         )
 
     if args.run_local:
-        if template_workbook is None or not template_workbook.is_file():
+        template_workbook = _usable_template_workbook(requested_template_workbook, base_cfg, ROOT)
+        if template_workbook is None:
             raise FileNotFoundError("Local fill requires --template-workbook or an existing result workbook.")
         price_arg = {
             "planning-marginal": "--planning-marginal",
@@ -197,7 +219,16 @@ def main() -> None:
             _run(["snakemake", "--configfile", str(case_config), "--cores", str(args.cores)], cwd=ROOT)
             version_dir.mkdir(parents=True, exist_ok=True)
             workbook = version_dir / "solar_value_dataset.xlsx"
+            template_workbook = _usable_template_workbook(
+                requested_template_workbook,
+                base_cfg,
+                ROOT,
+                destination=workbook,
+            )
+            if template_workbook is None:
+                raise FileNotFoundError("No usable solar_value_dataset.xlsx template found under results/.")
             if template_workbook.resolve() != workbook.resolve():
+                print(f"Using workbook template: {template_workbook}")
                 shutil.copy2(template_workbook, workbook)
             fill_cmd = [
                 sys.executable,

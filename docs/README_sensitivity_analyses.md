@@ -82,7 +82,7 @@ python scripts/run_thermal_flexibility_sensitivity.py \
 
 ```bash
 python scripts/run_thermal_flexibility_sensitivity.py \
-  --template-workbook results/version-0605.1H.2/solar_value_dataset.xlsx
+  --template-workbook results/solar_value_dataset.xlsx
 ```
 
 默认输出位置：
@@ -178,6 +178,12 @@ configs/storage_availability_sensitivity/storage_availability_cases.csv
 python scripts/run_storage_availability_sensitivity.py --skip-plot --run-local
 ```
 
+只运行 `storage-x1`：
+
+```bash
+python scripts/run_storage_availability_sensitivity.py --multipliers 1.0 --skip-plot --run-local
+```
+
 如需使用较少核心：
 
 ```bash
@@ -187,13 +193,13 @@ python scripts/run_storage_availability_sensitivity.py \
   --cores 8
 ```
 
-如果需要指定 workbook 模板：
+默认会在 `results/` 下查找已有的 `solar_value_dataset.xlsx` 作为 workbook 模板。如果需要显式指定：
 
 ```bash
 python scripts/run_storage_availability_sensitivity.py \
   --skip-plot \
   --run-local \
-  --template-workbook results/version-0605.1H.2/solar_value_dataset.xlsx
+  --template-workbook results/solar_value_dataset.xlsx
 ```
 
 ### 2.3 储能敏感性输出位置
