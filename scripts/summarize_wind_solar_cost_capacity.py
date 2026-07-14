@@ -12,6 +12,35 @@ import yaml
 
 
 ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_YEARS = "2025,2030,2035,2040,2045,2050,2055,2060"
+
+
+def _first(value, default: str) -> str:
+    if isinstance(value, list):
+        return str(value[0]) if value else default
+    if value is None:
+        return default
+    return str(value)
+
+
+def _planning_horizons(cfg: dict) -> list[int] | None:
+    years = (cfg.get("scenario") or {}).get("planning_horizons")
+    if not years:
+        return None
+    return [int(y) for y in years]
+
+
+def _scenario_stem(cfg: dict) -> str:
+    scen = cfg.get("scenario") or {}
+    return (
+        f"{_first(scen.get('opts'), 'll')}-"
+        f"{scen.get('topology', 'current+FCG')}-"
+        f"{_first(scen.get('pathway'), 'linear2050')}"
+    )
+
+
+def _heating(cfg: dict) -> str:
+    return _first((cfg.get("scenario") or {}).get("heating_demand"), "positive")
 
 
 def _read_generators(network: Path) -> pd.DataFrame:
@@ -63,7 +92,7 @@ def _targets(years: list[int], solar_csv: Path, wind_csv: Path, upper_multiplier
 
 
 def _summarize(args: argparse.Namespace) -> pd.DataFrame:
-    years = [int(y) for y in args.years.split(",") if str(y).strip()]
+    years = [int(y) for y in str(args.years).split(",") if str(y).strip()]
     target = _targets(
         years,
         args.solar_target_csv.resolve(),
@@ -126,9 +155,16 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--config", type=Path, default=None, help="Optional config file to infer version and guard settings.")
     ap.add_argument("--version-dir", type=Path, default=None)
-    ap.add_argument("--scenario-stem", default="ll-current+FCG-linear2050")
-    ap.add_argument("--heating", default="positive")
-    ap.add_argument("--years", default="2025,2030,2035,2040,2045,2050,2055,2060")
+    ap.add_argument("--scenario-stem", default=None)
+    ap.add_argument("--heating", default=None)
+    ap.add_argument(
+        "--years",
+        default=None,
+        help=(
+            "Comma-separated planning years. Default: scenario.planning_horizons from "
+            f"--config when provided, otherwise {DEFAULT_YEARS}."
+        ),
+    )
     ap.add_argument(
         "--solar-target-csv",
         type=Path,
@@ -144,12 +180,21 @@ def main() -> None:
     ap.add_argument("--output-png", type=Path, default=None)
     args = ap.parse_args()
 
+    cfg: dict = {}
     if args.config is not None:
         with args.config.open(encoding="utf-8") as f:
             cfg = yaml.safe_load(f) or {}
         if args.version_dir is None:
             results_dir = Path(str(cfg.get("results_dir") or "results"))
             args.version_dir = (ROOT / results_dir / f"version-{cfg['version']}").resolve()
+        if args.scenario_stem is None:
+            args.scenario_stem = _scenario_stem(cfg)
+        if args.heating is None:
+            args.heating = _heating(cfg)
+        if args.years is None:
+            horizons = _planning_horizons(cfg)
+            if horizons:
+                args.years = ",".join(str(y) for y in horizons)
         guard_cfg = cfg.get("wind_capacity_guard") or {}
         args.guard_upper_multiplier = float(
             guard_cfg.get("target_upper_multiplier", args.guard_upper_multiplier)
@@ -161,6 +206,12 @@ def main() -> None:
         ).resolve()
     if args.version_dir is None:
         ap.error("--version-dir is required unless --config is provided")
+    if args.scenario_stem is None:
+        args.scenario_stem = "ll-current+FCG-linear2050"
+    if args.heating is None:
+        args.heating = "positive"
+    if args.years is None:
+        args.years = DEFAULT_YEARS
 
     summary = _summarize(args)
     args.output_csv.parent.mkdir(parents=True, exist_ok=True)

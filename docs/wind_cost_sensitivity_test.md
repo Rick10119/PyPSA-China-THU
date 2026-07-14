@@ -47,10 +47,21 @@ case 清单：
 configs/wind_cost_sensitivity/wind_cost_sensitivity_cases.csv
 ```
 
-以 `wind_cheap_x0p8` 为例，相对 core 的变化：
+这些 case config 会在运行 `scripts/run_wind_cost_sensitivity.py` 时自动从
+`config.yaml` 整份复制后重新生成（`planning_horizons`、`time_sampling` 等其他设置一并同步），
+再只覆盖 version、`wind_capacity_guard.target_upper_multiplier`、mid 情景下的
+`solar_cost_factor` / `wind_cost_factor`，以及火电灵活性价格口径
+（`daily_low_output_zero_threshold = 0.4`，与 storage-x1 / threshold_0p4 基准一致）。
+填充 `solar_value_dataset.xlsx` 时默认使用 `--allow-zero-price`。若只想刷新 config 不跑模型：
+
+```bash
+conda run -n pypsa python scripts/run_wind_cost_sensitivity.py --configs-only
+```
+
+以 `wind_cheap_x0p8` 为例，相对 `config.yaml` 的变化：
 
 ```yaml
-version: 0621.1H.3-wind-cheap-x0p8
+version: <config.yaml-version>-wind-cheap-x0p8
 
 wind_capacity_guard:
   target_upper_multiplier: 1.5

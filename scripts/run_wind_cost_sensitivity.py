@@ -1,13 +1,23 @@
 #!/usr/bin/env python3
-"""Run wind-cost sensitivity cases and compare solar value factors."""
+"""Run wind-cost sensitivity cases and compare solar value factors.
+
+By default, regenerates each case config as a full copy of ``--config``
+(``config.yaml``), then applies only wind capital-cost / wind-guard overrides.
+Solar-value filling matches the storage-x1 / thermal-flexibility 40% baseline
+(``--allow-zero-price`` with ``daily_low_output_zero_threshold = 0.4``).
+Solar value-factor comparison still defaults to the storage-x1 baseline workbook.
+"""
 
 from __future__ import annotations
 
 import argparse
+import copy
+import csv
 import shutil
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -16,12 +26,31 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_MANIFEST = ROOT / "configs" / "wind_cost_sensitivity" / "wind_cost_sensitivity_cases.csv"
-DEFAULT_BASELINE_CONFIG = ROOT / "configs" / "storage_availability_sensitivity" / "config_storage_x1.yaml"
+DEFAULT_CONFIG_DIR = ROOT / "configs" / "wind_cost_sensitivity"
+DEFAULT_SOURCE_CONFIG = ROOT / "config.yaml"
+DEFAULT_COMPARISON_CONFIG = ROOT / "configs" / "storage_availability_sensitivity" / "config_storage_x1.yaml"
+DEFAULT_FILL_PRICE_MODE = "allow-zero-price"
+DEFAULT_THERMAL_FLEXIBILITY_THRESHOLD = 0.4
+DEFAULT_CASES = (
+    # case, wind_cost_factor, wind_target_upper_multiplier, notes
+    ("wind_cheap_x0p8", 0.8, 1.5, "Wind capital cost 0.8x; wind guard upper bound 1.5x target"),
+    ("wind_cheap_x0p6", 0.6, 2.0, "Wind capital cost 0.6x; wind guard upper bound 2.0x target"),
+    ("wind_cheap_x0p4", 0.4, 2.5, "Wind capital cost 0.4x; wind guard upper bound 2.5x target"),
+)
+FILL_PRICE_MODE_ARGS = {
+    "planning-marginal": "--planning-marginal",
+    "mapped-csv": "--mapped-csv",
+    "allow-zero-price": "--allow-zero-price",
+}
 
 
 def _load_config(path: Path) -> dict:
     with path.open(encoding="utf-8") as f:
         return yaml.safe_load(f) or {}
+
+
+def _tag(value: float) -> str:
+    return f"{value:g}".replace("-", "m").replace(".", "p")
 
 
 def _version_dir(cfg: dict) -> Path:
@@ -91,7 +120,7 @@ def _plot_solar_comparison(summary: pd.DataFrame, output_png: Path) -> None:
     for case, group in summary.groupby("case", sort=False):
         group = group.sort_values("year")
         axes[0].plot(group["year"], group["value_factor"], marker="o", label=case)
-        if case != "baseline_storage_x1":
+        if not str(case).startswith("baseline_"):
             axes[1].plot(group["year"], group["delta_vs_baseline"], marker="o", label=case)
     axes[0].set_ylabel("Solar value factor")
     axes[1].set_ylabel("Delta vs baseline")
@@ -106,19 +135,198 @@ def _plot_solar_comparison(summary: pd.DataFrame, output_png: Path) -> None:
     plt.close(fig)
 
 
-def _case_rows(manifest: Path) -> list[dict]:
+def _case_specs_from_manifest(manifest: Path) -> list[tuple[str, float, float, str]]:
+    if not manifest.is_file():
+        return list(DEFAULT_CASES)
     rows = pd.read_csv(manifest).to_dict("records")
+    specs = []
     for row in rows:
-        row["config"] = (ROOT / str(row["config"])).resolve()
-        row["wind_cost_factor"] = float(row["wind_cost_factor"])
-        row["wind_target_upper_multiplier"] = float(row["wind_target_upper_multiplier"])
+        specs.append(
+            (
+                str(row["case"]),
+                float(row["wind_cost_factor"]),
+                float(row["wind_target_upper_multiplier"]),
+                str(row.get("notes") or ""),
+            )
+        )
+    return specs or list(DEFAULT_CASES)
+
+
+def _apply_wind_case(
+    base_cfg: dict[str, Any],
+    *,
+    case: str,
+    wind_cost_factor: float,
+    wind_target_upper_multiplier: float,
+    version_prefix: str,
+    fill_price_mode: str,
+    thermal_flexibility_threshold: float,
+) -> dict[str, Any]:
+    case_cfg = copy.deepcopy(base_cfg)
+    tag = case.removeprefix("wind_cheap_") if case.startswith("wind_cheap_") else f"x{_tag(wind_cost_factor)}"
+    case_cfg["version"] = f"{version_prefix}-{tag}"
+
+    case_cfg.setdefault("wind_capacity_guard", {})["target_upper_multiplier"] = float(
+        wind_target_upper_multiplier
+    )
+
+    market_mid = (
+        case_cfg.setdefault("aluminum", {})
+        .setdefault("scenario_dimensions", {})
+        .setdefault("market_opportunity", {})
+        .setdefault("mid", {})
+    )
+    # Keep solar at core; only wind capital cost is scaled.
+    market_mid["solar_cost_factor"] = 1.0
+    market_mid["wind_cost_factor"] = float(wind_cost_factor)
+
+    # Match storage-x1 / thermal-flexibility baseline: 40% daily low-output zero mask.
+    price_export = (
+        case_cfg.setdefault("dispatch_segmented_prices", {})
+        .setdefault("price_export", {})
+    )
+    price_export["daily_low_output_zero_threshold"] = float(thermal_flexibility_threshold)
+
+    sensitivity = case_cfg.setdefault("sensitivity", {})
+    sensitivity["wind_cost_factor"] = float(wind_cost_factor)
+    sensitivity["wind_target_upper_multiplier"] = float(wind_target_upper_multiplier)
+    sensitivity["thermal_flexibility_baseline"] = f"threshold_{_tag(thermal_flexibility_threshold)}"
+    sensitivity["thermal_flexibility_threshold"] = float(thermal_flexibility_threshold)
+    sensitivity["fill_price_mode"] = str(fill_price_mode)
+    return case_cfg
+
+
+def _update_case_configs(
+    *,
+    baseline_cfg: dict[str, Any],
+    config_dir: Path,
+    manifest: Path,
+    version_prefix: str,
+    case_specs: list[tuple[str, float, float, str]],
+    fill_price_mode: str,
+    thermal_flexibility_threshold: float,
+) -> list[dict]:
+    config_dir.mkdir(parents=True, exist_ok=True)
+    rows: list[dict] = []
+    print("Updating wind-cost sensitivity configs from source config:", flush=True)
+    for case, wind_cost_factor, wind_upper, notes in case_specs:
+        case_cfg = _apply_wind_case(
+            baseline_cfg,
+            case=case,
+            wind_cost_factor=wind_cost_factor,
+            wind_target_upper_multiplier=wind_upper,
+            version_prefix=version_prefix,
+            fill_price_mode=fill_price_mode,
+            thermal_flexibility_threshold=thermal_flexibility_threshold,
+        )
+        cfg_path = config_dir / f"config_{case}.yaml"
+        with cfg_path.open("w", encoding="utf-8") as f:
+            yaml.safe_dump(case_cfg, f, allow_unicode=True, sort_keys=False)
+        print(
+            f"  {case}: wind_cost={wind_cost_factor:g}x, guard_upper={wind_upper:g}x -> "
+            f"{cfg_path} | version-{case_cfg['version']}",
+            flush=True,
+        )
+        rows.append(
+            {
+                "case": case,
+                "config": str(cfg_path.relative_to(ROOT)),
+                "wind_cost_factor": float(wind_cost_factor),
+                "wind_target_upper_multiplier": float(wind_upper),
+                "notes": notes,
+            }
+        )
+
+    with manifest.open("w", encoding="utf-8", newline="") as f:
+        writer = csv.DictWriter(
+            f,
+            fieldnames=[
+                "case",
+                "config",
+                "wind_cost_factor",
+                "wind_target_upper_multiplier",
+                "notes",
+            ],
+        )
+        writer.writeheader()
+        writer.writerows(rows)
+    print(f"Wrote {manifest}", flush=True)
+    return rows
+
+
+def _case_rows(manifest_rows: list[dict]) -> list[dict]:
+    rows = []
+    for row in manifest_rows:
+        item = dict(row)
+        item["config"] = (ROOT / str(row["config"])).resolve()
+        item["wind_cost_factor"] = float(row["wind_cost_factor"])
+        item["wind_target_upper_multiplier"] = float(row["wind_target_upper_multiplier"])
+        rows.append(item)
     return rows
 
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--manifest", type=Path, default=DEFAULT_MANIFEST)
-    ap.add_argument("--baseline-config", type=Path, default=DEFAULT_BASELINE_CONFIG)
+    ap.add_argument(
+        "--config",
+        type=Path,
+        default=DEFAULT_SOURCE_CONFIG,
+        help="Source config to deepcopy into each wind-cheap case (default: config.yaml).",
+    )
+    ap.add_argument(
+        "--baseline-config",
+        type=Path,
+        default=None,
+        help=argparse.SUPPRESS,  # backward-compatible alias for --config
+    )
+    ap.add_argument(
+        "--comparison-config",
+        type=Path,
+        default=DEFAULT_COMPARISON_CONFIG if DEFAULT_COMPARISON_CONFIG.is_file() else DEFAULT_SOURCE_CONFIG,
+        help=(
+            "Config whose solar_value_dataset.xlsx is used as the comparison baseline "
+            "(default: storage-x1 if present, else config.yaml)."
+        ),
+    )
+    ap.add_argument("--config-dir", type=Path, default=DEFAULT_CONFIG_DIR)
+    ap.add_argument(
+        "--version-prefix",
+        default=None,
+        help=(
+            "Prefix for case versions. Default: '<source-version>-wind-cheap', "
+            "e.g. config.yaml version 0708.1H.1 -> version-0708.1H.1-wind-cheap-x0p8."
+        ),
+    )
+    ap.add_argument(
+        "--skip-config-update",
+        action="store_true",
+        help="Do not regenerate case configs from --config; use existing files.",
+    )
+    ap.add_argument(
+        "--configs-only",
+        action="store_true",
+        help="Only regenerate case configs/manifest from --config, then exit.",
+    )
+    ap.add_argument(
+        "--fill-price-mode",
+        choices=sorted(FILL_PRICE_MODE_ARGS),
+        default=DEFAULT_FILL_PRICE_MODE,
+        help=(
+            "Price source used when filling solar_value_dataset.xlsx after each wind-cost run. "
+            "Default matches the storage-x1 / thermal-flexibility 40% baseline "
+            "(planning LMP with mapped zero-price hours forced to zero)."
+        ),
+    )
+    ap.add_argument(
+        "--thermal-flexibility-threshold",
+        type=float,
+        default=DEFAULT_THERMAL_FLEXIBILITY_THRESHOLD,
+        help=(
+            "daily_low_output_zero_threshold written into each case config and used by "
+            "dispatch_segmented price export (default: 0.4)."
+        ),
+    )
     ap.add_argument("--template-workbook", type=Path, default=None)
     ap.add_argument("--output-dir", type=Path, default=ROOT / "results" / "wind_cost_sensitivity_summary")
     ap.add_argument("--cores", type=int, default=32)
@@ -129,25 +337,65 @@ def main() -> None:
     ap.add_argument("--snakemake-extra-args", nargs=argparse.REMAINDER, default=[])
     args = ap.parse_args()
 
-    baseline_cfg = _load_config(args.baseline_config.resolve())
-    baseline_version_dir = _version_dir(baseline_cfg)
+    if args.configs_only and args.skip_config_update:
+        ap.error("--configs-only cannot be combined with --skip-config-update")
+    if not 0.0 <= float(args.thermal_flexibility_threshold) <= 1.0:
+        ap.error("--thermal-flexibility-threshold must be between 0 and 1")
+
+    source_path = (args.baseline_config or args.config).resolve()
+    source_cfg = _load_config(source_path)
+    if "version" not in source_cfg:
+        raise KeyError(f"Source config must define 'version': {source_path}")
+
+    case_specs = _case_specs_from_manifest(args.manifest.resolve())
+    if args.skip_config_update:
+        if not args.manifest.is_file():
+            raise FileNotFoundError(
+                f"--skip-config-update requires an existing manifest: {args.manifest}"
+            )
+        manifest_rows = pd.read_csv(args.manifest.resolve()).to_dict("records")
+        print(f"Using existing configs from {args.manifest} (config update skipped).", flush=True)
+    else:
+        print(f"Source config for case regeneration: {source_path}", flush=True)
+        version_prefix = args.version_prefix or f"{source_cfg['version']}-wind-cheap"
+        manifest_rows = _update_case_configs(
+            baseline_cfg=source_cfg,
+            config_dir=args.config_dir.resolve(),
+            manifest=args.manifest.resolve(),
+            version_prefix=version_prefix,
+            case_specs=case_specs,
+            fill_price_mode=str(args.fill_price_mode),
+            thermal_flexibility_threshold=float(args.thermal_flexibility_threshold),
+        )
+
+    if args.configs_only:
+        return
+
+    comparison_path = args.comparison_config.resolve()
+    comparison_cfg = _load_config(comparison_path)
+    comparison_version_dir = _version_dir(comparison_cfg)
     baseline_workbook = (
         args.template_workbook.resolve()
         if args.template_workbook is not None
-        else baseline_version_dir / "solar_value_dataset.xlsx"
+        else comparison_version_dir / "solar_value_dataset.xlsx"
     )
     if not baseline_workbook.is_file():
         raise FileNotFoundError(f"Baseline/template workbook not found: {baseline_workbook}")
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
-    cases = _case_rows(args.manifest.resolve())
+    cases = _case_rows(manifest_rows)
 
     capacity_frames = []
     solar_frames = []
     baseline_series = _read_weighted_value_factor(baseline_workbook)
     baseline_series.insert(0, "wind_target_upper_multiplier", np.nan)
     baseline_series.insert(0, "wind_cost_factor", np.nan)
-    baseline_series.insert(0, "case", "baseline_storage_x1")
+    baseline_case = (
+        "baseline_storage_x1"
+        if "storage-x1" in str(comparison_cfg.get("version", ""))
+        else f"baseline_{comparison_cfg.get('version', 'config')}"
+    )
+    baseline_series.insert(0, "case", baseline_case)
     solar_frames.append(baseline_series)
 
     for row in cases:
@@ -177,6 +425,7 @@ def main() -> None:
                 str(cfg_path),
                 "--workbook",
                 str(workbook),
+                FILL_PRICE_MODE_ARGS[str(args.fill_price_mode)],
             ]
             if args.skip_plots_in_fill:
                 fill_cmd.append("--skip-plot")
