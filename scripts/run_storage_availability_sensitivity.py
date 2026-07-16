@@ -2,8 +2,9 @@
 """Prepare and optionally run storage availability sensitivity cases.
 
 Each case scales ``storage_capacity_guard.target_capacity_multiplier`` and writes
-an independent config/result version. Local mode runs Snakemake, then fills
-``solar_value_dataset.xlsx`` for that case.
+an independent config/result version. Local mode runs Snakemake, fills
+``solar_value_dataset.xlsx`` for that case, then runs storage-summary and
+thermal-flexibility post-processing.
 """
 
 from __future__ import annotations
@@ -128,11 +129,21 @@ def main() -> None:
         help=(
             "Price source used when filling solar_value_dataset.xlsx after each storage run. "
             "Default uses the mapped price sidecar with zero-price hours preserved, matching "
-            "the thermal-flexibility 40% baseline configured by daily_low_output_zero_threshold=0.4."
+            "the thermal-flexibility 40%% baseline configured by daily_low_output_zero_threshold=0.4."
         ),
     )
     ap.add_argument("--skip-plot", action="store_true")
     ap.add_argument("--run-local", action="store_true", help="Run all cases locally after generating files.")
+    ap.add_argument(
+        "--skip-summary",
+        action="store_true",
+        help="With --run-local, skip scripts/summarize_storage_availability_sensitivity.py.",
+    )
+    ap.add_argument(
+        "--skip-thermal-flexibility",
+        action="store_true",
+        help="With --run-local, skip scripts/run_thermal_flexibility_sensitivity.py.",
+    )
     args = ap.parse_args()
 
     config_path = args.config.resolve()
@@ -240,6 +251,43 @@ def main() -> None:
             if args.skip_plot:
                 fill_cmd.append("--skip-plot")
             _run(fill_cmd, cwd=ROOT)
+
+        if not args.skip_summary:
+            _run(
+                [
+                    sys.executable,
+                    "scripts/summarize_storage_availability_sensitivity.py",
+                    "--manifest",
+                    str(manifest),
+                ],
+                cwd=ROOT,
+            )
+
+        if not args.skip_thermal_flexibility:
+            storage_x1 = next(
+                (
+                    (case_config, version_dir)
+                    for multiplier, _, case_config, version_dir in generated
+                    if abs(float(multiplier) - 1.0) < 1e-9
+                ),
+                None,
+            )
+            if storage_x1 is None:
+                print(
+                    "Skip thermal flexibility sensitivity: no 1.0x storage case was generated in this run."
+                )
+            else:
+                storage_x1_config, storage_x1_version_dir = storage_x1
+                storage_x1_workbook = storage_x1_version_dir / "solar_value_dataset.xlsx"
+                thermal_cmd = [
+                    sys.executable,
+                    "scripts/run_thermal_flexibility_sensitivity.py",
+                    "--config",
+                    str(storage_x1_config),
+                ]
+                if storage_x1_workbook.is_file():
+                    thermal_cmd += ["--template-workbook", str(storage_x1_workbook)]
+                _run(thermal_cmd, cwd=ROOT)
 
 
 if __name__ == "__main__":
