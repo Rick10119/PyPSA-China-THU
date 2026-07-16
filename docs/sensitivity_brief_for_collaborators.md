@@ -1,104 +1,186 @@
-# 储能与火电灵活性敏感性分析简要说明
+# 光伏价值敏感性分析简要说明（合作者版）
 
-本文用于说明当前光伏价值因子（solar value factor）结果的核心情景、储能容量敏感性、火电灵活性敏感性，以及结果文件/字段命名方式。
+本文说明交付的 `solar_value_dataset_*.xlsx` 含义、三类敏感性情景，以及 core 情景采用的关键成本与装机上限假设。合作者收到的文件即下文「交付文件」结构；无需依赖仓库内其他结果目录。
 
-## 1. Solar value 指标命名
-
-所有情景的核心输出都是 `solar_value_dataset.xlsx`。主要字段含义如下：
-
-- `solar_ele_GWh`：该省该年的光伏发电量。
-- `value_factor_numerator`：光伏发电加权平均电价，即 PV weighted average price。
-- `value_factor_denominator`：全系统发电加权平均电价，即 system weighted average price。
-- `value_factor`：光伏价值因子，计算为 `value_factor_numerator / value_factor_denominator`。
-- `solar_penetration`：光伏渗透率。
-- `solar_curtailment_rate`：弃光率。
-- `solar_capacity_factor`：光伏容量因子。
-
-全国汇总图和汇总表使用 `solar_ele_GWh` 作为权重，对各省 `value_factor` 做发电量加权平均。
-
-## 2. Core 情景定义
-
-当前 core 情景建议理解为：
-
-- 储能情景：`storage-x1`，即 `storage_capacity_guard.target_capacity_multiplier = 1.0` 且电池资本成本为 `1.0x`。
-- 火电灵活性价格口径：`threshold_0p4`，即火电/同步机组低出力阈值为当日最大同步机组参考出力的 `40%`，并保留对应 zero-price mask。
-
-所有容量扩张情景在 2025-2055 年包含同步机组出力约束，其中 2025-2050 年为 10%，2055 年降为 5%，2060 年解除：
+## 1. 交付文件
 
 ```text
-2025-2050: 本省同步机组电力出力 >= 10% × 本省 AC 电力负荷
-2055:      本省同步机组电力出力 >= 5% × 本省 AC 电力负荷
-2060:      不施加同步机组出力底线
+collected_solar_value_files/
+├── storage/
+│   ├── solar_value_dataset_storage_x0p7.xlsx
+│   ├── solar_value_dataset_storage_x1.xlsx
+│   ├── solar_value_dataset_storage_x1p5.xlsx
+│   └── solar_value_dataset_storage_x2.xlsx
+├── thermal_flexibility/
+│   ├── solar_value_dataset_threshold_0.xlsx
+│   ├── solar_value_dataset_threshold_0p1.xlsx
+│   ├── solar_value_dataset_threshold_0p2.xlsx
+│   ├── solar_value_dataset_threshold_0p3.xlsx
+│   ├── solar_value_dataset_threshold_0p4.xlsx
+│   ├── solar_value_dataset_threshold_0_lmp.xlsx
+│   └── solar_value_dataset_threshold_0_sync.xlsx
+└── wind/
+    ├── solar_value_dataset_wind_cheap_x0p8.xlsx
+    ├── solar_value_dataset_wind_cheap_x0p6.xlsx
+    └── solar_value_dataset_wind_cheap_x0p4.xlsx
 ```
 
-注意这里的比例是本省 AC 电力负荷的比例，不是所有发电出力的比例。2055 年同步机底线放松到 5%，2060 年完全解除，因此后期光伏 value factor 可能进一步下降，反映更高新能源占比和更少同步机组支撑下的价格稀释。
+每个 xlsx 为省级–年度表。主要字段：
 
-## 3. 储能容量敏感性
+| 字段 | 含义 |
+|---|---|
+| `solar_ele_GWh` | 该省该年光伏发电量 |
+| `value_factor_numerator` | 光伏发电量加权平均电价（PV weighted price） |
+| `value_factor_denominator` | 系统发电量加权平均电价（system weighted price） |
+| `value_factor` | 光伏价值因子 = numerator / denominator |
+| `solar_penetration` | 光伏渗透率 |
+| `solar_curtailment_rate` | 弃光率 |
+| `solar_capacity_factor` | 光伏容量因子 |
 
-储能敏感性是完整模型重跑。做法是联动缩放 `storage_capacity_guard.target_capacity_multiplier` 和电池资本成本，每个组合生成独立 config 和结果目录。所有储能敏感性 workbook 统一用火电灵活性 `threshold_0p4` 价格口径填充，即 `fill_solar_value_dataset_2025.py --allow-zero-price` + `daily_low_output_zero_threshold = 0.4`。
+全国曲线可用 `solar_ele_GWh` 对各省 `value_factor` 做发电量加权平均。
 
-目录/命名：
+**Core 对照文件**：`storage/solar_value_dataset_storage_x1.xlsx`（储能上限 ×1，价格口径等同 `threshold_0p4`）。
 
-- `storage-x0p7`：储能容量目标为 core 的 0.7 倍，电池成本为 1.0 倍。
-- `storage-x1`：core 储能容量目标，电池成本为 1.0 倍。
-- `storage-x1p5`：储能容量目标为 core 的 1.5 倍，电池成本为 1.0 倍。
-- `storage-x2`：储能容量目标为 core 的 2 倍，电池成本为 1.0 倍。
+## 2. Core 情景与三类敏感性
 
-汇总文件：
+### 2.1 Core
+
+- 储能全国累计上限倍率：`1.0`（`storage_x1`）
+- 价格口径：火电/同步机低出力阈值 `0.4`（`threshold_0p4`）
+- 光伏、风电、电池资本成本倍数：均为 `1.0`
+- 风光全国装机目标带：目标的 `80%–130%`
+- 同步机出力底线（相对本省 AC 电力负荷）：2025–2050 为 `10%`，2055 为 `5%`，2060 为 `1%`
+
+### 2.2 储能容量敏感性（`storage/`）
+
+完整容量扩张重跑；只改储能全国累计**严格上限**倍率，电池成本仍为 `1.0x`，价格口径同 `threshold_0p4`。
+
+| 文件后缀 | 储能上限相对 core 目标 |
+|---|---:|
+| `storage_x0p7` | 70% |
+| `storage_x1` | 100%（core） |
+| `storage_x1p5` | 150% |
+| `storage_x2` | 200% |
+
+预期方向：储能上限越高，弃光通常越低，光伏 value factor 通常越高。
+
+### 2.3 火电灵活性敏感性（`thermal_flexibility/`）
+
+不重跑容量扩张；在 `storage_x1` 已求解网络上，只改价格后处理的低出力置零阈值。
+
+| 文件后缀 | 含义 |
+|---|---|
+| `threshold_0` | 阈值 0，不含同步机底线 mask（主曲线端点） |
+| `threshold_0p1` … `threshold_0p4` | 阈值 0.1–0.4；`threshold_0p4` = core 价格口径 |
+| `threshold_0_lmp` | 纯 planning LMP 参考线 |
+| `threshold_0_sync` | 阈值 0 + 仅同步机底线 mask（参考线） |
+
+置零规则（简化）：
 
 ```text
-results/storage_availability_sensitivity_summary/storage_availability_national_summary.csv
-results/storage_availability_sensitivity_summary/storage_availability_sensitivity_summary.xlsx
+若本省同步机组参考出力 < 当日最大同步机组参考出力 × threshold
+→ 该省该小时价格置 0（仅在有光伏出力的小时生效）
 ```
 
-关键结果（全国发电量加权 solar value factor）需在新一组 `0.7 / 1.0 / 1.5 / 2.0` 容量、统一 `1.0x` 成本场景重跑后更新。
+同步机参考集合含煤电、核电、气电、CHP、生物质及 AC 侧水电；不含抽蓄与 `hydro_inflow`。主曲线一般满足 `VF(0) ≥ VF(0.1) ≥ … ≥ VF(0.4)`；两条参考线不参与该序列。
 
-解释：该敏感性只改变储能可用容量，电池成本统一保持 `1.0x`。储能容量越高，光伏发电更容易跨时段转移，弃光率下降，solar value factor 上升。
+### 2.4 风电降本敏感性（`wind/`）
 
-## 4. 火电灵活性敏感性
+完整容量扩张重跑；降低风电资本成本，并同步放宽风电装机上限。光伏与电池成本保持 core；价格口径同 `threshold_0p4`。
 
-火电灵活性敏感性不是完整重跑容量扩张模型，而是基于 `storage-x1` 已求解网络做价格后处理。它以 planning marginal price 为基础，针对不同最小出力阈值生成 zero-price mask，然后重新填充 `solar_value_dataset.xlsx`。
+| 文件后缀 | 风电成本倍数 | 风电装机上限（相对全国目标） |
+|---|---:|---:|
+| `wind_cheap_x0p8` | 0.8× | 150%（core 为 130%） |
+| `wind_cheap_x0p6` | 0.6× | 200% |
+| `wind_cheap_x0p4` | 0.4× | 250% |
 
-目录/命名：
+预期方向：风电更便宜后装机可能上升并挤出部分光伏，从而改变光伏 value factor。
 
-- `threshold_0`：最小出力阈值为 0；core 火电灵活性价格口径。
-- `threshold_0p1`：最小出力阈值为 0.1。
-- `threshold_0p2`：最小出力阈值为 0.2。
-- `threshold_0p3`：最小出力阈值为 0.3。
-- `threshold_0p4`：最小出力阈值为 0.4。
-- `threshold_0_lmp`：纯 planning LMP 参考线。
-- `threshold_0_sync`：阈值 0 + 同步机底线 zero mask 参考线。
 
-低出力 zero-price mask 的含义：
+---
 
-```text
-若本省同步机组参考出力 < 当日最大同步机组参考出力 × threshold，则该省该小时 mapped price 置 0
-```
+## 3. 关键成本假设（core = 1.0×）
 
-当前低出力参考出力使用 `synchronous_generation_floor` 的同步机组全集，因此包括煤电、煤 CC、核电、燃气、CHP、生物质，以及接在 AC 电力母线上的 `hydroelectricity` 水电；`hydro_inflow` 和抽蓄 `PHS` 不计入。mapped 价格曲线本身仍使用热电报价栈。
+贴现率 **7%**；光伏/陆风/海风寿命 **25 年**。对照换算可用 **7.8 CNY/EUR**。
 
-汇总文件：
+### 3.1 投资成本轨迹（EUR）
 
-```text
-results/version-0621.1H.3-storage-x1/thermal_flexibility_sensitivity/thermal_flexibility_value_factor_summary.csv
-```
+| 年份 | 光伏 EUR/kW | 陆风 EUR/kW | 海风 EUR/kW | 电池功率 EUR/kW | 电池能量 EUR/kWh | 4h 电池折合 EUR/kWh |
+|---:|---:|---:|---:|---:|---:|---:|
+| 2025 | 366 | 487 | 1282 | 60.3 | 99.2 | ~114 |
+| 2030 | 300 | 418 | 1174 | 44.9 | 75.3 | ~87 |
+| 2040 | 252 | 375 | 897 | 30.5 | 51.2 | ~59 |
+| 2050 | 240 | 331 | 841 | 16.8 | 39.8 | ~44 |
+| 2055 | 228 | 310 | 827 | 16.8 | 39.8 | ~44 |
+| 2060 | 216 | 288 | 814 | 16.8 | 39.8 | ~44 |
 
-关键结果（全国发电量加权 solar value factor）：
+说明：4h 折合 ≈ `(battery inverter + 4 × battery storage) / 4`。2050 后电池投资不再下降；光伏与风电继续缓降。
 
-| case | min-output threshold | 2050 | 2055 | 2060 |
-|---|---:|---:|---:|---:|
-| `threshold_0` | 0.0 | 0.584 | 0.584 | 0.569 |
-| `threshold_0p1` | 0.1 | 0.584 | 0.424 | 0.447 |
-| `threshold_0p2` | 0.2 | 0.557 | 0.396 | 0.427 |
-| `threshold_0p3` | 0.3 | 0.517 | 0.372 | 0.411 |
-| `threshold_0p4` | 0.4 | 0.467 | 0.354 | 0.401 |
+约合 CNY（×7.8）：
 
-解释：threshold 越高，越多低出力小时被视为 must-run/zero-price 时段，光伏出力更容易落在零价小时，因此 value factor 下降。2055 年同步机组出力底线降为 7.5%，2060 年进一步降为 5%，系统中同步机组支撑减少，光伏 value factor 在高新能源占比情景下进一步下降。
+| 年份 | 光伏 CNY/kW | 陆风 CNY/kW | 海风 CNY/kW | 4h 电池 CNY/kWh |
+|---:|---:|---:|---:|---:|
+| 2025 | ~2,855 | ~3,800 | ~10,000 | ~891 |
+| 2030 | ~2,340 | ~3,263 | ~9,157 | ~675 |
+| 2050 | ~1,872 | ~2,584 | ~6,562 | ~343 |
+| 2060 | ~1,685 | ~2,246 | ~6,346 | ~343 |
 
-为什么 `threshold_0p1` 在 2025-2050 年通常和 `threshold_0` 很接近：这些年份的容量扩张/调度结果本身已经施加了同步机组出力底线，即同步机组出力至少约为本省 AC 电力负荷的 10%。这个模型内生约束通常已经高于或接近后处理中的 `0.1 × 当日最大同步机组参考出力` 低出力阈值，所以额外的 `threshold_0p1` zero-price mask 很少再新增小时。2055 年底线降为 7.5%、2060 年降为 5% 后，`threshold_0p1` 才会明显低于 `threshold_0`。
+### 3.2 成本来源
 
-## 5. 推荐阅读结果的顺序
+| 技术 | 来源摘要 |
+|---|---|
+| 光伏 | Sun et al.《碳达峰碳中和目标下电力系统成本与价格水平预测》基线 + 2020–2060 降本路径 |
+| 陆风 | 2020 基线：中国电力行业年度发展报告 / CCTD；远期趋势：NREL ATB |
+| 海风 | 2020–2030：Danish Energy Agency；2030–2060：Sun et al. 路径（不含并网附加项） |
+| 电池 | UCSB China power system template（约 2700 CNY/kW·4h）+ NEA 新型储能相关报告；寿命/效率等部分参数来自 DEA storage catalogue |
 
-1. 先看 `storage-x1 + threshold_0p4`，作为 core solar value。
-2. 再看储能敏感性 `storage-x0p7 / x1 / x1p5 / x2`，判断储能容量对 solar value 的影响。
-3. 最后看火电灵活性 `threshold_0 / 0p1 / 0p2 / 0p3 / 0p4`，判断低出力 must-run/zero-price 假设对 solar value 的影响。
+风电降本情景：上表陆风/海风投资 × `0.8 / 0.6 / 0.4`；光伏与电池按照基准情景（逐年下降）。
+
+---
+
+## 4. 关键装机上限假设
+
+### 4.1 全国目标轨迹（未乘 guard 倍率前）
+
+**光伏**（CPIA 2026 预测与后续年均新增约 238 GW 外推；2025 为 NEA 并网统计）
+
+| 年份 | 目标 GW |
+|---:|---:|
+| 2025 | 1,200 |
+| 2030 | 2,390 |
+| 2050 | 7,150 |
+| 2060 | 9,530 |
+
+**陆风 / 海风**（2025：NEA 统计；2030+：北京风能宣言 2.0 总量目标及分拆/插值假设）
+
+| 年份 | 陆风目标 GW | 海风目标 GW | 风电合计 GW |
+|---:|---:|---:|---:|
+| 2025 | 590 | 47 | 637 |
+| 2030 | 1,178 | 122 | 1,300 |
+| 2050 | 3,420 | 380 | 3,800 |
+| 2060 | 4,500 | 500 | 5,000 |
+
+**新型储能（电池）**（NEA /《新型储能规模化建设专项行动方案》/《储能产业研究白皮书 2026》轨迹；全国总量约束，无省级分摊）
+
+| 年份 | 累计目标 GW | 备注 |
+|---:|---:|---|
+| 2025 | 136 | 已投运统计（guard 自 2030 年起生效） |
+| 2030 | 480 | 另设政策下限 370 GW；模型上限取 480 GW |
+| 2050 | 850 | 白皮书趋势外推 |
+| 2060 | 1,000 | 白皮书趋势外推 |
+
+### 4.2 Guard 如何落到优化约束
+
+| 技术 | 目标带（相对上表全国目标） | Core 实际可建区间 | 敏感性如何改 |
+|---|---|---|---|
+| 光伏 | 下限 80%、上限 130% | 目标 × `[0.8, 1.3]` | 本批敏感性不改 |
+| 风电（陆+海分别） | 下限 80%、上限 130% | 目标 × `[0.8, 1.3]` | 降本情景把**上限**改为 1.5 / 2.0 / 2.5；下限仍 0.8 |
+| 电池储能 | 下限 0%、上限 100% | 允许少建，**禁止超过**目标 | `storage_x*` 把目标整体 × 0.7 / 1.0 / 1.5 / 2.0 后再取上限 |
+
+因此 core 下例如：
+
+- 2050 光伏上限 ≈ 7,150 × 1.3 ≈ **9,295 GW**
+- 2050 陆风上限 ≈ 3,420 × 1.3 ≈ **4,446 GW**；海风上限 ≈ 380 × 1.3 ≈ **494 GW**
+- 2050 电池上限 = 850 × 1.0 = **850 GW**（`storage_x2` 则为 1,700 GW）
+
+省内风光份额按历史累计装机比例分摊；储能仅为全国总量约束。

@@ -1,11 +1,12 @@
-# 火电灵活性与储能容量限制敏感性分析
+# 光伏价值敏感性分析
 
-本文档说明两类用于评估 `fill_solar_value_dataset_2025.py` 结果稳健性的敏感性分析：
+本文档说明三类用于评估 `fill_solar_value_dataset_2025.py` 结果稳健性的敏感性分析：
 
 - 火电灵活性敏感性：改变价格重构和后处理中的火电最小出力阈值。
-- 储能容量限制敏感性：联动改变 `storage_capacity_guard` 中储能可用容量目标和电池资本成本。
+- 储能容量限制敏感性：缩放 `storage_capacity_guard` 中的储能可用容量目标（默认电池资本成本保持 `1.0x`）。
+- 风电降本敏感性：降低风电资本成本，并同步放宽 `wind_capacity_guard` 上限。
 
-两者的计算对象都是 `solar_value_dataset.xlsx` 中的光伏价值因子、光伏渗透率、弃光率、容量因子等指标，但实现方式不同。
+三者的计算对象都是 `solar_value_dataset.xlsx` 中的光伏价值因子、光伏渗透率、弃光率、容量因子等指标，但实现方式不同。储能与风电敏感性默认与火电 `threshold_0p4` 使用相同价格口径。
 
 ## 1. 火电灵活性敏感性
 
@@ -133,12 +134,12 @@ scripts/summarize_storage_availability_sensitivity.py
 用途：
 
 - 这是完整模型重跑敏感性分析。
-- 通过 `storage_capacity_guard.target_capacity_multiplier` 缩放储能可用容量目标，同时调整 `market_opportunity.mid.battery_cost_factor`。
+- 通过 `storage_capacity_guard.target_capacity_multiplier` 缩放储能可用容量目标；默认各 case 的 `battery_cost_factor` 均为 `1.0`（可用 `--battery-cost-factors` 覆盖）。
 - 储能约束使用严格上限：`target_lower_multiplier = 0.0`，`target_upper_multiplier = 1.0`，即允许少建，但不允许超过倍率后的目标容量。
 - 每个倍率生成独立 config 和独立 results version。
 - Snakemake 跑完后自动调用 `fill_solar_value_dataset_2025.py --allow-zero-price` 填充该倍率对应的 `solar_value_dataset.xlsx`；默认价格口径为火电灵活性 `threshold_0p4`（`daily_low_output_zero_threshold = 0.4`）。
 
-默认容量/成本组合：
+默认容量组合：
 
 | case | 储能容量严格上限 | 电池资本成本 |
 |---|---:|---:|
@@ -204,16 +205,7 @@ python scripts/run_storage_availability_sensitivity.py \
 
 ### 2.3 储能敏感性输出位置
 
-默认四个结果目录：
-
-```text
-results/version-0621.1H.3-storage-x0p7/
-results/version-0621.1H.3-storage-x1/
-results/version-0621.1H.3-storage-x1p5/
-results/version-0621.1H.3-storage-x2/
-```
-
-其中 `0621.1H.3` 来自当前 `config.yaml` 的 `version`。如果以后 base config 版本号改变，输出目录也会相应变成：
+默认四个结果目录（`<base-version>` 取自当前 `config.yaml` 的 `version`，例如 `0708.1H.1`）：
 
 ```text
 results/version-<base-version>-storage-x0p7/
@@ -270,18 +262,127 @@ storage_availability_value_factor_comparison.pdf
 python scripts/summarize_storage_availability_sensitivity.py --allow-missing
 ```
 
-## 3. 两类敏感性对比
+## 3. 风电降本敏感性
+
+脚本：
+
+```bash
+scripts/run_wind_cost_sensitivity.py
+```
+
+用途：
+
+- 这是完整模型重跑敏感性分析。
+- 从 `config.yaml` 整份复制后生成各 case config，再只覆盖 version、`wind_cost_factor`、`wind_capacity_guard.target_upper_multiplier`，以及火电灵活性价格口径（默认 `daily_low_output_zero_threshold = 0.4`）。
+- 光伏、电池、H2、Sabatier 等其他成本保持 core；`solar_cost_factor = 1.0`。
+- 目的：检查风电变便宜后装机是否进一步上升，以及是否触达 `wind_capacity_guard` 上限，并观察对光伏 value factor 的影响。
+- Snakemake 跑完后默认用 `--allow-zero-price`（与 storage-x1 / threshold_0p4 一致）填充 `solar_value_dataset.xlsx`；对比基准默认取 storage-x1 的 workbook。
+
+默认 case：
+
+| case | wind cost factor | wind guard upper multiplier |
+|---|---:|---:|
+| `wind_cheap_x0p8` | 0.8 | 1.5 |
+| `wind_cheap_x0p6` | 0.6 | 2.0 |
+| `wind_cheap_x0p4` | 0.4 | 2.5 |
+
+含义：陆风/海风资本成本分别降为 core 的 80% / 60% / 40%，同时把风电 guard upper bound 放宽到 target 的 1.5 / 2.0 / 2.5 倍，避免降本后立刻被旧上限卡住。
+
+成本调整作用于每个规划年：Snakemake 读取 `data/costs/costs_<year>.csv` 后，`wind_cost_factor` 会应用到该年的 `onwind` / `offwind` capital cost。
+
+### 3.1 生成 config 和 manifest
+
+只刷新 config / manifest，不跑模型：
+
+```bash
+python scripts/run_wind_cost_sensitivity.py --configs-only
+```
+
+生成的 config：
+
+```text
+configs/wind_cost_sensitivity/config_wind_cheap_x0p8.yaml
+configs/wind_cost_sensitivity/config_wind_cheap_x0p6.yaml
+configs/wind_cost_sensitivity/config_wind_cheap_x0p4.yaml
+```
+
+生成的 manifest：
+
+```text
+configs/wind_cost_sensitivity/wind_cost_sensitivity_cases.csv
+```
+
+### 3.2 本地运行
+
+一键跑三个 case，并在结束后自动填充 solar value、汇总与画图：
+
+```bash
+python scripts/run_wind_cost_sensitivity.py --cores 32
+```
+
+若模型已跑完，只想重新填充 / 汇总：
+
+```bash
+python scripts/run_wind_cost_sensitivity.py --skip-snakemake
+```
+
+也可分别用 Snakemake 跑单个 config：
+
+```bash
+snakemake --configfile configs/wind_cost_sensitivity/config_wind_cheap_x0p8.yaml --cores 32
+snakemake --configfile configs/wind_cost_sensitivity/config_wind_cheap_x0p6.yaml --cores 32
+snakemake --configfile configs/wind_cost_sensitivity/config_wind_cheap_x0p4.yaml --cores 32
+```
+
+### 3.3 风电敏感性输出位置
+
+默认三个结果目录：
+
+```text
+results/version-<base-version>-wind-cheap-x0p8/
+results/version-<base-version>-wind-cheap-x0p6/
+results/version-<base-version>-wind-cheap-x0p4/
+```
+
+每个结果目录中主要包括：
+
+```text
+postnetworks/
+dispatch_segmented/
+prices/
+solar_value_dataset.xlsx
+```
+
+汇总输出：
+
+```text
+results/wind_cost_sensitivity_summary/
+```
+
+主要文件：
+
+```text
+wind_cost_solar_value_factor_comparison.csv
+wind_cost_solar_value_factor_comparison.png
+wind_cost_capacity_comparison.csv
+wind_cost_sensitivity_summary.xlsx
+```
+
+解读时重点看：`built_vs_guard_upper` 是否接近 1.0（是否顶到上限）、陆风/海风装机相对 core 是否上升，以及 solar value factor 是否因更多风电替代/挤出光伏而变化。更细的基准诊断与装机对比说明见 `docs/wind_cost_sensitivity_test.md`。
+
+## 4. 三类敏感性对比
 
 | 敏感性 | 是否重跑容量扩张 | 改变对象 | 默认 case | 主要输出 |
 |---|---:|---|---|---|
-| 火电灵活性 | 否 | planning marginal price 的低出力置零阈值 | `0.4, 0.3, 0.2, 0.1, 0.0` | `thermal_flexibility_sensitivity/` |
-| 储能容量/成本限制 | 是 | `storage_capacity_guard.target_capacity_multiplier` + `battery_cost_factor` | `0.7/1.0, 1.0/1.0, 1.5/1.0, 2.0/1.0` | `version-*-storage-x*/` |
+| 火电灵活性 | 否 | planning marginal price 的低出力置零阈值 | `0.4, 0.3, 0.2, 0.1, 0.0` | `version-*-storage-x1/thermal_flexibility_sensitivity/` |
+| 储能容量限制 | 是 | `storage_capacity_guard.target_capacity_multiplier`（电池成本默认 1.0x） | `0.7, 1.0, 1.5, 2.0` | `version-*-storage-x*/` |
+| 风电降本 | 是 | `wind_cost_factor` + `wind_capacity_guard.target_upper_multiplier` | `0.8/1.5, 0.6/2.0, 0.4/2.5` | `version-*-wind-cheap-x*/` |
 
-储能敏感性默认与火电 `threshold_0p4` 使用相同价格口径：基于 planning marginal price 的 mapped sidecar，并保留 40% 低出力 zero-price mask。若 `storage-x1` 与火电 `threshold_0p4` 仍有差异，来自 `storage-x1` 完整重跑与火电后处理复用网络之间的容量/调度差别，而不是低出力阈值口径不同。
+储能与风电敏感性默认与火电 `threshold_0p4` 使用相同价格口径：基于 planning marginal price 的 mapped sidecar，并保留 40% 低出力 zero-price mask。若 `storage-x1` 与火电 `threshold_0p4` 仍有差异，来自 `storage-x1` 完整重跑与火电后处理复用网络之间的容量/调度差别，而不是低出力阈值口径不同。
 
 建议流程：
 
 1. 先确认 base config 已能成功生成 `postnetwork`、`dispatch_segmented` 和 `prices`。
 2. 火电灵活性敏感性可先跑，因为它只做后处理，速度较快。
-3. 储能容量限制敏感性需要完整重跑模型；生成 config 后按可用计算环境运行对应 case。
-4. 两类结果都以 `solar_value_dataset.xlsx` 为核心输出，后续画图或表格比较时优先使用对应的 summary CSV / Excel。
+3. 储能容量限制与风电降本敏感性都需要完整重跑模型；生成 config 后按可用计算环境运行对应 case。
+4. 三类结果都以 `solar_value_dataset.xlsx` 为核心输出，后续画图或表格比较时优先使用对应的 summary CSV / Excel。
