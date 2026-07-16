@@ -1,4 +1,4 @@
-version: 0708.1H.1-wind-cheap-x0p4
+version: 0708.1H.1-storage-x1
 logging_level: INFO
 foresight: myopic
 baseyear: 2025
@@ -96,7 +96,7 @@ wind_capacity_guard:
   apply_end_year: 2060
   allow_underbuild_only: false
   target_lower_multiplier: 0.8
-  target_upper_multiplier: 2.5
+  target_upper_multiplier: 1.3
   tolerance: 0.2
 nuclear_capacity_guard:
   enabled: true
@@ -202,6 +202,8 @@ dispatch_segmented_prices:
       - 1.5
       - 1.7
       - 2.0
+    daily_low_output_zero_threshold_by_year: {}
+    apply_synchronous_generation_floor_zero_mask: true
   carriers:
     Generator:
       coal power plant:
@@ -335,8 +337,6 @@ aluminum:
         battery_cost_factor: 1.0
         h2_cost_factor: 1.0
         sabatier_cost_factor: 1.0
-        solar_cost_factor: 1.0
-        wind_cost_factor: 0.4
       high:
         vre_cost_factor: 1.0
         battery_cost_factor: 1.5
@@ -918,8 +918,8 @@ existing_capacities:
   threshold_capacity: 1
   battery_max_hours_existing: 2.58
 sensitivity:
-  wind_cost_factor: 0.4
-  wind_target_upper_multiplier: 2.5
+  storage_availability_multiplier: 1.0
+  battery_cost_factor: 1.0
   thermal_flexibility_baseline: threshold_0p4
   thermal_flexibility_threshold: 0.4
   fill_price_mode: allow-zero-price

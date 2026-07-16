@@ -115,8 +115,8 @@ synchronous_generation_floor:
   apply_end_year: 2060
   ratio: 0.1
   ratio_by_year:
-    2055: 0.075
-    2060: 0.05
+    2055: 0.05
+    2060: 0.01
   Generator:
   - coal power plant
   - coal cc
@@ -145,6 +145,7 @@ storage_capacity_guard:
   national_capacity_csv: data/p_nom/national_battery_capacity_from_planning.csv
   national_min_capacity_mw_by_year:
     2030: 370000
+    2035: 480000
   target_lower_multiplier: 0.0
   target_upper_multiplier: 1.0
   tolerance: 0.1

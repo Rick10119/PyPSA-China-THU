@@ -65,6 +65,7 @@ from solar_capacity_guard import apply_solar_capacity_guard
 from wind_capacity_guard import apply_wind_capacity_guard
 from storage_capacity_guard import (
     apply_storage_capacity_guard,
+    apply_battery_max_hours_caps,
     add_battery_max_hours_constraints,
     add_storage_capacity_guard_constraints,
 )
@@ -182,6 +183,7 @@ def prepare_network(
     apply_wind_capacity_guard(n, cfg_for_guard)
     apply_nuclear_capacity_guard(n, cfg_for_guard)
     apply_storage_capacity_guard(n, cfg_for_guard, scenario_context=scenario_context)
+    apply_battery_max_hours_caps(n, cfg_for_guard)
     if planning_horizon is None:
         planning_horizon = getattr(getattr(globals().get("snakemake", None), "wildcards", None), "planning_horizons", None)
     if planning_horizon is None and len(n.snapshots):

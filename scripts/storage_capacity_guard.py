@@ -223,66 +223,213 @@ def apply_storage_capacity_guard(n, config, scenario_context: dict | None = None
     )
 
 
+def _battery_pair_id(name: str, component: str) -> str:
+    """
+    Match store <-> discharger assets across myopic vintages.
+
+    Examples:
+    - 'Anhui battery'              <-> 'Anhui battery discharger'
+    - 'Anhui battery-2030'         <-> 'Anhui battery discharger-2030'
+    """
+    name = str(name)
+    if component == "store":
+        marker = " battery"
+    elif component == "discharger":
+        marker = " battery discharger"
+    else:
+        raise ValueError(f"Unknown battery component type: {component}")
+    if marker not in name:
+        return _province_from_battery_index(name)
+    province, tail = name.split(marker, 1)
+    return province + tail
+
+
+def _battery_stores(n) -> pd.DataFrame:
+    if not hasattr(n, "stores") or n.stores.empty:
+        return pd.DataFrame()
+    return n.stores[n.stores.carrier.astype(str) == "battery"]
+
+
+def _battery_dischargers(n) -> pd.DataFrame:
+    if not hasattr(n, "links") or n.links.empty:
+        return pd.DataFrame()
+    links = n.links[n.links.carrier.astype(str) == "battery"]
+    if links.empty:
+        return pd.DataFrame()
+    return links[links.index.astype(str).str.contains(" battery discharger")]
+
+
+def _iter_battery_store_discharger_pairs(n):
+    stores = _battery_stores(n)
+    dischargers = _battery_dischargers(n)
+    if stores.empty or dischargers.empty:
+        return
+
+    dis_by_pair = {_battery_pair_id(idx, "discharger"): idx for idx in dischargers.index}
+    for store_idx in stores.index:
+        pair_id = _battery_pair_id(store_idx, "store")
+        yield pair_id, store_idx, dis_by_pair.get(pair_id)
+
+
+def _linopy_var_or_fixed(model_var, idx, extendable: bool, fixed_value: float):
+    if bool(extendable) and model_var is not None:
+        try:
+            return 0.0, [model_var.loc[idx]]
+        except (KeyError, ValueError, TypeError):
+            pass
+    return float(fixed_value), []
+
+
+def _linear_sum(constant: float, terms: list):
+    if not terms:
+        return constant
+    expr = terms[0]
+    if constant:
+        expr = expr + constant
+    for term in terms[1:]:
+        expr = expr + term
+    return expr
+
+
+def _component_capacity_expr(n, component_df, indices, ext_col: str, nom_col: str, model_var_name: str):
+    model_var = n.model[model_var_name] if model_var_name in n.model.variables else None
+    constant = 0.0
+    terms: list = []
+    for idx in indices:
+        row = component_df.loc[idx]
+        fixed, expr_terms = _linopy_var_or_fixed(
+            model_var,
+            idx,
+            bool(row[ext_col]),
+            float(row[nom_col]),
+        )
+        constant += fixed
+        terms.extend(expr_terms)
+    return constant, terms
+
+
+def apply_battery_max_hours_caps(n, config) -> None:
+    """Clip static battery energy to max_hours times paired discharger power."""
+    max_hours = _battery_max_hours(config)
+    if max_hours <= 0:
+        return
+
+    clipped = 0
+    capped = 0
+    for _pair_id, store_idx, dis_idx in _iter_battery_store_discharger_pairs(n):
+        if dis_idx is None:
+            continue
+
+        p_nom = float(n.links.at[dis_idx, "p_nom"])
+        p_max = float(n.links.at[dis_idx, "p_nom_max"])
+        e_cap = max_hours * p_nom
+        e_max_cap = max_hours * p_max if np.isfinite(p_max) else np.inf
+
+        if float(n.stores.at[store_idx, "e_nom"]) > e_cap + 1e-6:
+            n.stores.at[store_idx, "e_nom"] = e_cap
+            clipped += 1
+        if float(n.stores.at[store_idx, "e_nom_min"]) > e_cap + 1e-6:
+            n.stores.at[store_idx, "e_nom_min"] = e_cap
+
+        if bool(n.stores.at[store_idx, "e_nom_extendable"]) and np.isfinite(e_max_cap):
+            current_max = float(n.stores.at[store_idx, "e_nom_max"])
+            if not np.isfinite(current_max) or current_max > e_max_cap + 1e-6:
+                n.stores.at[store_idx, "e_nom_max"] = e_max_cap
+                capped += 1
+
+    if clipped or capped:
+        logger.info(
+            "Battery max-hours caps: clipped=%s, capped=%s, max_hours=%.2f",
+            clipped,
+            capped,
+            max_hours,
+        )
+
+
 def add_battery_max_hours_constraints(n, snapshots, config=None) -> None:
     """
-    Couple each province's battery energy capacity to its discharger power.
+    Couple battery energy and discharger power by vintage and by province.
 
-    Enforces store e_nom <= max_hours * discharger p_nom so optimized duration
-    cannot exceed electricity.max_hours.battery.
+    Myopic networks rename extendable assets to ``<province> battery-<year>`` and
+    ``<province> battery discharger-<year>``. Constraints must therefore be
+    applied per matched vintage, plus a provincial aggregate as a safety net.
     """
     cfg = config if isinstance(config, dict) else getattr(n, "config", {}) or {}
     max_hours = _battery_max_hours(cfg)
     if max_hours <= 0:
         return
 
-    if not hasattr(n, "stores") or n.stores.empty or not hasattr(n, "links") or n.links.empty:
+    stores = _battery_stores(n)
+    dischargers = _battery_dischargers(n)
+    if stores.empty or dischargers.empty:
         return
 
-    battery_stores = n.stores[n.stores.carrier.astype(str) == "battery"]
-    if battery_stores.empty:
-        return
-
-    battery_links = n.links[n.links.carrier.astype(str) == "battery"]
-    dischargers = battery_links[battery_links.index.astype(str).str.contains(" battery discharger")]
-    if dischargers.empty:
-        return
-
-    link_p_nom = n.model["Link-p_nom"] if "Link-p_nom" in n.model.variables else None
     store_e_nom = n.model["Store-e_nom"] if "Store-e_nom" in n.model.variables else None
-    if link_p_nom is None or store_e_nom is None:
+    link_p_nom = n.model["Link-p_nom"] if "Link-p_nom" in n.model.variables else None
+    if store_e_nom is None or link_p_nom is None:
         logger.warning("Battery max-hours: optimization variables missing; skip.")
         return
 
-    discharger_by_province = {
-        _province_from_battery_index(str(idx)): idx for idx in dischargers.index
-    }
-
-    added = 0
-    skipped = 0
-    for store_idx in battery_stores.index:
-        province = _province_from_battery_index(str(store_idx))
-        dis_idx = discharger_by_province.get(province)
+    added_pairs = 0
+    skipped_pairs = 0
+    for pair_id, store_idx, dis_idx in _iter_battery_store_discharger_pairs(n):
         if dis_idx is None:
-            skipped += 1
-            continue
-        try:
-            lhs = store_e_nom.loc[store_idx]
-            rhs = max_hours * link_p_nom.loc[dis_idx]
-        except (KeyError, ValueError):
-            skipped += 1
+            skipped_pairs += 1
             continue
 
-        n.model.add_constraints(
-            lhs <= rhs,
-            name=f"battery-max-hours-{_safe_constraint_suffix(province)}",
+        e_const, e_terms = _linopy_var_or_fixed(
+            store_e_nom,
+            store_idx,
+            bool(n.stores.at[store_idx, "e_nom_extendable"]),
+            float(n.stores.at[store_idx, "e_nom"]),
         )
-        added += 1
+        p_const, p_terms = _linopy_var_or_fixed(
+            link_p_nom,
+            dis_idx,
+            bool(n.links.at[dis_idx, "p_nom_extendable"]),
+            float(n.links.at[dis_idx, "p_nom"]),
+        )
+        if not e_terms and not p_terms:
+            continue
+
+        e_lhs = _linear_sum(e_const, e_terms)
+        p_rhs = max_hours * _linear_sum(p_const, p_terms)
+        n.model.add_constraints(
+            e_lhs <= p_rhs,
+            name=f"battery-max-hours-pair-{_safe_constraint_suffix(pair_id)}",
+        )
+        added_pairs += 1
+
+    added_provinces = 0
+    for province in sorted(stores.index.to_series().map(_province_from_battery_index).unique()):
+        store_idx = stores.index[stores.index.to_series().map(_province_from_battery_index) == province]
+        dis_idx = dischargers.index[dischargers.index.to_series().map(_province_from_battery_index) == province]
+        if len(store_idx) == 0 or len(dis_idx) == 0:
+            continue
+
+        e_const, e_terms = _component_capacity_expr(
+            n, stores, store_idx, "e_nom_extendable", "e_nom", "Store-e_nom"
+        )
+        p_const, p_terms = _component_capacity_expr(
+            n, dischargers, dis_idx, "p_nom_extendable", "p_nom", "Link-p_nom"
+        )
+        if not e_terms and not p_terms:
+            continue
+
+        e_lhs = _linear_sum(e_const, e_terms)
+        p_rhs = max_hours * _linear_sum(p_const, p_terms)
+        n.model.add_constraints(
+            e_lhs <= p_rhs,
+            name=f"battery-max-hours-province-{_safe_constraint_suffix(province)}",
+        )
+        added_provinces += 1
 
     logger.info(
-        "Battery max-hours constraints for %s: added=%s, skipped=%s, max_hours=%.2f",
+        "Battery max-hours constraints for %s: pair=%s, province=%s, skipped_pairs=%s, max_hours=%.2f",
         int(pd.DatetimeIndex(snapshots)[0].year),
-        added,
-        skipped,
+        added_pairs,
+        added_provinces,
+        skipped_pairs,
         max_hours,
     )
 

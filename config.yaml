@@ -150,13 +150,13 @@ nuclear_capacity_guard:
 # local coal/nuclear/gas/biomass/hydroelectricity electric output >= ratio * local AC electricity load.
 synchronous_generation_floor:
   enabled: true
-  # Apply at 10% through 2050, 7.5% in 2055, and 5% in 2060.
+  # Apply at 10% through 2045, 7.5% in 2050, and 5% in 2055.
   apply_start_year: 2025
   apply_end_year: 2060
   ratio: 0.10
   ratio_by_year:
-    2055: 0.075
-    2060: 0.05
+    2055: 0.05
+    2060: 0.01
   Generator:
     - coal power plant
     - coal cc
@@ -195,6 +195,7 @@ storage_capacity_guard:
   # Special national cumulative lower bound from policy wording: 2030 above 370 GW.
   national_min_capacity_mw_by_year:
     2030: 370000
+    2035: 480000
   # Strict upper cap: allow underbuild, but do not allow +30% over the target.
   target_lower_multiplier: 0.0
   target_upper_multiplier: 1.0
