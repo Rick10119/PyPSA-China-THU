@@ -306,6 +306,8 @@ The aluminum module uses a price-based decomposition loop:
 
 This approach keeps the main problem as a tractable LP while capturing potline-level start-up/shut-down economics in the sub-problem.
 
+> **Scope note (aluminum modeling):** This repository implements a reduced-form/aggregated adjustable-load representation of aluminum smelters integrated with the power-system planning model, including the price-based iterative representative-line optimization described above. The detailed aluminum-smelter physical model and the D3R dimensional-reduction/training workflow are **not** included in this repository. For the detailed smelter model, see *Thermal-Mass Coupled Modeling and Optimal Scheduling of Aluminum Smelting Loads for Safe Demand Response Participation* (IEEE Transactions on Smart Grid, 2026), DOI: https://doi.org/10.1109/TSG.2026.3736640. For D3R, see *Data-Driven Dimension Reduction for Industrial Load Modeling Using Inverse Optimization* (IEEE Transactions on Smart Grid, 2025), DOI: https://doi.org/10.1109/TSG.2025.3545339; implementation: https://github.com/Rick10119/Data-Driven-Dimension-Reduction.
+
 ## Scenario Analysis and Visualization
 
 After completing scenario runs, generate comparison figures with the maintained

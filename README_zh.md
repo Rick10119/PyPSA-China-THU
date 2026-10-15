@@ -20,6 +20,8 @@
 3. **电价恢复与模拟模块**：新增固定装机后的 dispatch-only 分段报价流程，导出边际电价、mapped price sidecar 和光伏 value factor 分析所需数据。
 4. **电解铝迭代求解模块**：基于节点边际电价求解电解铝子问题，再将电解铝负荷回填主模型，实现电力系统与工业柔性负荷的迭代耦合。
 
+> **范围说明（电解铝建模）**：本仓库提供的是电解铝可调负荷的简化/聚合表示及其与电力系统规划模型的集成，包含当前实现的基于电价分解的省级代表产线迭代优化。详细电解铝物理模型与 D3R（数据驱动降维）训练流程不在本仓库中。详见：*Thermal-Mass Coupled Modeling and Optimal Scheduling of Aluminum Smelting Loads for Safe Demand Response Participation*（IEEE Transactions on Smart Grid, 2026），DOI: https://doi.org/10.1109/TSG.2026.3736640；*Data-Driven Dimension Reduction for Industrial Load Modeling Using Inverse Optimization*（IEEE Transactions on Smart Grid, 2025），DOI: https://doi.org/10.1109/TSG.2025.3545339；D3R 实现仓库：https://github.com/Rick10119/Data-Driven-Dimension-Reduction。
+
 ## 快速运行
 
 先创建并激活环境：
