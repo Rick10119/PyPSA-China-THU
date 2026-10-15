@@ -9,6 +9,8 @@ This document details how aluminum smelting demand data and installed capacity a
 - **Model components**: Links, Stores, and Loads represent aluminum in the PyPSA network.
 - **Optimization algorithm**: an iterative algorithm handles unit-commitment constraints and flexibility.
 
+> **Scope note:** This repository contains the reduced-form/aggregated aluminum-load representation and its integration into the PyPSA-China planning model, including a price-based iterative solve with provincial representative-line MILP sub-problems. The detailed aluminum-smelter physical model and the D3R dimensional-reduction/training workflow are outside this repository. References: *Thermal-Mass Coupled Modeling and Optimal Scheduling of Aluminum Smelting Loads for Safe Demand Response Participation* (IEEE Transactions on Smart Grid, 2026), DOI: https://doi.org/10.1109/TSG.2026.3736640; *Data-Driven Dimension Reduction for Industrial Load Modeling Using Inverse Optimization* (IEEE Transactions on Smart Grid, 2025), DOI: https://doi.org/10.1109/TSG.2025.3545339; D3R implementation: https://github.com/Rick10119/Data-Driven-Dimension-Reduction.
+
 ## 2. Data Sources
 
 ### 2.1 Demand Data
